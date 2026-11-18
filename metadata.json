@@ -1,0 +1,10 @@
+{
+  "name": "DirectStay SaaS Portal",
+  "description": "A luxury Beige, Gold, and Dark Brown inspired Hotel PMS featuring real-time room calendars, check-in documents capture, GST invoicing, expense registers, and a comprehensive OTA Channel Manager supporting live price markups, inventory sync, and direct booking acceptance.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

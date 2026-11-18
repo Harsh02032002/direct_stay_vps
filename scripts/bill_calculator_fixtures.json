@@ -1,0 +1,130 @@
+[
+  {
+    "name": "01 Sir PDF: Room 1300 GST-inclusive @5% => 1238.10 + 61.90 = 1300",
+    "input": {
+      "gstEnabled": true,
+      "discount": 0,
+      "settings": { "roomGstRate": 5, "foodGstRate": 5, "taxOnAncillary": true, "roomRateIncludesGst": true },
+      "charges": [{ "id": "room-402", "kind": "room", "description": "Room Charges", "amount": 1300, "rate": 1300, "nights": 1, "roomNumber": "402" }],
+      "payments": [{ "id": "p1", "amount": 1300, "method": "UPI", "date": "2025-11-04" }]
+    },
+    "expect": { "subtotal": 1238.1, "totalTax": 61.9, "cgst": 30.95, "sgst": 30.95, "grandTotal": 1300, "receipts": 1300, "balance": 0, "paymentStatus": "Paid" }
+  },
+  {
+    "name": "02 Room only exclusive 2000 @5%",
+    "input": {
+      "gstEnabled": true,
+      "settings": { "roomGstRate": 5, "foodGstRate": 5 },
+      "charges": [{ "id": "room-101", "kind": "room", "description": "Room", "amount": 2000, "nights": 1, "roomNumber": "101" }],
+      "payments": []
+    },
+    "expect": { "subtotal": 2000, "totalTax": 100, "grandTotal": 2100, "balance": 2100, "paymentStatus": "Unpaid" }
+  },
+  {
+    "name": "03 No GST bill",
+    "input": {
+      "gstEnabled": false,
+      "settings": { "roomGstRate": 5, "foodGstRate": 5 },
+      "charges": [{ "id": "room-101", "kind": "room", "description": "Room", "amount": 2000, "nights": 1 }],
+      "payments": [{ "id": "p", "amount": 500, "method": "Cash" }]
+    },
+    "expect": { "totalTax": 0, "grandTotal": 2000, "balance": 1500, "paymentStatus": "Partially Paid" }
+  },
+  {
+    "name": "04 Food pre-tax + water + duplicate POS (EC-POS) collapses",
+    "input": {
+      "gstEnabled": true,
+      "settings": { "roomGstRate": 5, "foodGstRate": 5, "taxOnAncillary": true },
+      "charges": [
+        { "id": "room-101", "kind": "room", "description": "Room", "amount": 2000, "nights": 1 },
+        { "id": "ORD-1", "kind": "food", "description": "Food", "amount": 500, "sourceKey": "pos:ORD-1" },
+        { "id": "EC-POS-ORD-1", "kind": "food", "description": "Food dup", "amount": 500, "sourceKey": "pos:ORD-1" },
+        { "id": "WB-1", "kind": "water", "description": "Water", "amount": 40, "sourceKey": "water:WB-1" },
+        { "id": "EC-WB-WB-1", "kind": "water", "description": "Water dup", "amount": 40, "sourceKey": "water:WB-1" }
+      ],
+      "payments": [{ "id": "p", "amount": 2000, "method": "UPI" }]
+    },
+    "expect": { "subtotal": 2540, "totalTax": 127, "grandTotal": 2667, "balance": 667 }
+  },
+  {
+    "name": "05 Extra bed + early check-in + discount (room slab first)",
+    "input": {
+      "gstEnabled": true,
+      "discount": 300,
+      "settings": { "roomGstRate": 5, "foodGstRate": 5 },
+      "charges": [
+        { "id": "room-201", "kind": "room", "description": "Room", "amount": 4000, "nights": 2 },
+        { "id": "xbed", "kind": "extra_bed", "description": "Extra Bed", "amount": 1000 },
+        { "id": "early", "kind": "early_checkin", "description": "Early", "amount": 500 }
+      ],
+      "payments": [{ "id": "p", "amount": 6000, "method": "Card" }]
+    },
+    "expect": { "subtotal": 5500, "discount": 300, "taxableAmount": 5200, "totalTax": 260, "grandTotal": 5460, "balance": 0, "refundDue": 540, "paymentStatus": "Paid" }
+  },
+  {
+    "name": "06 Different F&B slab 18% + ancillary not taxed + fine never taxed",
+    "input": {
+      "gstEnabled": true,
+      "settings": { "roomGstRate": 12, "foodGstRate": 18, "taxOnAncillary": false },
+      "charges": [
+        { "id": "room", "kind": "room", "description": "Room", "amount": 3000, "nights": 1 },
+        { "id": "f1", "kind": "food", "description": "Food", "amount": 1000, "sourceKey": "pos:f1" },
+        { "id": "l1", "kind": "laundry", "description": "Laundry", "amount": 200, "sourceKey": "laundry:l1" },
+        { "id": "fine", "kind": "fine", "description": "Damage", "amount": 500 }
+      ],
+      "payments": []
+    },
+    "expect": { "subtotal": 4700, "totalTax": 540, "grandTotal": 5240, "taxRowCount": 2 }
+  },
+  {
+    "name": "07 Split payment + refund line",
+    "input": {
+      "gstEnabled": true,
+      "settings": { "roomGstRate": 5, "foodGstRate": 5 },
+      "charges": [{ "id": "room", "kind": "room", "description": "Room", "amount": 1000, "nights": 1 }],
+      "payments": [
+        { "id": "a", "amount": 600, "method": "UPI" },
+        { "id": "b", "amount": 600, "method": "Cash" },
+        { "id": "r", "amount": -150, "method": "Cash" }
+      ]
+    },
+    "expect": { "grandTotal": 1050, "receipts": 1050, "balance": 0, "paymentStatus": "Paid" }
+  },
+  {
+    "name": "08 Multi-room 3 rooms x 2 nights",
+    "input": {
+      "gstEnabled": true,
+      "settings": { "roomGstRate": 5, "foodGstRate": 5 },
+      "charges": [
+        { "id": "room-101", "kind": "room", "description": "Room", "amount": 3000, "nights": 2, "roomNumber": "101" },
+        { "id": "room-102", "kind": "room", "description": "Room", "amount": 3000, "nights": 2, "roomNumber": "102" },
+        { "id": "room-103", "kind": "room", "description": "Room", "amount": 5000, "nights": 2, "roomNumber": "103" }
+      ],
+      "payments": [{ "id": "p", "amount": 5000, "method": "UPI" }]
+    },
+    "expect": { "subtotal": 11000, "totalTax": 550, "grandTotal": 11550, "balance": 6550 }
+  },
+  {
+    "name": "09 Paise rounding 1999.99 @5%",
+    "input": {
+      "gstEnabled": true,
+      "settings": { "roomGstRate": 5, "foodGstRate": 5 },
+      "charges": [{ "id": "room", "kind": "room", "description": "Room", "amount": 1999.99, "nights": 1 }],
+      "payments": []
+    },
+    "expect": { "totalTax": 100, "cgst": 50, "sgst": 50, "grandTotal": 2099.99 }
+  },
+  {
+    "name": "10 Inclusive room + exclusive food in same bill",
+    "input": {
+      "gstEnabled": true,
+      "settings": { "roomGstRate": 5, "foodGstRate": 5, "roomRateIncludesGst": true },
+      "charges": [
+        { "id": "room", "kind": "room", "description": "Room", "amount": 2100, "nights": 1 },
+        { "id": "f", "kind": "food", "description": "Food", "amount": 200, "sourceKey": "pos:f" }
+      ],
+      "payments": []
+    },
+    "expect": { "subtotal": 2200, "totalTax": 110, "grandTotal": 2310 }
+  }
+]

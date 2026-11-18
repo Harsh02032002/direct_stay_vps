@@ -1,0 +1,639 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-serif: "Playfair Display", Georgia, serif;
+  --font-mono: "Inter", system-ui, -apple-system, sans-serif;
+
+  /* =========================================================================
+     RECOMMENDED EXECUTIVE DESIGN TOKENS (7-COLOR SYSTEM)
+     - Rich Espresso:   #17120F (Sidebar, hero banner, dark navigation)
+     - Premium Gold:    #C49A3A (Active navigation, icons, highlights, accents)
+     - Cool Background: #F4F6F9 (Main dashboard background)
+     - Pure White:      #FFFFFF (Cards, tables, forms & modal backgrounds)
+     - Slate Text:      #263449 (Primary text, headings & navigation labels)
+     - Success Green:   #15805D (Positive cash flow, completed payments, profit)
+     - Alert Red:       #D92D4B (Overdue payments, failed transactions, expenses)
+     ========================================================================= */
+
+  --color-luxury-beige-50: #F4F6F9;   /* Cool Background — Main dashboard background */
+  --color-luxury-beige-100: #E6EBF2;  /* Subtle cool divider & secondary surface */
+  --color-luxury-beige-200: #D0D8E4;  /* Crisp border tint */
+
+  --color-luxury-gold-200: #F6E9C8;
+  --color-luxury-gold-300: #E0BD6B;
+  --color-luxury-gold-400: #C49A3A;   /* Premium Gold — Active navigation, icons, highlights */
+  --color-luxury-gold-500: #C49A3A;   /* Premium Gold — Primary accent */
+  --color-luxury-gold-600: #A8812B;
+  --color-luxury-gold-700: #8B691E;
+
+  --color-luxury-brown-50: #FFFFFF;   /* Pure White — Inner card & form surfaces */
+  --color-luxury-brown-100: #DCE3EC;  /* Card & panel borders */
+  --color-luxury-brown-200: #C2CDD9;  /* Form & table borders */
+  --color-luxury-brown-300: #94A3B8;  /* Inactive dark-sidebar nav text */
+  --color-luxury-brown-400: #5A6B82;  /* Secondary slate metadata */
+  --color-luxury-brown-405: #5A6B82;
+  --color-luxury-brown-550: #263449;  /* Slate Text — Form labels & headings */
+  --color-luxury-brown-500: #3E5068;
+  --color-luxury-brown-600: #263449;  /* Slate Text — Primary text & labels */
+  --color-luxury-brown-700: #263449;  /* Slate Text — Primary text & headings */
+  --color-luxury-brown-800: #221B17;  /* Dark espresso hover surface */
+  --color-luxury-brown-900: #17120F;  /* Rich Espresso — Sidebar, hero banner, dark nav */
+  --color-luxury-brown-905: #17120F;
+  --color-luxury-brown-950: #17120F;  /* Rich Espresso */
+
+  /* Semantic Status Tokens: Success Green (#15805D) & Alert Red (#D92D4B) */
+  --color-emerald-500: #15805D;
+  --color-emerald-600: #15805D;
+  --color-emerald-700: #15805D;
+  --color-emerald-800: #11694C;
+  --color-emerald-900: #0D523B;
+
+  --color-rose-500: #D92D4B;
+  --color-rose-600: #D92D4B;
+  --color-rose-700: #D92D4B;
+  --color-rose-800: #B4223B;
+  --color-rose-900: #911A2F;
+
+  --color-red-500: #D92D4B;
+  --color-red-600: #D92D4B;
+  --color-red-700: #D92D4B;
+}
+
+/* ============================================================================
+   ENTERPRISE PALETTE APPLICATION:
+   Rich Espresso (#17120F) | Premium Gold (#C49A3A) | Cool Background (#F4F6F9)
+   Pure White (#FFFFFF) | Slate Text (#263449) | Success (#15805D) | Alert (#D92D4B)
+   ============================================================================ */
+
+body {
+  background-color: #F4F6F9;
+  color: #263449;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================================
+   TYPOGRAPHY SYSTEM:
+   1. Inter (Weights: 400, 500, 600, 700) — Main UI font for dashboard, cards,
+      buttons, forms, navigation, tables, and numbers (tabular-nums).
+   2. Playfair Display (Weights: 500, 600, 700) — Reserved ONLY for premium
+      headings and large page titles (h1, h2).
+   ============================================================================ */
+
+/* Reserve Playfair Display strictly for large page titles & hero headings (h1, h2) */
+h1.font-serif,
+h2.font-serif {
+  font-family: var(--font-serif) !important;
+}
+
+/* All UI elements — navigation, buttons, cards, tables, forms, KPI numbers, badges, h3-h6 — use Inter */
+:is(button, nav, aside nav *, header *, table, thead, tbody, tr, th, td, input, select, textarea, label, span, p, div, strong, b, a, li, h3, h4, h5, h6).font-serif,
+aside nav .font-serif,
+button .font-serif,
+table .font-serif {
+  font-family: var(--font-sans) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono,
+.font-sans,
+button,
+input,
+select,
+textarea,
+table,
+td,
+th {
+  font-family: var(--font-sans) !important;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "zero" 0;
+}
+
+/* Guarantee standard single-line action buttons stay on 1 line, while allowing multi-line card buttons & descriptions to wrap cleanly */
+button,
+a[role="button"] {
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+button p,
+button h1,
+button h2,
+button h3,
+button h4,
+button.w-full,
+button.text-left,
+button.whitespace-normal,
+button .whitespace-normal,
+a[role="button"] p,
+a[role="button"] h1,
+a[role="button"] h2,
+a[role="button"] h3,
+a[role="button"] h4,
+a[role="button"].w-full,
+a[role="button"].text-left,
+a[role="button"].whitespace-normal,
+a[role="button"] .whitespace-normal {
+  white-space: normal !important;
+}
+
+/* Sidebar unified to Rich Espresso (#17120F) */
+aside {
+  background-color: #17120F !important;
+}
+
+/* Pure White (#FFFFFF) Cards, Tables, Forms & Modal Backgrounds */
+main .bg-white,
+main .bg-white.rounded-2xl,
+main .bg-white.rounded-xl {
+  background-color: #FFFFFF !important;
+  border-color: #DCE3EC !important;
+  box-shadow:
+    0 10px 25px -5px rgba(38, 52, 73, 0.07),
+    0 4px 10px -2px rgba(38, 52, 73, 0.04),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.95) !important;
+}
+
+main .bg-white.rounded-xl:hover {
+  box-shadow:
+    0 14px 30px -5px rgba(38, 52, 73, 0.11),
+    0 6px 12px -2px rgba(38, 52, 73, 0.06) !important;
+}
+
+/* Slate Text (#263449) for Primary Headings & Labels on Light Surfaces */
+main .bg-white h1,
+main .bg-white h2,
+main .bg-white h3,
+main .bg-white h4,
+main .bg-white .text-slate-900,
+main .bg-white .text-luxury-brown-950,
+main .bg-white .text-luxury-brown-900 {
+  color: #263449;
+}
+
+/* High-Contrast Executive Data Tables (Rich Espresso #17120F Header + Premium Gold #C49A3A Accent + Pure White #FFFFFF Rows) */
+main table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  width: 100%;
+}
+
+main table thead,
+main table thead tr {
+  background: #FBF4E0 !important;
+  background-color: #FBF4E0 !important;
+}
+
+main table thead th {
+  background: #FBF4E0 !important;
+  background-color: #FBF4E0 !important;
+  color: #263449 !important;
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  padding: 13px 16px !important;
+  border-bottom: 2px solid #C49A3A !important;
+  white-space: nowrap !important;
+}
+
+/* ============================================================================
+   LIGHT THEME FOR CONTENT PAGES
+   Dark panels / hero banners / modal headers / dark tables inside <main> are
+   rendered as light surfaces (White + soft Gold tint + Slate text).
+   The sidebar (<aside>) and dark action buttons keep Rich Espresso accents.
+   ============================================================================ */
+main :is(div, section, header, thead, tfoot, tr):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="bg-slate-950"],
+  [class*="from-luxury-brown-9"],
+  [class*="from-luxury-brown-8"],
+  [class*="from-slate-900"],
+  [class*="from-slate-800"]
+):not(.fixed):not(.inset-0):not([data-chart-bar]):not(.chart-bar) {
+  background: linear-gradient(135deg, #FFFFFF 0%, #FBF6E8 100%) !important;
+  background-color: #FFFFFF !important;
+  color: #263449 !important;
+  border-color: #E6D9B3 !important;
+  box-shadow: 0 6px 18px -6px rgba(38, 52, 73, 0.10) !important;
+}
+
+/* Dark <tr> rows inside tables (totals / headers) -> soft gold tint */
+main tr:is([class*="bg-luxury-brown-9"], [class*="bg-[#17120F]"], [class*="bg-slate-900"], [class*="bg-slate-800"]) {
+  background: #FBF4E0 !important;
+  box-shadow: none !important;
+}
+
+/* Text inside former dark panels -> Slate / Dark Gold for readability on light */
+main :is(div, section, header, thead, tfoot, tr):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="bg-slate-950"],
+  [class*="from-luxury-brown-9"],
+  [class*="from-luxury-brown-8"],
+  [class*="from-slate-900"],
+  [class*="from-slate-800"]
+):not(.fixed):not(.inset-0)
+  :is(h1, h2, h3, h4, .text-white, .\!text-white, [class*="text-white/"], [class*="text-[#FBF4E0]"], [class*="text-[#FBF7F0]"], [class*="text-[#FDF8ED]"], [class*="text-[#FAF7F2]"], [class*="text-[#FFEDC2]"], .text-slate-50, .text-slate-100, .text-slate-200, .text-zinc-100, .text-zinc-200, .text-luxury-beige-50, .text-luxury-beige-100, .text-luxury-brown-50, .text-luxury-brown-100):not(button):not(button *):not(.bg-emerald-600):not(.bg-emerald-700):not(.bg-rose-600):not(.bg-rose-700):not(.bg-red-600):not(.bg-red-700):not(.bg-green-600):not(.bg-green-700):not(.bg-teal-600):not(.bg-teal-700):not(.bg-blue-600):not(.bg-blue-700):not(.bg-amber-500):not(.bg-amber-600):not(.bg-luxury-gold-500):not(.bg-luxury-gold-400):not([class*="bg-[#15805D]"]):not([class*="bg-[#D92D4B]"]):not([class*="bg-[#9E2A2B]"]):not([class*="bg-[#B8862B]"]) {
+  color: #263449 !important;
+}
+
+/* Transparent / icon-only close buttons inside lightened modal headers must be dark Slate, never white */
+main :is(div, section, header):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="from-luxury-brown-9"],
+  [class*="from-luxury-brown-8"]
+):not(.fixed):not(.inset-0)
+  button:is(.text-white, [class*="text-white/"]):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-red"]):not([class*="bg-green"]):not([class*="bg-teal"]):not([class*="bg-blue"]):not([class*="bg-amber"]):not([class*="bg-luxury-gold"]):not([class*="bg-[#15805D]"]):not([class*="bg-[#D92D4B]"]):not([class*="bg-[#9E2A2B]"]):not([class*="bg-[#B8862B]"]):not([class*="bg-[#263449]"]):not([class*="bg-[#C49A3A]"]),
+main :is(div, section, header):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="from-luxury-brown-9"],
+  [class*="from-luxury-brown-8"]
+):not(.fixed):not(.inset-0)
+  button:is(.text-white, [class*="text-white/"]):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-red"]):not([class*="bg-green"]):not([class*="bg-teal"]):not([class*="bg-blue"]):not([class*="bg-amber"]):not([class*="bg-luxury-gold"]):not([class*="bg-[#15805D]"]):not([class*="bg-[#D92D4B]"]):not([class*="bg-[#9E2A2B]"]):not([class*="bg-[#B8862B]"]):not([class*="bg-[#263449]"]):not([class*="bg-[#C49A3A]"]) * {
+  color: #263449 !important;
+}
+
+/* Divider lines that used border-white/* on dark panels -> visible warm gold tint on light panels */
+main :is(div, section, header, thead, tfoot, tr):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="bg-slate-950"],
+  [class*="from-luxury-brown-9"],
+  [class*="from-luxury-brown-8"],
+  [class*="from-slate-900"],
+  [class*="from-slate-800"]
+):not(.fixed):not(.inset-0)
+  [class*="border-white/"] {
+  border-color: #E6D9B3 !important;
+}
+
+main :is(div, section, header, thead, tfoot, tr):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="bg-slate-950"],
+  [class*="from-luxury-brown-9"],
+  [class*="from-luxury-brown-8"],
+  [class*="from-slate-900"],
+  [class*="from-slate-800"]
+):not(.fixed):not(.inset-0)
+  :is(.text-slate-300, .text-slate-400, .text-zinc-300, .text-zinc-400, .text-luxury-brown-200, .text-luxury-brown-300, .text-luxury-beige-200, .text-luxury-beige-300, .\!text-slate-300, .text-gray-300, .text-gray-400):not(button *) {
+  color: #5A6B82 !important;
+}
+
+main :is(div, section, header, thead, tfoot, tr):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="bg-slate-950"],
+  [class*="from-luxury-brown-9"],
+  [class*="from-luxury-brown-8"],
+  [class*="from-slate-900"],
+  [class*="from-slate-800"]
+):not(.fixed):not(.inset-0)
+  :is(.text-luxury-gold-200, .text-luxury-gold-300, .\!text-luxury-gold-300, .text-\[\#E0BD6B\], .text-\[\#F6E9C8\], .text-yellow-200, .text-yellow-300, .text-amber-200, .text-amber-300, .text-amber-400):not(button *) {
+  color: #8B691E !important;
+}
+
+main :is(div, section, header, thead, tfoot, tr):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="from-luxury-brown-9"],
+  [class*="from-luxury-brown-8"]
+):not(.fixed):not(.inset-0)
+  :is(.text-emerald-200, .text-emerald-300, .text-emerald-400, .text-green-300, .text-green-400, .text-teal-300, .text-teal-400):not(button *) {
+  color: #15805D !important;
+}
+
+main :is(div, section, header, thead, tfoot, tr):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="from-luxury-brown-9"],
+  [class*="from-luxury-brown-8"]
+):not(.fixed):not(.inset-0)
+  :is(.text-rose-200, .text-rose-300, .text-rose-400, .text-red-300, .text-red-400, [class*="text-[#FF6B84]"]):not(button *) {
+  color: #D92D4B !important;
+}
+
+/* Soft translucent chips that sat on dark panels -> light gold tint */
+main :is(div, section, header):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-[#17120F]"],
+  [class*="from-luxury-brown-9"]
+):not(.fixed):not(.inset-0)
+  :is([class*="bg-white/"], [class*="bg-black/"]):not(button):not(button *) {
+  background-color: rgba(196, 154, 58, 0.10) !important;
+  border-color: rgba(196, 154, 58, 0.30) !important;
+}
+
+/* Dark <span> badges inside <main> -> Soft Gold Badge with Dark Gold Text */
+main span:is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"]
+) {
+  background-color: #FBF4E0 !important;
+  color: #8B691E !important;
+  border: 1px solid rgba(196, 154, 58, 0.45) !important;
+}
+
+/* Dark <button>s and <label>s inside <main> -> Soft Light Gold/Amber with Crisp Dark Text */
+main :is(button, label):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="from-luxury-brown-9"]
+) {
+  background: #F5E3B8 !important;
+  background-color: #F5E3B8 !important;
+  color: #17120F !important;
+  border: 1px solid #D4AD50 !important;
+}
+
+main :is(button, label):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="from-luxury-brown-9"]
+):hover {
+  background: #EBD296 !important;
+  background-color: #EBD296 !important;
+  color: #17120F !important;
+}
+
+main :is(button, label):is(
+  [class*="bg-luxury-brown-9"],
+  [class*="bg-luxury-brown-8"],
+  [class*="bg-[#17120F]"],
+  [class*="bg-slate-900"],
+  [class*="bg-slate-800"],
+  [class*="from-luxury-brown-9"]
+) * {
+  color: #17120F !important;
+}
+
+main table tbody tr {
+  background-color: #FFFFFF;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+main table tbody tr:nth-child(even) {
+  background-color: #FAFBFD;
+}
+
+main table tbody tr:hover {
+  background-color: #FDF8ED !important;
+}
+
+main table tbody td {
+  padding: 13px 16px !important;
+  font-size: 13px !important;
+  line-height: 1.45 !important;
+  color: #263449;
+  font-weight: 500;
+  border-bottom: 1px solid #E6EBF2 !important;
+  vertical-align: middle;
+}
+
+/* Pure White (#FFFFFF) & Slate Text (#263449) Form Inputs, Dropdowns & Textareas */
+main input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+main select,
+main textarea {
+  background-color: #FFFFFF !important;
+  border-width: 1.5px !important;
+  border-color: #C2CDD9 !important;
+  color: #263449 !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 2px 0 rgba(38, 52, 73, 0.04) !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+main input:not([type="checkbox"]):not([type="radio"])::placeholder,
+main textarea::placeholder {
+  color: #64748B !important;
+  font-weight: 400 !important;
+}
+
+main input:not([type="checkbox"]):not([type="radio"]):focus,
+main select:focus,
+main textarea:focus {
+  border-color: #C49A3A !important;
+  box-shadow: 0 0 0 3px rgba(196, 154, 58, 0.22) !important;
+  outline: none !important;
+}
+
+/* Form Field Labels on White Cards — Slate Text (#263449) */
+main .bg-white label {
+  color: #263449;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+/* Print Specific Layout Utilities to guarantee professional invoices */
+@page {
+  size: A4 portrait;
+  margin: 8mm;
+}
+
+@media print {
+  html,
+  body,
+  main {
+    background: #FFFFFF !important;
+    color: #263449 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  aside,
+  header,
+  nav,
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .print-card {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .invoice-print-modal-root {
+    position: static !important;
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+  .invoice-print-modal-root > div {
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    box-shadow: none !important;
+    border: 1px solid #DCE3EC !important;
+    border-radius: 8px !important;
+    overflow: visible !important;
+  }
+  #hotel-invoice-printable-tag,
+  #print-tax-invoice-voucher {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #E2E8F0;
+}
+::-webkit-scrollbar-thumb {
+  background: #94A3B8;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64748B;
+}
+
+/* Mobile Responsive Layout Safeguards (<= 640px) — Zero Impact on Desktop */
+@media (max-width: 640px) {
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    overflow-x: clip;
+    position: relative;
+  }
+
+  button,
+  a[role="button"] {
+    max-width: 100%;
+  }
+
+  /* Compact card padding across all dashboard pages on mobile */
+  main :is(.p-5, .p-6, .p-7, .p-8) {
+    padding: 0.875rem !important;
+  }
+
+  /* Consistent 2-column KPI card grids across all modules on mobile */
+  main .grid-cols-2 {
+    gap: 0.625rem !important;
+  }
+
+  main .grid-cols-2 > :is(div, button) {
+    min-width: 0 !important;
+  }
+
+  main .grid-cols-2 :is(.text-2xl, .text-3xl) {
+    font-size: 1.125rem !important;
+    line-height: 1.25 !important;
+  }
+
+  /* Make fixed-width search inputs responsive full-width on mobile */
+  main :is(.w-56, .w-60, .w-64, .w-72, .w-80, .w-96) {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Prevent any grid/flex card from expanding wider than mobile screen when it contains a table */
+  main .grid > *,
+  main [class*="grid-cols-"] > *,
+  main div:has(table) {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Guarantee every table's direct parent container scrolls horizontally inside its card */
+  main div:has(> table),
+  main .overflow-x-auto {
+    overflow-x: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Readable, snugly-sized horizontally scrollable tables across all modules on mobile */
+  main table {
+    width: 100% !important;
+    min-width: max-content !important;
+  }
+
+  main table thead th {
+    padding: 8px 10px !important;
+    font-size: 10px !important;
+    letter-spacing: 0.03em !important;
+    white-space: nowrap !important;
+  }
+
+  main table tbody td {
+    padding: 9px 10px !important;
+    font-size: 11.5px !important;
+    white-space: nowrap;
+  }
+
+  main table tbody td[colspan] {
+    text-align: left !important;
+    white-space: normal !important;
+    max-width: calc(100vw - 3.5rem) !important;
+  }
+
+  /* Hide scrollbar track on mobile bottom navigation bar */
+  nav.fixed ::-webkit-scrollbar,
+  nav.fixed > div::-webkit-scrollbar {
+    display: none !important;
+    height: 0 !important;
+    width: 0 !important;
+  }
+  nav.fixed,
+  nav.fixed > div {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+}
