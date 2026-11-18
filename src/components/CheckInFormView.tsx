@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Booking, GuestCheckIn, Room, RoomCategory, UserRole, Staff, BookedRoom, SecondaryGuest, HotelSettings, PaymentRecord, CFormData, WaterBottleRecord, AllocatedGuestService, ExtraCharge, Invoice, TravelAgent, MealPlanType, PaymentMethod, BookingSource, BookingStatus } from '../types';
+import { Booking, GuestCheckIn, Room, RoomCategory, UserRole, Staff, BookedRoom, SecondaryGuest, HotelSettings, PaymentRecord, CFormData, WaterBottleRecord, AllocatedGuestService, ExtraCharge, Invoice, TravelAgent, MealPlanType, PaymentMethod, BookingSource, BookingStatus, InventoryProduct, InventoryStockMovement } from '../types';
 import { 
   Contact, Printer, Check, Receipt, RefreshCw, FileCheck, Users, 
   Sparkles, DollarSign, Plus, Trash2, Landmark, Send, Download, 

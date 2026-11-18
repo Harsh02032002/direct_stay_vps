@@ -1572,7 +1572,7 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
 
       {/* 10. NIGHT AUDIT FLASH REPORT */}
       {currentTab === 'night_audit' && (() => {
-        const pureCashCollected = rangePayments
+        const pureCashCollected = filteredPayments
           .filter((p) => p.paymentType === 'Cash' || (p as any).method === 'Cash')
           .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
         const openingCashFloat = 5000;
@@ -1634,7 +1634,7 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
                 <span className="text-[10px] font-mono uppercase text-slate-500 block font-bold">3. Digital / UPI Payments</span>
                 <span className="text-lg font-serif font-bold text-indigo-700 mt-0.5 block">
                   {formatCurrency(
-                    rangePayments
+                    filteredPayments
                       .filter((p) => p.paymentType !== 'Cash' && (p as any).method !== 'Cash')
                       .reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
                   )}
