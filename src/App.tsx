@@ -166,16 +166,77 @@ function getRoleBasePath(role: UserRole): string {
   return '/admin';
 }
 
+const FAST_SNAPSHOT_KEY = 'pms_fast_snapshot_v1';
+
+function stripHeavyInlineBlobs(val: any, depth = 0): any {
+  if (depth > 5 || val == null) return val;
+  if (typeof val === 'string') {
+    return val.length > 3000 && val.startsWith('data:') ? '' : val;
+  }
+  if (Array.isArray(val)) {
+    return val.map((item) => stripHeavyInlineBlobs(item, depth + 1));
+  }
+  if (typeof val === 'object') {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val)) {
+      out[k] = stripHeavyInlineBlobs(v, depth + 1);
+    }
+    return out;
+  }
+  return val;
+}
+
+function readFastSessionSnapshot(): Record<string, any> | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const tok =
+      sessionStorage.getItem('pms_session_token') ||
+      sessionStorage.getItem('pms_auth_token') ||
+      localStorage.getItem('pms_session_token') ||
+      localStorage.getItem('pms_auth_token') ||
+      '';
+    if (!tok) return null;
+    const raw = sessionStorage.getItem(FAST_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const savedRole = sessionStorage.getItem('pms_role') || localStorage.getItem('pms_role') || '';
+    const savedHotel = sessionStorage.getItem('pms_hotel_id') || localStorage.getItem('pms_hotel_id') || '';
+    if (parsed && parsed.role === savedRole && (savedRole === 'SuperAdmin' || parsed.hotelId === savedHotel) && parsed.data) {
+      return parsed.data;
+    }
+  } catch {}
+  return null;
+}
+
+function writeFastSessionSnapshot(data: Record<string, any>): void {
+  if (typeof window === 'undefined' || !data) return;
+  try {
+    const savedRole = sessionStorage.getItem('pms_role') || localStorage.getItem('pms_role') || '';
+    const savedHotel = sessionStorage.getItem('pms_hotel_id') || localStorage.getItem('pms_hotel_id') || '';
+    if (!savedRole) return;
+    const slim = stripHeavyInlineBlobs(data);
+    sessionStorage.setItem(
+      FAST_SNAPSHOT_KEY,
+      JSON.stringify({ role: savedRole, hotelId: savedHotel, data: slim })
+    );
+  } catch {}
+}
+
 export default function App() {
+  const [bootSnap] = useState<Record<string, any> | null>(() => readFastSessionSnapshot());
   // SaaS Multi-Hotel States
-  const [hotels, setHotels] = useState<Hotel[]>([]);
-  const [packages, setPackages] = useState<SaaSPackage[]>([]);
-  const [customPages, setCustomPages] = useState<CustomPage[]>([]);
-  const [selectedHotelId, setSelectedHotelId] = useState<string>(() => sessionStorage.getItem('pms_hotel_id') || '');
-  const [systemWebsite, setSystemWebsite] = useState<SystemWebsiteConfig>(INITIAL_SYSTEM_WEBSITE);
+  const [hotels, setHotels] = useState<Hotel[]>(() => (Array.isArray(bootSnap?.hotels) ? bootSnap.hotels : []));
+  const [packages, setPackages] = useState<SaaSPackage[]>(() => (Array.isArray(bootSnap?.packages) ? bootSnap.packages : []));
+  const [customPages, setCustomPages] = useState<CustomPage[]>(() => (Array.isArray(bootSnap?.customPages) ? bootSnap.customPages : []));
+  const [selectedHotelId, setSelectedHotelId] = useState<string>(() => sessionStorage.getItem('pms_hotel_id') || bootSnap?.hotels?.[0]?.id || '');
+  const [systemWebsite, setSystemWebsite] = useState<SystemWebsiteConfig>(() =>
+    bootSnap?.systemWebsite ? { ...INITIAL_SYSTEM_WEBSITE, ...bootSnap.systemWebsite } : INITIAL_SYSTEM_WEBSITE
+  );
   const [superAdminSubTab, setSuperAdminSubTab] = useState<SuperAdminSubTabType>('dashboard');
   const [ownerSubTab, setOwnerSubTab] = useState<HotelOwnerSubTab>('dashboard');
-  const [rawNotifications, setRawNotifications] = useState<AppNotification[]>(INITIAL_NOTIFICATIONS);
+  const [rawNotifications, setRawNotifications] = useState<AppNotification[]>(() =>
+    Array.isArray(bootSnap?.notifications) ? bootSnap.notifications : INITIAL_NOTIFICATIONS
+  );
   const [isNotFoundRoute, setIsNotFoundRoute] = useState<boolean>(false);
   const [publicHotelBookingId, setPublicHotelBookingId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -284,41 +345,42 @@ export default function App() {
     return null;
   });
 
-  // Raw states containing all records across all properties
-  const [rawRooms, setRawRooms] = useState<Room[]>([]);
-  const [rawBookings, setRawBookings] = useState<Booking[]>([]);
-  const [rawCheckins, setRawCheckins] = useState<GuestCheckIn[]>([]);
-  const [rawInvoices, setRawInvoices] = useState<Invoice[]>([]);
-  const [rawExpenses, setRawExpenses] = useState<Expense[]>([]);
-  const [rawHandovers, setRawHandovers] = useState<CashHandover[]>([]);
-  const [rawPolicies, setRawPolicies] = useState<HotelPolicy[]>([]);
-  const [rawWaterBottles, setRawWaterBottles] = useState<WaterBottleRecord[]>([]);
-  const [rawStaff, setRawStaff] = useState<Staff[]>([]);
-  const [rawAuditLogs, setRawAuditLogs] = useState<AuditLog[]>([]);
-  const [rawRoomVerifications, setRawRoomVerifications] = useState<RoomVerification[]>([]);
-  const [rawRolePermissions, setRawRolePermissions] = useState<RolePermission[]>([]);
-  const [rawInventoryProducts, setRawInventoryProducts] = useState<InventoryProduct[]>([]);
-  const [rawInventoryCategories, setRawInventoryCategories] = useState<InventoryCategory[]>([]);
-  const [rawInventorySuppliers, setRawInventorySuppliers] = useState<InventorySupplier[]>([]);
-  const [rawInventoryPurchases, setRawInventoryPurchases] = useState<InventoryPurchase[]>([]);
-  const [rawInventoryStockMovements, setRawInventoryStockMovements] = useState<InventoryStockMovement[]>([]);
-  const [rawPosItems, setRawPosItems] = useState<PosItem[]>([]);
-  const [rawPosOrders, setRawPosOrders] = useState<PosOrder[]>([]);
-  const [rawPettyCash, setRawPettyCash] = useState<PettyCashTransaction[]>([]);
-  const [rawCashBankAccounts, setRawCashBankAccounts] = useState<CashBankAccount[]>([]);
-  const [rawFinanceVouchers, setRawFinanceVouchers] = useState<FinanceVoucher[]>([]);
-  const [rawVendors, setRawVendors] = useState<Vendor[]>([]);
-  const [rawOwnerPayments, setRawOwnerPayments] = useState<OwnerDirectorPayment[]>([]);
-  const [rawReimbursements, setRawReimbursements] = useState<StaffReimbursement[]>([]);
-  const [rawDailyClosings, setRawDailyClosings] = useState<DailyClosingRecord[]>([]);
-  const [rawLaundryItems, setRawLaundryItems] = useState<LaundryItemMaster[]>([]);
-  const [rawLaundryOrders, setRawLaundryOrders] = useState<LaundryOrder[]>([]);
-  const [rawLostAndFoundItems, setRawLostAndFoundItems] = useState<LostAndFoundItem[]>([]);
-  const [rawCleaningLogs, setRawCleaningLogs] = useState<HousekeepingCleaningLog[]>([]);
-  const [rawDeletedItems, setRawDeletedItems] = useState<DeletedItemRecord[]>([]);
-  const [rawTravelAgents, setRawTravelAgents] = useState<TravelAgent[]>([]);
-  const [rawAgentCommissionPayments, setRawAgentCommissionPayments] = useState<AgentCommissionPayment[]>([]);
-  const [rawPosAdvanceBookings, setRawPosAdvanceBookings] = useState<FoodAdvanceBooking[]>([]);
+  // Raw states containing all records across all properties (hydrated synchronously from fast session cache when available)
+  const [isInitialHydrating, setIsInitialHydrating] = useState<boolean>(() => hasStoredValidAuth() && !bootSnap);
+  const [rawRooms, setRawRooms] = useState<Room[]>(() => (Array.isArray(bootSnap?.rooms) ? bootSnap.rooms : []));
+  const [rawBookings, setRawBookings] = useState<Booking[]>(() => (Array.isArray(bootSnap?.bookings) ? bootSnap.bookings : []));
+  const [rawCheckins, setRawCheckins] = useState<GuestCheckIn[]>(() => (Array.isArray(bootSnap?.checkins) ? bootSnap.checkins : []));
+  const [rawInvoices, setRawInvoices] = useState<Invoice[]>(() => (Array.isArray(bootSnap?.invoices) ? bootSnap.invoices : []));
+  const [rawExpenses, setRawExpenses] = useState<Expense[]>(() => (Array.isArray(bootSnap?.expenses) ? bootSnap.expenses : []));
+  const [rawHandovers, setRawHandovers] = useState<CashHandover[]>(() => (Array.isArray(bootSnap?.handovers) ? bootSnap.handovers : []));
+  const [rawPolicies, setRawPolicies] = useState<HotelPolicy[]>(() => (Array.isArray(bootSnap?.policies) ? bootSnap.policies : []));
+  const [rawWaterBottles, setRawWaterBottles] = useState<WaterBottleRecord[]>(() => (Array.isArray(bootSnap?.waterBottles) ? bootSnap.waterBottles : []));
+  const [rawStaff, setRawStaff] = useState<Staff[]>(() => (Array.isArray(bootSnap?.staff) ? bootSnap.staff : []));
+  const [rawAuditLogs, setRawAuditLogs] = useState<AuditLog[]>(() => (Array.isArray(bootSnap?.auditLogs) ? bootSnap.auditLogs : []));
+  const [rawRoomVerifications, setRawRoomVerifications] = useState<RoomVerification[]>(() => (Array.isArray(bootSnap?.roomVerifications) ? bootSnap.roomVerifications : []));
+  const [rawRolePermissions, setRawRolePermissions] = useState<RolePermission[]>(() => (Array.isArray(bootSnap?.rolePermissions) ? bootSnap.rolePermissions : []));
+  const [rawInventoryProducts, setRawInventoryProducts] = useState<InventoryProduct[]>(() => (Array.isArray(bootSnap?.inventoryProducts) ? bootSnap.inventoryProducts : []));
+  const [rawInventoryCategories, setRawInventoryCategories] = useState<InventoryCategory[]>(() => (Array.isArray(bootSnap?.inventoryCategories) ? bootSnap.inventoryCategories : []));
+  const [rawInventorySuppliers, setRawInventorySuppliers] = useState<InventorySupplier[]>(() => (Array.isArray(bootSnap?.inventorySuppliers) ? bootSnap.inventorySuppliers : []));
+  const [rawInventoryPurchases, setRawInventoryPurchases] = useState<InventoryPurchase[]>(() => (Array.isArray(bootSnap?.inventoryPurchases) ? bootSnap.inventoryPurchases : []));
+  const [rawInventoryStockMovements, setRawInventoryStockMovements] = useState<InventoryStockMovement[]>(() => (Array.isArray(bootSnap?.inventoryStockMovements) ? bootSnap.inventoryStockMovements : []));
+  const [rawPosItems, setRawPosItems] = useState<PosItem[]>(() => (Array.isArray(bootSnap?.posItems) ? bootSnap.posItems : []));
+  const [rawPosOrders, setRawPosOrders] = useState<PosOrder[]>(() => (Array.isArray(bootSnap?.posOrders) ? bootSnap.posOrders : []));
+  const [rawPettyCash, setRawPettyCash] = useState<PettyCashTransaction[]>(() => (Array.isArray(bootSnap?.pettyCash) ? bootSnap.pettyCash : []));
+  const [rawCashBankAccounts, setRawCashBankAccounts] = useState<CashBankAccount[]>(() => (Array.isArray(bootSnap?.cashBankAccounts) ? bootSnap.cashBankAccounts : []));
+  const [rawFinanceVouchers, setRawFinanceVouchers] = useState<FinanceVoucher[]>(() => (Array.isArray(bootSnap?.vouchers) ? bootSnap.vouchers : []));
+  const [rawVendors, setRawVendors] = useState<Vendor[]>(() => (Array.isArray(bootSnap?.vendors) ? bootSnap.vendors : []));
+  const [rawOwnerPayments, setRawOwnerPayments] = useState<OwnerDirectorPayment[]>(() => (Array.isArray(bootSnap?.ownerPayments) ? bootSnap.ownerPayments : []));
+  const [rawReimbursements, setRawReimbursements] = useState<StaffReimbursement[]>(() => (Array.isArray(bootSnap?.reimbursements) ? bootSnap.reimbursements : []));
+  const [rawDailyClosings, setRawDailyClosings] = useState<DailyClosingRecord[]>(() => (Array.isArray(bootSnap?.dailyClosings) ? bootSnap.dailyClosings : []));
+  const [rawLaundryItems, setRawLaundryItems] = useState<LaundryItemMaster[]>(() => (Array.isArray(bootSnap?.laundryItems) ? bootSnap.laundryItems : []));
+  const [rawLaundryOrders, setRawLaundryOrders] = useState<LaundryOrder[]>(() => (Array.isArray(bootSnap?.laundryOrders) ? bootSnap.laundryOrders : []));
+  const [rawLostAndFoundItems, setRawLostAndFoundItems] = useState<LostAndFoundItem[]>(() => (Array.isArray(bootSnap?.lostAndFoundItems) ? bootSnap.lostAndFoundItems : []));
+  const [rawCleaningLogs, setRawCleaningLogs] = useState<HousekeepingCleaningLog[]>(() => (Array.isArray(bootSnap?.cleaningLogs) ? bootSnap.cleaningLogs : []));
+  const [rawDeletedItems, setRawDeletedItems] = useState<DeletedItemRecord[]>(() => (Array.isArray(bootSnap?.deletedItems) ? bootSnap.deletedItems : []));
+  const [rawTravelAgents, setRawTravelAgents] = useState<TravelAgent[]>(() => (Array.isArray(bootSnap?.travelAgents) ? bootSnap.travelAgents : []));
+  const [rawAgentCommissionPayments, setRawAgentCommissionPayments] = useState<AgentCommissionPayment[]>(() => (Array.isArray(bootSnap?.agentCommissionPayments) ? bootSnap.agentCommissionPayments : []));
+  const [rawPosAdvanceBookings, setRawPosAdvanceBookings] = useState<FoodAdvanceBooking[]>(() => (Array.isArray(bootSnap?.posAdvanceBookings) ? bootSnap.posAdvanceBookings : []));
 
   // Module Navigation SubTabs
   const [financeSubTab, setFinanceSubTab] = useState<string>('dashboard');
@@ -561,9 +623,13 @@ export default function App() {
   };
 
 
-  const applyAllPmsData = (data: Record<string, any>) => {
+  const applyAllPmsData = (data: Record<string, any>, isClear = false) => {
     if (data && (Array.isArray(data.hotels) || data.systemWebsite || Array.isArray(data.bookings) || Array.isArray(data.rooms))) {
       markDbHydrated(true);
+      if (!isClear) {
+        writeFastSessionSnapshot(data);
+        setIsInitialHydrating(false);
+      }
     }
     if (Array.isArray(data.hotels)) {
       setHotels(data.hotels);
@@ -969,12 +1035,17 @@ export default function App() {
     // Fetch remote data depending on whether an authenticated session token exists
     if (isBackendServerActive()) {
       if (validSession && token) {
-        fetchAllFromSupabase().then(cloudData => {
-          if (cloudData && Object.keys(cloudData).length > 0) {
-            savePmsData(cloudData, true);
-            applyAllPmsData(cloudData);
-          }
-        }).catch(() => {});
+        fetchAllFromSupabase()
+          .then(cloudData => {
+            if (cloudData && Object.keys(cloudData).length > 0) {
+              savePmsData(cloudData, true);
+              applyAllPmsData(cloudData);
+            }
+          })
+          .catch(() => {})
+          .finally(() => {
+            setIsInitialHydrating(false);
+          });
       } else {
         fetchPublicWebsiteConfig().then(pubConfig => {
           if (pubConfig) {
@@ -1397,17 +1468,23 @@ export default function App() {
       localStorage.setItem('pms_auth_token', issuedToken);
     }
 
-    // Immediately hydrate authenticated state from backend using the verified session token
+    // Immediately hydrate authenticated state from backend using the verified session token (gate initial paint so 0s never flash)
     if (isBackendServerActive()) {
-      fetchAllFromSupabase().then(cloudData => {
-        if (cloudData && Object.keys(cloudData).length > 0) {
-          savePmsData(cloudData, true);
-          applyAllPmsData(cloudData);
-          if (hotelId) {
-            setSelectedHotelId(hotelId);
+      setIsInitialHydrating(true);
+      fetchAllFromSupabase()
+        .then(cloudData => {
+          if (cloudData && Object.keys(cloudData).length > 0) {
+            savePmsData(cloudData, true);
+            applyAllPmsData(cloudData);
+            if (hotelId) {
+              setSelectedHotelId(hotelId);
+            }
           }
-        }
-      }).catch(() => {});
+        })
+        .catch(() => {})
+        .finally(() => {
+          setIsInitialHydrating(false);
+        });
     }
 
     handleAddAuditLogDirectly(
@@ -1480,12 +1557,14 @@ export default function App() {
       'pms_auth_token',
       'pms_auth_session',
       'pms_staff_username',
+      FAST_SNAPSHOT_KEY,
     ]) {
       sessionStorage.removeItem(k);
       localStorage.removeItem(k);
     }
 
     // Wipe all DB-fetched data from memory so the next user starts clean
+    setIsInitialHydrating(false);
     markDbHydrated(false);
     clearPmsMemoryCache();
     applyAllPmsData({
@@ -1495,7 +1574,7 @@ export default function App() {
       posItems: [], posOrders: [], pettyCash: [], cashBankAccounts: [], vouchers: [], vendors: [],
       ownerPayments: [], reimbursements: [], dailyClosings: [], laundryOrders: [], lostAndFoundItems: [],
       cleaningLogs: [], notifications: [], travelAgents: [], agentCommissionPayments: [], posAdvanceBookings: []
-    });
+    }, true);
     setSelectedHotelId('');
     if (firstSeg === 'superadmin') {
       setPortalLoginMode('superadmin');
@@ -4592,6 +4671,22 @@ export default function App() {
         >
           {publicHotelBookingId !== null ? (
             renderPublicHotelBookingPage(true)
+          ) : isInitialHydrating ? (
+            <div className="max-w-7xl mx-auto py-10 space-y-5 animate-pulse">
+              <div className="h-28 rounded-2xl bg-white border border-luxury-brown-100 shadow-xs p-6 flex items-center justify-between">
+                <div className="space-y-3 w-2/3">
+                  <div className="h-3.5 w-36 bg-luxury-beige-200 rounded" />
+                  <div className="h-6 w-72 bg-luxury-beige-200 rounded" />
+                </div>
+                <div className="h-10 w-36 bg-luxury-gold-200/60 rounded-xl" />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="h-28 rounded-2xl bg-white border border-luxury-brown-100 shadow-xs" />
+                <div className="h-28 rounded-2xl bg-white border border-luxury-brown-100 shadow-xs" />
+                <div className="h-28 rounded-2xl bg-white border border-luxury-brown-100 shadow-xs" />
+              </div>
+              <div className="h-64 rounded-2xl bg-white border border-luxury-brown-100 shadow-xs" />
+            </div>
           ) : (
             <div className="max-w-7xl mx-auto space-y-5 sm:space-y-6">
               {renderTabContent()}

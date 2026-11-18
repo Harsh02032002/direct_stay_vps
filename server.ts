@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import dns from "dns";
 import crypto from "crypto";
+import zlib from "zlib";
 import { GoogleGenAI } from "@google/genai";
 import { MongoClient, Db } from "mongodb";
 import dotenv from "dotenv";
@@ -1814,11 +1815,21 @@ async function startServer() {
           }
         }
 
-        return res.json({
+        const payloadStr = JSON.stringify({
           success: true,
           data: responseData,
           updatedAt: doc.updatedAt,
         });
+        const acceptEncoding = String(req.headers["accept-encoding"] || "");
+        if (acceptEncoding.includes("gzip") && payloadStr.length > 1024) {
+          const compressed = zlib.gzipSync(Buffer.from(payloadStr, "utf8"), { level: 6 });
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.setHeader("Content-Encoding", "gzip");
+          res.setHeader("Vary", "Accept-Encoding");
+          return res.send(compressed);
+        }
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        return res.send(payloadStr);
       }
 
       return res.json({
@@ -10384,15 +10395,14 @@ An error occurred while connecting to the Gemini engines: *"${err.message}"*.
     const assetsPath = path.join(distPath, "assets");
     let cacheClearedOnce = false;
 
-    // Always serve fresh non-cached JS/CSS bundles from dist/assets
+    // Serve content-hashed Vite JS/CSS bundles fast with immutable caching; fallback to latest bundle if old hash requested
     app.get("/assets/:filename", (req, res, next) => {
-      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-      res.setHeader("Pragma", "no-cache");
-      res.setHeader("Expires", "0");
       const requestedFile = path.join(assetsPath, req.params.filename);
       if (fs.existsSync(requestedFile)) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
         return res.sendFile(requestedFile);
       }
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       try {
         const files = fs.existsSync(assetsPath) ? fs.readdirSync(assetsPath) : [];
         if (req.params.filename.endsWith(".js")) {
@@ -10428,18 +10438,10 @@ An error occurred while connecting to the Gemini engines: *"${err.message}"*.
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       res.setHeader("Pragma", "no-cache");
       res.setHeader("Expires", "0");
-      if (!cacheClearedOnce) {
-        res.setHeader("Clear-Site-Data", '"cache"');
-        cacheClearedOnce = true;
-      }
       try {
         const htmlPath = path.join(distPath, "index.html");
         if (fs.existsSync(htmlPath)) {
-          const ver = Date.now();
-          let html = fs.readFileSync(htmlPath, "utf8");
-          html = html
-            .replace(/(\/assets\/index-[^"']+\.js)/g, `$1?v=${ver}`)
-            .replace(/(\/assets\/index-[^"']+\.css)/g, `$1?v=${ver}`);
+          const html = fs.readFileSync(htmlPath, "utf8");
           res.setHeader("Content-Type", "text/html; charset=utf-8");
           return res.send(html);
         }
@@ -10447,6 +10449,12 @@ An error occurred while connecting to the Gemini engines: *"${err.message}"*.
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  // Pre-warm MongoDB Atlas connection & in-memory state cache at boot so first login/load is 0ms DB wait
+  getMongoDatabase()
+    .then((db) => db.collection("pms_app_state").findOne({ _id: "FULL_PMS_BACKUP" as any }))
+    .then(() => console.log("Pre-warmed in-memory PMS state cache from MongoDB Atlas."))
+    .catch((err) => console.warn("Initial pre-warm warning:", err?.message || err));
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
