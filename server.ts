@@ -805,6 +805,25 @@ async function startServer() {
     return res.send(entry.buf);
   });
 
+  // Lightweight live build version endpoint so open browser tabs auto-load new frontend deployments without manual refresh
+  app.get("/api/version", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    let buildId = "";
+    try {
+      const htmlPath = path.join(process.cwd(), "dist", "index.html");
+      if (fs.existsSync(htmlPath)) {
+        const html = fs.readFileSync(htmlPath, "utf8");
+        const match = html.match(/\/assets\/(index-[^"'\s?]+\.js)/);
+        if (match && match[1]) {
+          buildId = match[1];
+        }
+      }
+    } catch {}
+    return res.json({ success: true, buildId });
+  });
+
   app.use((req, _res, next) => {
     if (req.body && typeof req.body === "object" && mediaDataUriStore.size > 0) {
       req.body = rehydrateMediaUrlsToDataUris(req.body);

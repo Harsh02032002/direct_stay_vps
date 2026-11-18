@@ -447,6 +447,80 @@ export default function App() {
     return subscribeToasts((toasts) => setActiveToasts(toasts));
   }, []);
 
+  // Zero-touch live deployment auto-updater: seamlessly loads new frontend builds without manual refresh
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isBackendServerActive()) return;
+
+    const getLoadedBundleId = (): string => {
+      const scripts = Array.from(document.querySelectorAll('script[src]'));
+      for (const s of scripts) {
+        const src = s.getAttribute('src') || '';
+        const m = src.match(/\/assets\/(index-[^"'\s?]+\.js)/);
+        if (m && m[1]) return m[1];
+      }
+      return '';
+    };
+
+    const loadedBundleId = getLoadedBundleId();
+    if (!loadedBundleId) return; // Dev mode (Vite HMR handles updates)
+
+    let reloadScheduled = false;
+    const performSafeReload = (targetBuildId: string) => {
+      if (reloadScheduled) return;
+      if (sessionStorage.getItem('pms_auto_reloaded_build') === targetBuildId) return;
+      reloadScheduled = true;
+
+      const tryReloadNow = () => {
+        if (hasPendingSync()) {
+          setTimeout(tryReloadNow, 1500);
+          return;
+        }
+        const activeTag = (document.activeElement?.tagName || '').toUpperCase();
+        const isTyping =
+          activeTag === 'INPUT' ||
+          activeTag === 'TEXTAREA' ||
+          activeTag === 'SELECT' ||
+          (document.activeElement as HTMLElement | null)?.isContentEditable;
+        if (isTyping) {
+          window.addEventListener('focusout', () => setTimeout(tryReloadNow, 300), { once: true });
+          return;
+        }
+        sessionStorage.setItem('pms_auto_reloaded_build', targetBuildId);
+        window.location.reload();
+      };
+
+      tryReloadNow();
+    };
+
+    const checkServerBuildVersion = async () => {
+      if (reloadScheduled || document.visibilityState !== 'visible') return;
+      try {
+        const res = await fetch(`/api/version?_t=${Date.now()}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const json = await res.json();
+        const serverBuildId = String(json?.buildId || '').trim();
+        if (serverBuildId && serverBuildId !== loadedBundleId) {
+          performSafeReload(serverBuildId);
+        }
+      } catch {}
+    };
+
+    const interval = setInterval(checkServerBuildVersion, 20000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        checkServerBuildVersion();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', checkServerBuildVersion);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', checkServerBuildVersion);
+    };
+  }, []);
+
   const refreshNotificationsFromServer = React.useCallback(async () => {
     if (!isAuthenticated || !isBackendServerActive()) return;
     setIsLoadingNotifications(true);
