@@ -677,6 +677,15 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
+  // Redirect direct VPS IP:3005 browser navigation to canonical HTTPS domain
+  app.use((req, res, next) => {
+    const rawHost = String(req.headers.host || "").split(":")[0].trim();
+    if (rawHost === "169.58.108.201" && !req.path.startsWith("/api/")) {
+      return res.redirect(301, `https://directstay.online${req.originalUrl || "/"}`);
+    }
+    next();
+  });
+
   // Standard Security & CORS Headers
   app.use((req, res, next) => {
     res.setHeader("Set-Cookie", "pms_backend_active=1; Path=/; SameSite=Lax");
