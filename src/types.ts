@@ -1158,16 +1158,20 @@ export interface InventorySupplier {
 export interface InventoryProduct {
   id: string;
   name: string;
-  code: string;
+  code?: string;
   sku?: string;
   category: string;
   unit: string;
-  purchasePrice: number;
+  purchasePrice?: number;
+  costPrice?: number;
+  sellingPrice?: number;
   currentStock: number;
-  minimumStock: number;
+  minimumStock?: number;
   minStockAlert?: number;
   minStock?: number;
-  status: 'In Stock' | 'Low Stock' | 'Out of Stock';
+  supplierName?: string;
+  lastRestockedDate?: string;
+  status?: 'In Stock' | 'Low Stock' | 'Out of Stock';
   lastUpdated?: string;
   hotelId?: string;
 }
@@ -1245,6 +1249,7 @@ export interface PosItem {
   category: string;
   price: number;
   taxRate: number; // percentage e.g. 5 for 5% GST
+  isVeg?: boolean;
   inventoryProductId?: string; // link to inventory product for automatic stock deduction
   available: boolean;
   image?: string;

@@ -91,7 +91,6 @@ export default function LoginView({
           if (!savedUser && parsed?.username) savedUser = String(parsed.username).trim();
           if (!savedPass && parsed?.password) savedPass = String(parsed.password).trim();
         }
-        sessionStorage.removeItem('pms_pending_approval_auth');
       } catch {}
 
       const hotelDisplayName = approvedHotelObj?.name || blockedHotel?.name || 'Your Hotel';
@@ -101,48 +100,70 @@ export default function LoginView({
       );
 
       if (savedUser && savedPass && isBackendServerActive()) {
-        try {
-          const res = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              username: savedUser,
-              password: savedPass,
-              portalMode: portalMode === 'hotelowner' ? 'owner' : portalMode,
-            }),
-          });
-          const text = await res.text();
-          const data = text ? JSON.parse(text) : null;
-          if (res.ok && data?.success && data?.token) {
-            const srvRole = (data.role as UserRole) || 'Admin';
-            sessionStorage.setItem('pms_auth_token', data.token);
-            sessionStorage.setItem('pms_session_token', data.token);
-            try {
-              localStorage.setItem('pms_auth_token', data.token);
-              localStorage.setItem('pms_session_token', data.token);
-              localStorage.setItem('pms_authenticated', 'true');
-              localStorage.setItem('pms_role', (data?.role as string) || 'Admin');
-            } catch {}
-            const finalRole: UserRole =
-              portalMode === 'hotelowner'
-                ? 'Owner'
-                : portalMode === 'admin' && srvRole === 'Owner'
-                ? 'Admin'
-                : srvRole;
-            const displayLabel =
-              finalRole === 'Owner'
-                ? data.hotel?.ownerName || `${hotelDisplayName} Owner`
-                : `${hotelDisplayName} Admin`;
+        // Retry up to 10 times (7s) in case localStorage broadcast arrived a few hundred ms before SuperAdmin's /api/db/sync finished on VPS
+        for (let attempt = 0; attempt < 10; attempt++) {
+          if (isCancelled) return;
+          try {
+            await waitForPendingSyncs();
+            const res = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                username: savedUser,
+                password: savedPass,
+                portalMode: portalMode === 'hotelowner' ? 'owner' : portalMode,
+              }),
+            });
+            const text = await res.text();
+            const data = text ? JSON.parse(text) : null;
+            if (res.ok && data?.success && data?.token) {
+              try {
+                sessionStorage.removeItem('pms_pending_approval_auth');
+              } catch {}
+              const srvRole = (data.role as UserRole) || 'Admin';
+              sessionStorage.setItem('pms_auth_token', data.token);
+              sessionStorage.setItem('pms_session_token', data.token);
+              try {
+                localStorage.setItem('pms_auth_token', data.token);
+                localStorage.setItem('pms_session_token', data.token);
+                localStorage.setItem('pms_authenticated', 'true');
+                localStorage.setItem('pms_role', (data?.role as string) || 'Admin');
+              } catch {}
+              const finalRole: UserRole =
+                portalMode === 'hotelowner'
+                  ? 'Owner'
+                  : portalMode === 'admin' && srvRole === 'Owner'
+                  ? 'Admin'
+                  : srvRole;
+              const displayLabel =
+                finalRole === 'Owner'
+                  ? data.hotel?.ownerName || `${hotelDisplayName} Owner`
+                  : `${hotelDisplayName} Admin`;
 
-            setBlockedHotel(null);
-            setBlockType(null);
-            onLoginSuccess(finalRole, displayLabel, data.hotelId || blockedHotel.id, data.token);
-            return;
+              setBlockedHotel(null);
+              setBlockType(null);
+              onLoginSuccess(finalRole, displayLabel, data.hotelId || blockedHotel.id, data.token);
+              return;
+            }
+            // If server still sees Pending/Expired while /api/db/sync is completing, wait 700ms and retry
+            if (res.status === 403 && attempt < 9) {
+              await new Promise((r) => setTimeout(r, 700));
+              continue;
+            }
+            break;
+          } catch {
+            if (attempt < 9) {
+              await new Promise((r) => setTimeout(r, 700));
+              continue;
+            }
           }
-        } catch {}
+        }
       }
 
-      // Fallback if password wasn't stored in session: immediately unlock the login screen without refresh
+      // Fallback only if password was missing or credentials changed
+      try {
+        sessionStorage.removeItem('pms_pending_approval_auth');
+      } catch {}
       setBlockedHotel(null);
       setBlockType(null);
       if (savedUser) setUsername(savedUser);

@@ -4006,33 +4006,10 @@ async function startServer() {
 
     try {
       const db = await getMongoDatabase();
-      // Login only needs hotels, staff and super-admin credentials. Fetch just those parts of the state
-      // document (and skip the big base64 hotel logos) instead of the whole multi-MB backup, so login
-      // stays fast even on slow connections to Atlas.
-      const loginDocs = await db
+      // Read directly from authoritative write-through in-memory state cache (0ms latency & instant visibility after SuperAdmin approval / password reset)
+      const doc: any = await db
         .collection("pms_app_state")
-        .aggregate([
-          { $match: { _id: "FULL_PMS_BACKUP" as any } },
-          {
-            $project: {
-              _id: 0,
-              data: {
-                hotels: {
-                  $map: {
-                    input: { $ifNull: ["$data.hotels", []] },
-                    as: "h",
-                    in: { $unsetField: { field: "logoUrl", input: "$$h" } },
-                  },
-                },
-                staff: "$data.staff",
-                superAdminPass: "$data.superAdminPass",
-                superAdminEmail: "$data.superAdminEmail",
-              },
-            },
-          },
-        ])
-        .toArray();
-      const doc: any = loginDocs[0] || null;
+        .findOne({ _id: "FULL_PMS_BACKUP" as any });
       const currentState = doc && doc.data ? doc.data : {};
       const hotelsList: any[] = Array.isArray(currentState.hotels) ? currentState.hotels : [];
       const staffList: any[] = Array.isArray(currentState.staff) ? currentState.staff : [];

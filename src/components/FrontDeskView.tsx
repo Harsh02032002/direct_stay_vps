@@ -1608,22 +1608,41 @@ export default function FrontDeskView({
     applyEditInHouseGuestChanges(false);
   };
   
-  // Water Bottle & Service Requests State (default rate from centralized hotelSettings.waterBottleRate ?? 20)
-  const defaultWaterBottleRate = Math.max(0, Number(hotelSettings?.waterBottleRate ?? 20));
+  // Find water bottle product in inventory for current hotel (declared before state hooks that read it)
+  const waterBottleInventoryProduct = inventoryProducts.find(
+    p =>
+      p.name.toLowerCase().includes('water bottle') ||
+      p.name.toLowerCase().includes('drinking water') ||
+      p.name.toLowerCase().includes('mineral water') ||
+      p.name.toLowerCase() === 'water' ||
+      ((p as any).sku && String((p as any).sku).toUpperCase().includes('WATER'))
+  );
+
+  // Water Bottle & Service Requests State (user-configured rate ONLY — no hardcoded ₹20 default)
+  const defaultWaterBottleRate = Math.max(
+    0,
+    Number(waterBottleInventoryProduct?.sellingPrice || hotelSettings?.waterBottleRate || 0)
+  );
   const [showWaterBottleModal, setShowWaterBottleModal] = useState(false);
+  const [waterModalTab, setWaterModalTab] = useState<'allocate' | 'stock'>('allocate');
+  const [addWaterStockQty, setAddWaterStockQty] = useState<number>(24);
+  const [addWaterSellingRate, setAddWaterSellingRate] = useState<number | ''>('');
+  const [addWaterCostRate, setAddWaterCostRate] = useState<number | ''>('');
   const [editingWaterBottleRecord, setEditingWaterBottleRecord] = useState<WaterBottleRecord | null>(null);
   const [waterRoomNo, setWaterRoomNo] = useState('');
-  const [waterQuantity, setWaterQuantity] = useState(2);
+  const [waterQuantity, setWaterQuantity] = useState(1);
   const [waterIsChargeable, setWaterIsChargeable] = useState(false);
   const [waterUnitPrice, setWaterUnitPrice] = useState<number>(() =>
-    Math.max(0, Number(hotelSettings?.waterBottleRate ?? 20))
+    Math.max(0, Number(waterBottleInventoryProduct?.sellingPrice || hotelSettings?.waterBottleRate || 0))
   );
 
   React.useEffect(() => {
     if (!showWaterBottleModal && !editingWaterBottleRecord) {
-      setWaterUnitPrice(Math.max(0, Number(hotelSettings?.waterBottleRate ?? 20)));
+      setWaterUnitPrice(
+        Math.max(0, Number(waterBottleInventoryProduct?.sellingPrice || hotelSettings?.waterBottleRate || 0))
+      );
     }
-  }, [hotelSettings?.waterBottleRate, showWaterBottleModal, editingWaterBottleRecord]);
+  }, [waterBottleInventoryProduct?.sellingPrice, hotelSettings?.waterBottleRate, showWaterBottleModal, editingWaterBottleRecord]);
 
   React.useEffect(() => {
     if (currentSubTab === 'services') {
@@ -1631,17 +1650,101 @@ export default function FrontDeskView({
         if (sessionStorage.getItem('pms_open_water_modal') === '1') {
           sessionStorage.removeItem('pms_open_water_modal');
           setEditingWaterBottleRecord(null);
+          setWaterModalTab('allocate');
           setWaterRoomNo('');
-          setWaterQuantity(2);
+          setWaterQuantity(1);
           setWaterIsChargeable(false);
-          setWaterUnitPrice(Math.max(0, Number(hotelSettings?.waterBottleRate ?? 20)));
+          setWaterUnitPrice(
+            Math.max(0, Number(waterBottleInventoryProduct?.sellingPrice || hotelSettings?.waterBottleRate || 0))
+          );
           setShowWaterBottleModal(true);
         }
       } catch {
         // ignore storage errors
       }
     }
-  }, [currentSubTab, hotelSettings?.waterBottleRate]);
+  }, [currentSubTab, waterBottleInventoryProduct?.sellingPrice, hotelSettings?.waterBottleRate]);
+
+  const handleAddWaterStockDirect = (e: React.FormEvent) => {
+    e.preventDefault();
+    const qtyToAdd = Math.max(0, Math.floor(Number(addWaterStockQty) || 0));
+    if (qtyToAdd <= 0) {
+      showToast('Please enter valid Water Bottle stock quantity to add (>= 1).', 'warning');
+      return;
+    }
+    const sellRate = addWaterSellingRate !== '' ? Math.max(0, Number(addWaterSellingRate) || 0) : Number(waterBottleInventoryProduct?.sellingPrice || 0);
+    const costRate = addWaterCostRate !== '' ? Math.max(0, Number(addWaterCostRate) || 0) : Number(waterBottleInventoryProduct?.costPrice || 0);
+    const currentHotelId =
+      selectedHotelId ||
+      (typeof window !== 'undefined' && sessionStorage.getItem('pms_hotel_id')) ||
+      hotelSettings?.id ||
+      'hotel-1';
+
+    const prevStock = Number(waterBottleInventoryProduct?.currentStock || 0);
+    const nextStock = prevStock + qtyToAdd;
+    const prodId = waterBottleInventoryProduct?.id || `inv-prod-water-${currentHotelId}`;
+    const updatedWaterProd: InventoryProduct = {
+      ...(waterBottleInventoryProduct || {
+        id: prodId,
+        hotelId: currentHotelId,
+        name: 'Packaged Drinking Water (1L)',
+        code: 'WATER-1L',
+        category: 'Housekeeping / F&B',
+        sku: 'WATER-1L',
+        unit: 'Bottles',
+        minimumStock: 5,
+        minStockAlert: 5,
+      }),
+      currentStock: nextStock,
+      purchasePrice: costRate,
+      costPrice: costRate,
+      sellingPrice: sellRate,
+      status: nextStock <= 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock',
+      lastRestockedDate: new Date().toISOString().split('T')[0],
+      lastUpdated: new Date().toISOString(),
+    };
+
+    if (onUpdateInventoryProducts) {
+      const exists = inventoryProducts.some(p => p.id === updatedWaterProd.id);
+      const nextList = exists
+        ? inventoryProducts.map(p => (p.id === updatedWaterProd.id ? updatedWaterProd : p))
+        : [updatedWaterProd, ...inventoryProducts];
+      onUpdateInventoryProducts(nextList);
+    }
+
+    if (onUpdateInventoryMovements) {
+      const mov: InventoryStockMovement = {
+        id: `MOV-WB-IN-${Date.now()}`,
+        hotelId: currentHotelId,
+        productId: updatedWaterProd.id,
+        productName: updatedWaterProd.name,
+        type: 'IN',
+        quantity: qtyToAdd,
+        previousStock: prevStock,
+        newStock: nextStock,
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toLocaleTimeString(),
+        referenceType: 'Purchase' as any,
+        notes: `Added ${qtyToAdd} Water Bottles to Inventory${sellRate > 0 ? ` (Selling Rate: ₹${sellRate}/bottle)` : ''}`,
+        performedBy: loggedInUser || currentRole || 'Front Desk',
+      };
+      onUpdateInventoryMovements([mov, ...inventoryStockMovements]);
+    }
+
+    if (sellRate > 0) {
+      setWaterUnitPrice(sellRate);
+      if (Number(hotelSettings?.waterBottleRate || 0) !== sellRate) {
+        onUpdateHotelSettings({ ...hotelSettings, waterBottleRate: sellRate });
+      }
+    }
+
+    onAddAuditLog(
+      'Water Bottle Stock Added',
+      `Added ${qtyToAdd} bottles to Packaged Drinking Water (1L) inventory (Stock: ${prevStock} → ${nextStock}${sellRate > 0 ? `, Rate: ₹${sellRate}/bottle` : ''}).`
+    );
+    showToast(`Added ${qtyToAdd} Water Bottles to Inventory! Total Available: ${nextStock} Bottles.`, 'success');
+    setWaterModalTab('allocate');
+  };
 
   const handleStartEditWaterBottle = (wb: WaterBottleRecord) => {
     setEditingWaterBottleRecord(wb);
@@ -1773,6 +1876,14 @@ export default function FrontDeskView({
   const handleTriggerCheckIn = (booking: Booking) => {
     setSelectedBookingForCheckin(booking);
     onSelectSubTab('checkin');
+    try {
+      if (window.location.pathname !== '/admin/frontDesk/checkin') {
+        window.history.pushState({}, '', '/admin/frontDesk/checkin');
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch {
+      // ignore
+    }
   };
 
   // Helper Check-Out trigger
@@ -1793,15 +1904,6 @@ export default function FrontDeskView({
     }
   };
 
-  // Find water bottle product in inventory for current hotel
-  const waterBottleInventoryProduct = inventoryProducts.find(
-    p =>
-      p.name.toLowerCase().includes('water bottle') ||
-      p.name.toLowerCase().includes('mineral water') ||
-      p.name.toLowerCase() === 'water' ||
-      ((p as any).sku && String((p as any).sku).toUpperCase().includes('WATER'))
-  );
-
   // Water bottle log save with inventory validation, stock deduction, OUT movement, and Guest Folio / Slip billing
   const handleSaveWaterBottle = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1821,22 +1923,27 @@ export default function FrontDeskView({
       return;
     }
 
-    // Priority 3: Validate available stock before deduction
-    if (waterBottleInventoryProduct) {
-      const availStock = Number(waterBottleInventoryProduct.currentStock) || 0;
-      if (availStock <= 0) {
-        showToast('Water Bottle Out of Stock! Inventory me stock finish ho gaya hai (0 left). Please Inventory Store me stock add karein.', 'error');
-        alert('⚠️ Water Bottle Out of Stock!\n\nInventory me stock finish ho gaya hai (0 left).\nPlease Inventory Store me jakar stock add karein.');
-        return;
-      }
-      if (availStock < qty) {
-        showToast(
-          `Insufficient Stock! Inventory me sirf ${availStock} bottle(s) bachi hain (Requested: ${qty}). Please quantity adjust karein.`,
-          'error'
-        );
-        alert(`⚠️ Insufficient Stock!\n\nInventory me sirf ${availStock} water bottle(s) bachi hain.\nAapne ${qty} request kiya hai. Please quantity adjust karein.`);
-        return;
-      }
+    // Strict Inventory Stock Validation before room allocation
+    const prevEditQty = editingWaterBottleRecord ? Number(editingWaterBottleRecord.quantity || 0) : 0;
+    const availStock = Number(waterBottleInventoryProduct?.currentStock ?? 0) + prevEditQty;
+    if (availStock <= 0) {
+      showToast(
+        'Inventory me sufficient Water Bottle stock nahi hai (0 available)! Agar aapke paas water bottles available hain toh pehle Inventory me stock record add karein.',
+        'error'
+      );
+      return;
+    }
+    if (availStock < qty) {
+      showToast(
+        `Inventory me sufficient Water Bottle stock nahi hai! Sirf ${availStock} bottle(s) available hain aur aap ${qty} allocate kar rahe hain. Pehle Inventory me stock record add karein.`,
+        'error'
+      );
+      return;
+    }
+
+    if (waterIsChargeable && !(Number(waterUnitPrice) > 0)) {
+      showToast('Please enter your Rate / Bottle (₹) before saving a chargeable entry.', 'warning');
+      return;
     }
 
     const currentHotelId =
@@ -2850,6 +2957,7 @@ export default function FrontDeskView({
 
           <CheckInFormView
             waterBottles={waterBottles}
+            posOrders={posOrders}
             mode="walkin"
             onSwitchTab={(t) => onSelectSubTab(t)}
             bookings={bookings}
@@ -2879,6 +2987,7 @@ export default function FrontDeskView({
         <CheckInFormView
           waterBottles={waterBottles}
           onUpdateWaterBottles={onUpdateWaterBottles}
+          posOrders={posOrders}
           inventoryProducts={inventoryProducts}
           onUpdateInventoryProducts={onUpdateInventoryProducts}
           inventoryStockMovements={inventoryStockMovements}
@@ -4012,7 +4121,7 @@ export default function FrontDeskView({
         </div>
       )}
 
-      {/* WATER BOTTLE LOG MODAL */}
+      {/* WATER BOTTLE LOG & STOCK MODAL */}
       {showWaterBottleModal && (() => {
         const waterTargetStay = getActiveStayForRoom(waterRoomNo);
         const parsedRate = Number(waterUnitPrice);
@@ -4020,142 +4129,283 @@ export default function FrontDeskView({
         const totalWaterCharge = waterIsChargeable
           ? r2(Math.max(0, Number(waterQuantity) || 0) * effectiveRate)
           : 0;
+        const currentInvStock = Number(waterBottleInventoryProduct?.currentStock ?? 0);
+        const effectiveAvailForEdit = currentInvStock + (editingWaterBottleRecord ? Number(editingWaterBottleRecord.quantity || 0) : 0);
+        const requestedQty = Math.max(0, Math.floor(Number(waterQuantity) || 0));
+        const hasInsufficientStock = effectiveAvailForEdit <= 0 || requestedQty > effectiveAvailForEdit;
+
         return (
           <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-            <div className="bg-white border border-luxury-brown-200 rounded-2xl p-6 max-w-md w-full space-y-4 text-[#263449] shadow-2xl">
+            <div className="bg-white border border-luxury-brown-200 rounded-2xl p-6 max-w-md w-full space-y-4 text-[#263449] shadow-2xl max-h-[92vh] overflow-y-auto">
               <div className="flex justify-between items-center border-b border-luxury-brown-200 pb-3">
                 <h3 className="text-base font-serif font-bold text-[#263449] flex items-center gap-2">
-                  <Droplets className="w-5 h-5 text-[#C49A3A]" /> {editingWaterBottleRecord ? 'Edit Water Bottle Allocation' : 'Log Water Bottle Allocation'}
+                  <Droplets className="w-5 h-5 text-[#C49A3A]" />{' '}
+                  {editingWaterBottleRecord ? 'Edit Water Bottle Allocation' : 'Water Bottle Allocation & Stock'}
                 </h3>
-                <button onClick={() => { setShowWaterBottleModal(false); setEditingWaterBottleRecord(null); }} className="text-slate-400 hover:text-[#263449] cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWaterBottleModal(false);
+                    setEditingWaterBottleRecord(null);
+                    setWaterModalTab('allocate');
+                  }}
+                  className="text-slate-400 hover:text-[#263449] cursor-pointer"
+                >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <form onSubmit={handleSaveWaterBottle} className="space-y-3 text-xs">
-                <div>
-                  <label className="text-[#263449] font-bold block mb-1">Select Occupied Room *</label>
-                  <select
-                    required
-                    value={waterRoomNo}
-                    onChange={e => setWaterRoomNo(e.target.value)}
-                    className="w-full bg-white border border-luxury-brown-200 rounded-lg p-2.5 text-[#263449] font-semibold"
+              {!editingWaterBottleRecord && (
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#F4F6F9] rounded-xl border border-luxury-brown-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setWaterModalTab('allocate')}
+                    className={`py-2 px-3 rounded-lg font-bold transition-all cursor-pointer ${
+                      waterModalTab === 'allocate'
+                        ? 'bg-[#263449] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-[#263449]'
+                    }`}
                   >
-                    <option value="">-- Choose Occupied Room --</option>
-                    {occupiedRoomsWithStay.map(r => {
-                      const stay = getActiveStayForRoom(r.number);
-                      return (
-                        <option key={r.id} value={r.number}>
-                          Room {r.number} ({r.category}) — {stay?.guestName || 'Occupied'}
-                        </option>
+                    🛎️ Allocate to Room
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddWaterSellingRate(defaultWaterBottleRate > 0 ? defaultWaterBottleRate : '');
+                      setAddWaterCostRate(
+                        Number(waterBottleInventoryProduct?.costPrice || 0) > 0
+                          ? Number(waterBottleInventoryProduct?.costPrice)
+                          : ''
                       );
-                    })}
-                  </select>
-                </div>
-
-                {waterTargetStay && (
-                  <div className="bg-[#FAFBFD] border border-luxury-brown-200 rounded-xl p-2.5 text-[11px] space-y-0.5">
-                    <span className="text-[10px] font-mono uppercase text-[#C49A3A] font-bold block">Active Guest Folio</span>
-                    <p className="font-bold text-[#263449]">{waterTargetStay.guestName} (Stay #{waterTargetStay.id})</p>
-                  </div>
-                )}
-
-                {waterBottleInventoryProduct && (
-                  <div className="flex items-center justify-between bg-[#FAFBFD] border border-luxury-brown-200 rounded-lg px-3 py-2 text-[11px]">
-                    <span className="text-slate-600">Inventory Stock ({waterBottleInventoryProduct.name}):</span>
-                    <span className={`font-mono font-bold ${waterBottleInventoryProduct.currentStock > 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
-                      {waterBottleInventoryProduct.currentStock} {waterBottleInventoryProduct.unit || 'Bottles'} Available
-                    </span>
-                  </div>
-                )}
-
-                <div>
-                  <label className="text-[#263449] font-bold block mb-1.5">Billing Mode</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setWaterIsChargeable(false)}
-                      className={`py-2 px-3 rounded-lg font-bold border transition-all cursor-pointer ${
-                        !waterIsChargeable
-                          ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
-                          : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50'
-                      }`}
-                    >
-                      Complimentary (₹0)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setWaterIsChargeable(true);
-                        if (!(Number(waterUnitPrice) > 0)) {
-                          setWaterUnitPrice(defaultWaterBottleRate);
-                        }
-                      }}
-                      className={`py-2 px-3 rounded-lg font-bold border transition-all cursor-pointer ${
-                        waterIsChargeable
-                          ? 'bg-[#C49A3A] text-white border-[#a9822d] shadow-xs'
-                          : 'bg-white text-slate-700 border-slate-300 hover:bg-amber-50'
-                      }`}
-                    >
-                      Chargeable (₹{defaultWaterBottleRate}/bottle)
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[#263449] font-bold block mb-1">Quantity (Bottles) *</label>
-                    <input
-                      type="number" min="1" required
-                      value={waterQuantity}
-                      onChange={e => setWaterQuantity(Number(e.target.value))}
-                      className="w-full bg-white border border-luxury-brown-200 rounded-lg p-2.5 text-[#263449] font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[#263449] font-bold block mb-1">Rate / Bottle (₹)</label>
-                    <input
-                      type="number" min="0" step="0.5"
-                      disabled={!waterIsChargeable}
-                      value={waterIsChargeable ? waterUnitPrice : 0}
-                      onChange={e => setWaterUnitPrice(Number(e.target.value))}
-                      className="w-full bg-white border border-luxury-brown-200 rounded-lg p-2.5 text-[#263449] font-mono disabled:opacity-50"
-                    />
-                  </div>
-                </div>
-
-                <div className="bg-[#FAFBFD] border border-[#C49A3A]/40 rounded-xl p-3 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox" id="chkCharge"
-                      checked={waterIsChargeable}
-                      onChange={e => {
-                        const checked = e.target.checked;
-                        setWaterIsChargeable(checked);
-                        if (checked && !(Number(waterUnitPrice) > 0)) {
-                          setWaterUnitPrice(defaultWaterBottleRate);
-                        }
-                      }}
-                      className="rounded text-[#C49A3A] focus:ring-0 cursor-pointer"
-                    />
-                    <label htmlFor="chkCharge" className="text-[#263449] font-bold cursor-pointer">
-                      Chargeable to Room Folio (₹{totalWaterCharge.toLocaleString('en-IN')})
-                    </label>
-                  </div>
-                  <p className="text-[11px] text-slate-600 pl-5">
-                    {waterIsChargeable
-                      ? `₹${totalWaterCharge.toLocaleString('en-IN')} will be synced to the guest's active room folio and final checkout invoice.`
-                      : 'Complimentary: ₹0 will be charged to the guest. Will appear as Complimentary (₹0) on Guest Slip.'}
-                  </p>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-3 border-t border-luxury-brown-200">
-                  <button type="button" onClick={() => { setShowWaterBottleModal(false); setEditingWaterBottleRecord(null); }} className="px-4 py-2 bg-[#F4F6F9] hover:bg-slate-200 text-[#263449] border border-luxury-brown-200 font-semibold rounded-lg cursor-pointer">Cancel</button>
-                  <button type="submit" className="px-5 py-2 bg-[#C49A3A] hover:bg-[#a9822d] text-white font-bold rounded-lg shadow cursor-pointer">
-                    {editingWaterBottleRecord ? 'Update Log Entry' : 'Save Log Entry'}
+                      setWaterModalTab('stock');
+                    }}
+                    className={`py-2 px-3 rounded-lg font-bold transition-all cursor-pointer ${
+                      waterModalTab === 'stock'
+                        ? 'bg-[#C49A3A] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-[#263449]'
+                    }`}
+                  >
+                    📦 Add Inventory Stock
                   </button>
                 </div>
-              </form>
+              )}
+
+              <div className="flex items-center justify-between bg-[#FAFBFD] border border-luxury-brown-200 rounded-lg px-3 py-2 text-[11px]">
+                <span className="text-slate-600 font-medium">
+                  Inventory Stock ({waterBottleInventoryProduct?.name || 'Packaged Drinking Water (1L)'}):
+                </span>
+                <span className={`font-mono font-bold ${currentInvStock > 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                  {currentInvStock} {waterBottleInventoryProduct?.unit || 'Bottles'} Available
+                </span>
+              </div>
+
+              {waterModalTab === 'stock' && !editingWaterBottleRecord ? (
+                <form onSubmit={handleAddWaterStockDirect} className="space-y-3 text-xs">
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-950">
+                    Add Water Bottle stock and set your hotel&apos;s own bottle rate. This syncs directly with <strong>Inventory Store</strong>.
+                  </div>
+
+                  <div>
+                    <label className="text-[#263449] font-bold block mb-1">Add Stock Quantity (Bottles) *</label>
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      value={addWaterStockQty}
+                      onChange={e => setAddWaterStockQty(Math.max(1, Number(e.target.value) || 0))}
+                      placeholder="e.g. 24"
+                      className="w-full bg-white border border-luxury-brown-200 rounded-lg p-2.5 text-[#263449] font-mono font-bold"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[#263449] font-bold block mb-1">Guest Selling Rate / Bottle (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={addWaterSellingRate}
+                        onChange={e => setAddWaterSellingRate(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="Set your rate (e.g. 20)"
+                        className="w-full bg-white border border-luxury-brown-200 rounded-lg p-2.5 text-[#263449] font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[#263449] font-bold block mb-1">Purchase Cost / Bottle (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={addWaterCostRate}
+                        onChange={e => setAddWaterCostRate(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="Optional (e.g. 12)"
+                        className="w-full bg-white border border-luxury-brown-200 rounded-lg p-2.5 text-[#263449] font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3 border-t border-luxury-brown-200">
+                    <button
+                      type="button"
+                      onClick={() => setWaterModalTab('allocate')}
+                      className="px-4 py-2 bg-[#F4F6F9] hover:bg-slate-200 text-[#263449] border border-luxury-brown-200 font-semibold rounded-lg cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg shadow cursor-pointer"
+                    >
+                      + Save Water Stock to Inventory
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleSaveWaterBottle} className="space-y-3 text-xs">
+                  {hasInsufficientStock && (
+                    <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2 text-[11px] text-rose-900">
+                      <p className="font-bold">
+                        ⚠️ Inventory me sufficient Water Bottle stock nahi hai! (Available: {effectiveAvailForEdit}, Requested: {requestedQty})
+                      </p>
+                      <p className="text-rose-700">
+                        Agar aapke paas water bottles available hain toh pehle Inventory me iska stock record add karein.
+                      </p>
+                      {!editingWaterBottleRecord && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAddWaterSellingRate(defaultWaterBottleRate > 0 ? defaultWaterBottleRate : '');
+                            setWaterModalTab('stock');
+                          }}
+                          className="px-3 py-1.5 bg-rose-700 hover:bg-rose-800 text-white font-bold rounded-lg text-[11px] cursor-pointer"
+                        >
+                          + Add Water Bottle Stock in Inventory →
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="text-[#263449] font-bold block mb-1">Select Occupied Room *</label>
+                    <select
+                      required
+                      value={waterRoomNo}
+                      onChange={e => setWaterRoomNo(e.target.value)}
+                      className="w-full bg-white border border-luxury-brown-200 rounded-lg p-2.5 text-[#263449] font-semibold"
+                    >
+                      <option value="">-- Choose Occupied Room --</option>
+                      {occupiedRoomsWithStay.map(r => {
+                        const stay = getActiveStayForRoom(r.number);
+                        return (
+                          <option key={r.id} value={r.number}>
+                            Room {r.number} ({r.category}) — {stay?.guestName || 'Occupied'}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {waterTargetStay && (
+                    <div className="bg-[#FAFBFD] border border-luxury-brown-200 rounded-xl p-2.5 text-[11px] space-y-0.5">
+                      <span className="text-[10px] font-mono uppercase text-[#C49A3A] font-bold block">Active Guest Folio</span>
+                      <p className="font-bold text-[#263449]">{waterTargetStay.guestName} (Stay #{waterTargetStay.id})</p>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="text-[#263449] font-bold block mb-1.5">Billing Mode</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setWaterIsChargeable(false)}
+                        className={`py-2 px-3 rounded-lg font-bold border transition-all cursor-pointer ${
+                          !waterIsChargeable
+                            ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50'
+                        }`}
+                      >
+                        Complimentary (₹0)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setWaterIsChargeable(true);
+                          if (!(Number(waterUnitPrice) > 0) && defaultWaterBottleRate > 0) {
+                            setWaterUnitPrice(defaultWaterBottleRate);
+                          }
+                        }}
+                        className={`py-2 px-3 rounded-lg font-bold border transition-all cursor-pointer ${
+                          waterIsChargeable
+                            ? 'bg-[#C49A3A] text-white border-[#a9822d] shadow-xs'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-amber-50'
+                        }`}
+                      >
+                        {defaultWaterBottleRate > 0 ? `Chargeable (₹${defaultWaterBottleRate}/bottle)` : 'Chargeable (Set Rate)'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[#263449] font-bold block mb-1">Quantity (Bottles) *</label>
+                      <input
+                        type="number" min="1" required
+                        value={waterQuantity}
+                        onChange={e => setWaterQuantity(Number(e.target.value))}
+                        className="w-full bg-white border border-luxury-brown-200 rounded-lg p-2.5 text-[#263449] font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[#263449] font-bold block mb-1">Rate / Bottle (₹) {waterIsChargeable ? '*' : ''}</label>
+                      <input
+                        type="number" min="0" step="0.5"
+                        disabled={!waterIsChargeable}
+                        placeholder={waterIsChargeable ? 'Enter rate (e.g. 20)' : '0'}
+                        value={waterIsChargeable ? (waterUnitPrice || '') : 0}
+                        onChange={e => setWaterUnitPrice(e.target.value === '' ? 0 : Number(e.target.value))}
+                        className="w-full bg-white border border-luxury-brown-200 rounded-lg p-2.5 text-[#263449] font-mono disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-[#FAFBFD] border border-[#C49A3A]/40 rounded-xl p-3 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox" id="chkCharge"
+                        checked={waterIsChargeable}
+                        onChange={e => {
+                          const checked = e.target.checked;
+                          setWaterIsChargeable(checked);
+                          if (checked && !(Number(waterUnitPrice) > 0) && defaultWaterBottleRate > 0) {
+                            setWaterUnitPrice(defaultWaterBottleRate);
+                          }
+                        }}
+                        className="rounded text-[#C49A3A] focus:ring-0 cursor-pointer"
+                      />
+                      <label htmlFor="chkCharge" className="text-[#263449] font-bold cursor-pointer">
+                        Chargeable to Room Folio (₹{totalWaterCharge.toLocaleString('en-IN')})
+                      </label>
+                    </div>
+                    <p className="text-[11px] text-slate-600 pl-5">
+                      {waterIsChargeable
+                        ? `₹${totalWaterCharge.toLocaleString('en-IN')} will be synced to the guest's active room folio and final checkout invoice.`
+                        : 'Complimentary: ₹0 will be charged to the guest. Will appear as Complimentary (₹0) on Guest Slip.'}
+                    </p>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3 border-t border-luxury-brown-200">
+                    <button type="button" onClick={() => { setShowWaterBottleModal(false); setEditingWaterBottleRecord(null); }} className="px-4 py-2 bg-[#F4F6F9] hover:bg-slate-200 text-[#263449] border border-luxury-brown-200 font-semibold rounded-lg cursor-pointer">Cancel</button>
+                    <button
+                      type="submit"
+                      disabled={hasInsufficientStock}
+                      className="px-5 py-2 bg-[#C49A3A] hover:bg-[#a9822d] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-lg shadow cursor-pointer"
+                    >
+                      {editingWaterBottleRecord ? 'Update Log Entry' : 'Save Log Entry'}
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         );

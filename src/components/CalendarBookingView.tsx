@@ -282,40 +282,17 @@ export default function CalendarBookingView({
     showToast('Removed price history override.', 'info');
   };
 
-  // Click on Available cell action
+  // Click on Available cell action — let receptionist choose Advance Booking OR Walk-In Booking
   const handleCellClick = (room: Room, dateStr: string) => {
     const compliance = getRoomComplianceStatus(room, dateStr);
     if (compliance.code === 'Green' || compliance.code === 'Purple') {
-      if (onOpenAdvanceBooking) {
-        onOpenAdvanceBooking({
-          roomNumber: room.number,
-          roomType: room.category,
-          date: dateStr
-        });
-        return;
-      }
       const effectiveRate = getEffectiveRateForCategoryOnDate(room.category, dateStr, room.rate);
       setTargetRoomNumber(room.number);
       setTargetRoomType(room.category);
       setTargetRate(effectiveRate);
       setTargetDateStr(dateStr);
-      
-      // Seed inputs
-      setBookingCustomerType('Personal');
-      setCompanyName('');
-      setCompanyGst('');
-      setMealPlanChoice('EP');
-      setDiscountAmount(0);
-      setApplyGstBooking(false);
-      setSourceBookingId('');
-      setGuestName('');
-      setGuestMobile('');
-      setNightsCount(1);
-      setAdvancePaid(0);
-
       setIsBookModalOpen(true);
     } else if (compliance.booking) {
-      // Direct deep-link click representation
       setDragNotice(`Booking ID: ${compliance.booking.id} • Assigned to ${compliance.booking.guestName}. Move by dragging this block.`);
       setTimeout(() => setDragNotice(''), 5000);
     }
@@ -575,7 +552,7 @@ export default function CalendarBookingView({
                 >
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className="text-base font-serif font-bold text-luxury-brown-950">Suite {room.number}</span>
+                      <span className="text-base font-serif font-bold text-luxury-brown-950">Room {room.number}</span>
                       <p className="text-[10.5px] text-luxury-brown-400 font-mono capitalize">{room.category} • ₹{room.rate}</p>
                     </div>
                     <span className={`px-2.5 py-1 rounded text-[10px] uppercase font-mono tracking-wider font-bold ${compliance.badgeClass}`}>
@@ -637,7 +614,7 @@ export default function CalendarBookingView({
               <thead className="bg-luxury-beige-100/50 text-luxury-brown-700">
                 <tr>
                   <th className="p-3 sticky left-0 bg-luxury-beige-100/90 z-10 w-28 border-r border-luxury-brown-205 font-bold font-serif leading-tight">
-                    Suite (Type)
+                    Room (Category)
                   </th>
                   {weeklyDates.map(d => {
                     const dStr = formatDateStr(d);
@@ -661,7 +638,7 @@ export default function CalendarBookingView({
                 {rooms.map(room => (
                   <tr key={room.id} className="hover:bg-luxury-beige-50/50 transition-colors" data-testid={`row-${room.number}`}>
                     <td className="p-3 sticky left-0 bg-white z-10 border-r border-luxury-brown-200 font-bold shadow-xs flex flex-col justify-center">
-                      <span className="text-luxury-brown-955 text-sm">Suite {room.number}</span>
+                      <span className="text-luxury-brown-955 text-sm">Room {room.number}</span>
                       <span className="text-[9px] font-mono text-luxury-gold-700 uppercase font-bold tracking-tight">
                         {room.category.split(' ')[0]}
                       </span>
@@ -1074,253 +1051,114 @@ export default function CalendarBookingView({
         </div>
       )}
 
-      {/* MODAL 1: QUICK CALENDAR BOOKING POPUP */}
+      {/* MODAL 1: CHOOSE ADVANCE BOOKING OR WALK-IN CHECK-IN FROM CALENDAR */}
       {isBookModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in no-print">
-          <div className="bg-white rounded-3xl w-full max-w-xl p-6 shadow-2xl border border-luxury-brown-100 max-h-[92vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b border-luxury-brown-100 pb-3 mb-4">
+          <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-luxury-brown-100 space-y-5">
+            <div className="flex justify-between items-start border-b border-luxury-brown-100 pb-3">
               <div>
-                <h3 className="text-md font-serif font-bold text-luxury-brown-950">Direct Calendar Room Booking</h3>
-                <p className="text-[10px] text-gray-500 font-mono">Pre-allocated on check-in date: {targetDateStr}</p>
+                <h3 className="text-base font-serif font-bold text-luxury-brown-950">
+                  Book Room {targetRoomNumber} ({targetRoomType})
+                </h3>
+                <p className="text-xs text-luxury-brown-600 font-mono mt-0.5">
+                  Selected Date: <strong>{targetDateStr}</strong> • Base Tariff: <strong>₹{targetRate.toLocaleString('en-IN')}/Night</strong>
+                </p>
               </div>
-              <button 
+              <button
+                type="button"
                 onClick={() => setIsBookModalOpen(false)}
-                className="text-luxury-brown-405 hover:text-luxury-brown-950 font-bold cursor-pointer"
+                className="text-luxury-brown-500 hover:text-luxury-brown-950 font-bold cursor-pointer px-2 py-1"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveInstantBooking} className="space-y-4 text-xs font-sans">
-              {/* Personal vs Corporate Booking Switch */}
-              <div className="grid grid-cols-2 gap-2 p-1 bg-luxury-beige-100/70 rounded-xl border border-luxury-brown-200">
-                <button
-                  type="button"
-                  onClick={() => setBookingCustomerType('Personal')}
-                  className={`py-1.5 rounded-lg font-serif font-bold text-xs cursor-pointer transition-all ${
-                    bookingCustomerType === 'Personal'
-                      ? 'bg-luxury-brown-950 text-luxury-gold-300 shadow-xs'
-                      : 'text-luxury-brown-700'
-                  }`}
-                >
-                  Personal Booking
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBookingCustomerType('Corporate')}
-                  className={`py-1.5 rounded-lg font-serif font-bold text-xs cursor-pointer transition-all ${
-                    bookingCustomerType === 'Corporate'
-                      ? 'bg-luxury-brown-950 text-luxury-gold-300 shadow-xs'
-                      : 'text-luxury-brown-700'
-                  }`}
-                >
-                  Corporate Booking
-                </button>
-              </div>
+            <p className="text-xs text-luxury-brown-700">
+              Select how you would like to proceed for <strong>Room {targetRoomNumber}</strong>:
+            </p>
 
-              {bookingCustomerType === 'Corporate' && (
-                <div className="grid grid-cols-2 gap-3 p-3 bg-luxury-beige-50 rounded-xl border border-luxury-gold-500/30">
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Company Name</label>
-                    <input
-                      type="text"
-                      value={companyName}
-                      onChange={e => setCompanyName(e.target.value)}
-                      placeholder="Business / Company Name"
-                      className="w-full px-3 py-1.5 border rounded-lg bg-white"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Company GSTIN</label>
-                    <input
-                      type="text"
-                      value={companyGst}
-                      onChange={e => setCompanyGst(e.target.value.toUpperCase())}
-                      placeholder="22AAAAA0000A1Z5"
-                      className="w-full px-3 py-1.5 border rounded-lg bg-white font-mono uppercase"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="p-3 bg-luxury-beige-100/50 rounded-xl grid grid-cols-3 gap-2 text-center font-mono text-[10px]">
-                <div>
-                  <span className="text-gray-400 block uppercase">Allocated Room</span>
-                  <strong className="text-teal-700 text-sm">Suite {targetRoomNumber}</strong>
-                </div>
-                <div>
-                  <span className="text-gray-400 block uppercase">Category</span>
-                  <strong className="text-luxury-brown-900 text-xs truncate capitalize block">{targetRoomType}</strong>
-                </div>
-                <div>
-                  <span className="text-gray-400 block uppercase">Nightly Rate (Editable)</span>
-                  <input
-                    type="number"
-                    min={100}
-                    value={targetRate}
-                    onChange={e => setTargetRate(Number(e.target.value) || 0)}
-                    className="w-24 mx-auto mt-0.5 px-2 py-0.5 border border-luxury-brown-300 rounded text-center font-bold text-luxury-brown-950 bg-white"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {/* Guest Particulars */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Complete Name *</label>
-                    <input
-                      type="text"
-                      required
-                      value={guestName}
-                      onChange={(e) => setGuestName(e.target.value)}
-                      placeholder="e.g. Ramesh Chandra Das"
-                      className="w-full px-3 py-2 border rounded-lg bg-white"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Mobile Contact *</label>
-                    <input
-                      type="text"
-                      required
-                      value={guestMobile}
-                      onChange={(e) => setGuestMobile(e.target.value)}
-                      placeholder="10 digit number"
-                      className="w-full px-3 py-2 border rounded-lg bg-white font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Stay Duration (Nights)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="30"
-                      value={nightsCount}
-                      onChange={(e) => setNightsCount(Number(e.target.value))}
-                      className="w-full px-3 py-2 border rounded-lg bg-white font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Meal Plan</label>
-                    <select
-                      value={mealPlanChoice}
-                      onChange={e => setMealPlanChoice(e.target.value as any)}
-                      className="w-full px-2.5 py-2 border rounded-lg bg-white"
-                    >
-                      <option value="EP">EP (Room Only)</option>
-                      <option value="CP">CP (+₹300/N)</option>
-                      <option value="MAP">MAP (+₹700/N)</option>
-                      <option value="AP">AP (+₹1100/N)</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Discount (₹)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={discountAmount}
-                      onChange={(e) => setDiscountAmount(Number(e.target.value) || 0)}
-                      className="w-full px-3 py-2 border rounded-lg bg-white font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Booking Channel</label>
-                    <select
-                      value={bkgSource}
-                      onChange={(e) => setBkgSource(e.target.value as any)}
-                      className="w-full px-2.5 py-2 border rounded-lg bg-white"
-                    >
-                      <option value="Walk-in">Walk-in</option>
-                      <option value="Agoda">Agoda</option>
-                      <option value="OYO">OYO</option>
-                      <option value="MakeMyTrip">MakeMyTrip</option>
-                      <option value="Booking.com">Booking.com</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Source Booking ID</label>
-                    <input
-                      type="text"
-                      value={sourceBookingId}
-                      onChange={e => setSourceBookingId(e.target.value)}
-                      placeholder="OTA / Ref ID"
-                      className="w-full px-3 py-2 border rounded-lg bg-white font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-600 block">Advance Prepaid (₹)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={advancePaid}
-                      onChange={(e) => setAdvancePaid(Number(e.target.value))}
-                      className="w-full px-3 py-2 border rounded-lg bg-white font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between bg-luxury-beige-50 p-3 rounded-xl border border-luxury-brown-200">
-                  <label className="flex items-center gap-2 font-bold text-luxury-brown-900 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={applyGstBooking}
-                      onChange={e => setApplyGstBooking(e.target.checked)}
-                      className="w-4 h-4 accent-luxury-gold-600"
-                    />
-                    <span>GST Booking (Apply 5% GST Tax)</span>
-                  </label>
-                  <select
-                    value={payMethod}
-                    onChange={(e) => setPayMethod(e.target.value as any)}
-                    className="px-3 py-1.5 border rounded-lg bg-white font-bold"
-                  >
-                    <option value="Cash">Cash</option>
-                    <option value="UPI">UPI (QR)</option>
-                    <option value="Card">Visa / Card</option>
-                    <option value="Online">Online Trans</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex flex-wrap gap-2.5 pt-3 border-t justify-end">
-                {onOpenAdvanceBooking && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsBookModalOpen(false);
-                      onOpenAdvanceBooking({
+            <div className="grid grid-cols-1 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBookModalOpen(false);
+                  try {
+                    sessionStorage.setItem(
+                      'pms_preselect_room',
+                      JSON.stringify({
                         roomNumber: targetRoomNumber,
                         roomType: targetRoomType,
-                        date: targetDateStr
-                      });
-                    }}
-                    className="px-4 py-2 rounded-xl bg-luxury-gold-500 hover:bg-luxury-gold-600 text-luxury-brown-950 font-bold text-xs cursor-pointer shadow-sm flex items-center gap-1.5"
-                  >
-                    Open in Advance Booking Form →
-                  </button>
-                )}
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-serif font-bold text-xs cursor-pointer shadow-sm"
-                >
-                  ✓ Complete Instant Booking
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsBookModalOpen(false)}
-                  className="px-5 py-2 rounded-xl border hover:bg-gray-150 text-gray-750 font-bold cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
+                        rate: targetRate,
+                        checkInDate: targetDateStr,
+                      })
+                    );
+                    sessionStorage.setItem('pms_open_advance_modal', '1');
+                  } catch {}
+                  if (onOpenAdvanceBooking) {
+                    onOpenAdvanceBooking({
+                      roomNumber: targetRoomNumber,
+                      roomType: targetRoomType,
+                      date: targetDateStr,
+                    });
+                    return;
+                  }
+                  window.history.pushState({}, '', '/admin/frontDesk/reservations');
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                }}
+                className="w-full p-4 rounded-2xl border-2 border-[#C49A3A]/50 bg-[#FFFDF8] hover:bg-[#C49A3A]/10 text-left transition-all cursor-pointer flex items-center justify-between group"
+              >
+                <div>
+                  <span className="font-serif font-bold text-sm text-luxury-brown-950 block">
+                    📅 Advance Booking (Reservation)
+                  </span>
+                  <span className="text-[11px] text-luxury-brown-600 block mt-0.5">
+                    Open full Advance Reservation form (supports Bulk Multi-Room, Extra Services &amp; Advance Payment)
+                  </span>
+                </div>
+                <ChevronRight className="w-5 h-5 text-[#C49A3A] shrink-0 group-hover:translate-x-0.5 transition-transform" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBookModalOpen(false);
+                  try {
+                    sessionStorage.setItem(
+                      'pms_preselect_room',
+                      JSON.stringify({
+                        roomNumber: targetRoomNumber,
+                        roomType: targetRoomType,
+                        rate: targetRate,
+                        checkInDate: targetDateStr,
+                      })
+                    );
+                  } catch {}
+                  window.history.pushState({}, '', '/admin/frontDesk/walkin');
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                }}
+                className="w-full p-4 rounded-2xl border-2 border-emerald-500/40 bg-emerald-50/40 hover:bg-emerald-50 text-left transition-all cursor-pointer flex items-center justify-between group"
+              >
+                <div>
+                  <span className="font-serif font-bold text-sm text-emerald-950 block">
+                    🛎️ Walk-In Booking (Direct Check-In)
+                  </span>
+                  <span className="text-[11px] text-emerald-800 block mt-0.5">
+                    Open Direct Walk-In Check-In &amp; GRC form pre-selected with Room {targetRoomNumber}
+                  </span>
+                </div>
+                <ChevronRight className="w-5 h-5 text-emerald-700 shrink-0 group-hover:translate-x-0.5 transition-transform" />
+              </button>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-luxury-brown-100">
+              <button
+                type="button"
+                onClick={() => setIsBookModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-luxury-brown-200 hover:bg-luxury-beige-100 text-xs font-bold text-luxury-brown-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -364,6 +364,10 @@ export default function ReservationView({
         const parsed = JSON.parse(preselectRaw);
         if (parsed?.roomNumber) setSelectedRoomNumber(String(parsed.roomNumber));
         if (parsed?.roomType) setRoomType(parsed.roomType as RoomCategory);
+        if (parsed?.checkInDate) {
+          setCheckInDate(String(parsed.checkInDate));
+          setCheckOutDate(getFutureDateStr(1, String(parsed.checkInDate)));
+        }
         const rm = rooms.find(r => r.number === String(parsed?.roomNumber));
         const effectiveRate = Number(parsed?.rate) || rm?.rate || 2000;
         setRoomPrice(effectiveRate);
@@ -711,7 +715,7 @@ export default function ReservationView({
   }, 0);
   const totalRoomPrice = isMultiRoomMode && multiRoomSelections.length > 0
     ? multiRoomsNightlySum * Math.max(1, nights)
-    : (roomPrice + extraOccupancyCount * activeExtraPersonRate + singleModeExtraBedPerNight) * Math.max(1, nights);
+    : (roomPrice + singleModeExtraBedPerNight) * Math.max(1, nights);
   const discount = totalRoomPrice - bookingPrice;
 
   // Travel Agent Commission Calculation (Auto-calculated on Confirmed bookings)
@@ -781,18 +785,15 @@ export default function ReservationView({
   const computeAutoPriceForStay = (
     rate: number,
     nightsCount: number,
-    adultsVal: number,
-    childrenVal: number,
-    rmObj?: Room,
+    _adultsVal: number,
+    _childrenVal: number,
+    _rmObj?: Room,
     extraBedActive: boolean = hasExtraBed,
     exBedCnt: number = extraBedCount,
     exBedRt: number = extraBedRate
   ) => {
-    const baseOcc = rmObj?.baseOccupancy ?? 2;
-    const extraRate = Number(rmObj?.extraPersonCharge) > 0 ? Number(rmObj?.extraPersonCharge) : 500;
-    const extraGuests = Math.max(0, (Number(adultsVal) || 1) + (Number(childrenVal) || 0) - baseOcc);
     const exBedTotal = extraBedActive ? Math.max(1, Number(exBedCnt) || 1) * (Number(exBedRt) || 0) : 0;
-    return (rate + extraGuests * extraRate + exBedTotal) * Math.max(1, nightsCount);
+    return (rate + exBedTotal) * Math.max(1, nightsCount);
   };
 
   // Renew Price: restore standard rates from catalog (Point 6)
@@ -2836,47 +2837,49 @@ export default function ReservationView({
                 </span>
 
                 {/* 1. Arrival Date & Departure Date */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">Arrival Date *</label>
+                    <div className="min-h-[22px] flex items-center justify-between">
+                      <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">Arrival Date *</label>
+                    </div>
                     <input
                       type="date"
                       required
                       min={editingBooking ? undefined : getTodayDateStr()}
                       value={checkInDate}
                       onChange={(e) => handleCheckInDateChange(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
+                      className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between">
+                    <div className="min-h-[22px] flex items-center justify-between gap-1.5">
                       <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">Departure Date</label>
                       {checkInDate && checkOutDate && checkInDate === checkOutDate ? (
-                        <span className="text-[9.5px] text-indigo-700 font-bold font-mono bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                        <span className="text-[9.5px] leading-none text-indigo-700 font-bold font-mono bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
                           ⚡ Hourly / Day-Use Stay
                         </span>
                       ) : checkOutDate ? (
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 leading-none">
                           <button
                             type="button"
                             onClick={() => handleCheckOutDateChange(checkInDate)}
-                            className="text-[9.5px] text-indigo-700 hover:text-indigo-900 underline font-mono cursor-pointer"
+                            className="text-[9.5px] leading-none text-indigo-700 hover:text-indigo-900 underline font-mono cursor-pointer"
                             title="Set same-day hourly stay"
                           >
                             + Same-Day Stay
                           </button>
-                          <span className="text-slate-300">|</span>
+                          <span className="text-slate-300 leading-none">|</span>
                           <button
                             type="button"
                             onClick={() => handleCheckOutDateChange('')}
-                            className="text-[9.5px] text-amber-700 hover:text-amber-900 underline font-mono cursor-pointer"
+                            className="text-[9.5px] leading-none text-amber-700 hover:text-amber-900 underline font-mono cursor-pointer"
                           >
                             Open Stay
                           </button>
                         </div>
                       ) : (
-                        <span className="text-[9.5px] text-amber-600 font-bold font-mono">(Open Stay)</span>
+                        <span className="text-[9.5px] leading-none text-amber-600 font-bold font-mono">(Open Stay)</span>
                       )}
                     </div>
                     <input
@@ -2884,7 +2887,7 @@ export default function ReservationView({
                       min={checkInDate || getTodayDateStr()}
                       value={checkOutDate}
                       onChange={(e) => handleCheckOutDateChange(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
+                      className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
                     />
                   </div>
                 </div>
@@ -2961,12 +2964,12 @@ export default function ReservationView({
                 )}
 
                 {/* 2. No. of Rooms & No. of Night */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="min-h-[22px] flex items-center justify-between gap-2">
                       <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">No. of Rooms *</label>
                       {selectedRoomList.length > 0 && (
-                        <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-bold">
+                        <span className="text-[10px] leading-none font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-bold">
                           {selectedRoomList.length} Room{selectedRoomList.length > 1 ? 's' : ''} Selected
                         </span>
                       )}
@@ -2978,14 +2981,16 @@ export default function ReservationView({
                       value={numberOfRooms}
                       onFocus={(e) => e.target.select()}
                       onChange={(e) => handleNumberOfRoomsChange(parseInt(e.target.value, 10) || 1)}
-                      className="w-full px-3 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-900 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      className="w-full h-9 px-3 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-900 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">
-                      No. of Night {!checkOutDate ? '(Open Stay)' : ''}
-                    </label>
+                    <div className="min-h-[22px] flex items-center justify-between">
+                      <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">
+                        No. of Night {!checkOutDate ? '(Open Stay)' : ''}
+                      </label>
+                    </div>
                     <input
                       type="number"
                       min={1}
@@ -2993,7 +2998,7 @@ export default function ReservationView({
                       value={calNights()}
                       onFocus={(e) => e.target.select()}
                       onChange={(e) => handleNightsInputChange(parseInt(e.target.value, 10) || 1)}
-                      className="w-full px-3 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-900 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      className="w-full h-9 px-3 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-900 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     />
                   </div>
                 </div>

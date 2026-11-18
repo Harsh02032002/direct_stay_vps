@@ -156,6 +156,7 @@ interface IntegratedAdminPmsHubProps {
   currentRole?: string;
   loggedInUser?: string;
   onAddAuditLog?: (action: string, details: string) => void;
+  setSelectedBookingForCheckin?: (booking: Booking | null) => void;
 
   // Live Dynamic Database Props from App.tsx (MongoDB Atlas)
   appRooms?: Room[];
@@ -958,6 +959,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   currentRole = 'Admin',
   loggedInUser,
   onAddAuditLog,
+  setSelectedBookingForCheckin,
   appRooms = [],
   appBookings = [],
   appCheckins = [],
@@ -1989,6 +1991,31 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   const [roomTasksDrawerRoom, setRoomTasksDrawerRoom] = useState<RoomAsset | null>(null);
   const [isRoomTasksOpen, setIsRoomTasksOpen] = useState(false);
   const [roomOrderBooking, setRoomOrderBooking] = useState<BookingRecord | null>(null);
+
+  const handleRedirectToFullCheckInPage = (b: BookingRecord) => {
+    const matchedExisting = appBookings.find(
+      (ab) =>
+        ab.id === b.id ||
+        ab.id === b.bookingNo ||
+        ab.id.replace(/^#/, '') === String(b.bookingNo || '').replace(/^#/, '')
+    );
+    const targetAppBooking = matchedExisting || mapRecordToAppBooking(b, selectedHotelId);
+    setSelectedBookingForDrawer(null);
+    setCheckInBooking(null);
+    if (setSelectedBookingForCheckin) {
+      setSelectedBookingForCheckin(targetAppBooking);
+    } else {
+      setActiveTab('frontDesk');
+      setFrontDeskSubTab('checkin');
+      try {
+        if (window.location.pathname !== '/admin/frontDesk/checkin') {
+          window.history.pushState({}, '', '/admin/frontDesk/checkin');
+        }
+      } catch {
+        // ignore
+      }
+    }
+  };
 
   const syncRoomsToDb = (nextRooms: RoomAsset[]) => {
     setRooms(nextRooms);
@@ -3805,7 +3832,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
             }
           }}
           onSelectBooking={(b) => setSelectedBookingForDrawer(b)}
-          onOpenCheckIn={(b) => setCheckInBooking(b)}
+          onOpenCheckIn={(b) => handleRedirectToFullCheckInPage(b)}
           onQuickCheckOut={(b) => setCheckoutClearanceBooking(b)}
           onOpenRecordPayment={(b) => setPaymentBooking(b)}
           onOpenInvoice={(b, scope) =>
@@ -3863,7 +3890,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           onClearDraftSeed={() => setDraftBookingSeed(null)}
           onSaveFullBooking={handleSaveFullBooking}
           onSelectBooking={(b) => setSelectedBookingForDrawer(b)}
-          onOpenCheckIn={(b) => setCheckInBooking(b)}
+          onOpenCheckIn={(b) => handleRedirectToFullCheckInPage(b)}
           onQuickCheckOut={(b) => setCheckoutClearanceBooking(b)}
           onOpenRecordPayment={(b) => setPaymentBooking(b)}
           onOpenInvoice={(b, scope) =>
@@ -4157,10 +4184,29 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
                 category: item.category,
                 price: item.price,
                 taxRate: item.taxRate,
-                available: item.available,
+                isVeg: Boolean(item.isVeg),
+                available: item.available !== false,
                 kitchenStation: item.kitchenStation,
               };
               onUpdatePosItems([...appPosItems, dbItem]);
+            }
+          }}
+          onUpdateMenuItem={(item) => {
+            setPosMenu((prev) => prev.map((m) => (m.id === item.id ? item : m)));
+            if (onUpdatePosItems) {
+              const dbItem: PosItem = {
+                id: item.id,
+                hotelId: selectedHotelId,
+                code: item.code,
+                name: item.name,
+                category: item.category,
+                price: item.price,
+                taxRate: item.taxRate,
+                isVeg: Boolean(item.isVeg),
+                available: item.available !== false,
+                kitchenStation: item.kitchenStation,
+              };
+              onUpdatePosItems(appPosItems.map((pi) => (pi.id === item.id ? dbItem : pi)));
             }
           }}
           onDeleteMenuItem={(itemId) => {
@@ -4911,7 +4957,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       <BookingDetailsDrawer
         booking={selectedBookingForDrawer}
         onClose={() => setSelectedBookingForDrawer(null)}
-        onOpenCheckInModal={(b) => setCheckInBooking(b)}
+        onOpenCheckInModal={(b) => handleRedirectToFullCheckInPage(b)}
         onCheckoutBooking={(b) => setCheckoutClearanceBooking(b)}
         onOpenRecordPayment={(b) => setPaymentBooking(b)}
         onPreviewGuestDoc={(guest, bookingNo) => setPreviewDocState({ guest, bookingNo })}

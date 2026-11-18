@@ -82,6 +82,7 @@ export default function RoomManagementView({
   // Room Form Modal State
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<'add' | 'edit'>('add');
+  const [isCustomCategoryMode, setIsCustomCategoryMode] = useState(false);
   const [roomLimitAlert, setRoomLimitAlert] = useState<string | null>(null);
 
   // Room Form Fields
@@ -234,6 +235,7 @@ export default function RoomManagementView({
   // --- Handlers for Add/Edit Room ---
   const handleEditRoomClick = (room: Room) => {
     setFormMode('edit');
+    setIsCustomCategoryMode(false);
     setRoomId(room.id);
     setRoomNumber(room.number);
     setCategory(room.category);
@@ -260,6 +262,7 @@ export default function RoomManagementView({
     }
     setRoomLimitAlert(null);
     setFormMode('add');
+    setIsCustomCategoryMode(categories.length === 0);
     setRoomId('');
     setRoomNumber('');
     setAllowExtraBed(true);
@@ -1598,22 +1601,64 @@ export default function RoomManagementView({
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Category / Type *</label>
-                  <input
-                    type="text"
-                    required
-                    list="hotel-room-categories-list"
-                    disabled={isRestrictedRole}
-                    value={category}
-                    onChange={(e) => handleCategoryChangeInForm(e.target.value)}
-                    placeholder={categories.length > 0 ? 'Select or type category...' : 'Type category name (e.g. Royal Suite)'}
-                    className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs focus:outline-none focus:border-luxury-gold-500 bg-white text-luxury-brown-950 font-semibold"
-                  />
-                  <datalist id="hotel-room-categories-list">
-                    {categories.map(cat => (
-                      <option key={cat.name} value={cat.name} />
-                    ))}
-                  </datalist>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Category / Type *</label>
+                    {categories.length > 0 && !isRestrictedRole && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isCustomCategoryMode) {
+                            setIsCustomCategoryMode(false);
+                            if (!category.trim() && categories[0]) {
+                              handleCategoryChangeInForm(categories[0].name);
+                            }
+                          } else {
+                            setIsCustomCategoryMode(true);
+                            setCategory('');
+                          }
+                        }}
+                        className="text-[10px] font-bold text-[#C49A3A] hover:underline cursor-pointer"
+                      >
+                        {isCustomCategoryMode ? '← Choose Existing' : '+ New Category'}
+                      </button>
+                    )}
+                  </div>
+                  {categories.length > 0 && !isCustomCategoryMode ? (
+                    <select
+                      required
+                      disabled={isRestrictedRole}
+                      value={category}
+                      onChange={(e) => {
+                        if (e.target.value === '__ADD_NEW_CATEGORY__') {
+                          setIsCustomCategoryMode(true);
+                          setCategory('');
+                          return;
+                        }
+                        handleCategoryChangeInForm(e.target.value);
+                      }}
+                      className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs focus:outline-none focus:border-luxury-gold-500 bg-white text-luxury-brown-950 font-semibold"
+                    >
+                      {!categories.some(cat => cat.name === category) && category && (
+                        <option value={category}>{category}</option>
+                      )}
+                      {categories.map(cat => (
+                        <option key={cat.name} value={cat.name}>
+                          {cat.name} (₹{cat.rate.toLocaleString('en-IN')}/Night)
+                        </option>
+                      ))}
+                      <option value="__ADD_NEW_CATEGORY__">+ Add New Custom Category...</option>
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      required
+                      disabled={isRestrictedRole}
+                      value={category}
+                      onChange={(e) => handleCategoryChangeInForm(e.target.value)}
+                      placeholder="Type new category name (e.g. Royal Suite)"
+                      className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs focus:outline-none focus:border-luxury-gold-500 bg-white text-luxury-brown-950 font-semibold"
+                    />
+                  )}
                 </div>
 
                 <div className="space-y-1">

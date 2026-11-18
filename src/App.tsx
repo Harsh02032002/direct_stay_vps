@@ -5,6 +5,7 @@ import {
   fetchPublicWebsiteConfig,
   syncAllToSupabase,
   hasPendingSync,
+  waitForPendingSyncs,
   markDbHydrated,
   onboardHotelApi,
   appendAuditLogToCloud,
@@ -701,11 +702,11 @@ export default function App() {
             category: 'Housekeeping / F&B',
             sku: 'WATER-1L',
             unit: 'Bottles',
-            currentStock: 100,
-            minStockAlert: 10,
-            costPrice: 12,
-            sellingPrice: 20,
-            supplierName: 'Bisleri India / Local Vendor',
+            currentStock: 0,
+            minStockAlert: 5,
+            costPrice: 0,
+            sellingPrice: 0,
+            supplierName: '',
             lastRestockedDate: new Date().toISOString().split('T')[0],
           },
           ...prods,
@@ -2424,27 +2425,32 @@ export default function App() {
     setHotels(updatedHotels);
     savePmsData({ hotels: updatedHotels });
 
-    try {
-      const approvalPayload = {
-        ts: Date.now(),
-        hotels: updatedHotels.map(h => ({
-          id: h.id,
-          name: h.name,
-          username: h.username,
-          ownerUsername: h.ownerUsername,
-          emailAddress: h.emailAddress,
-          status: h.status,
-          subscriptionStatus: h.subscriptionStatus,
-          subscriptionEndDate: h.subscriptionEndDate,
-        })),
-      };
-      localStorage.setItem('pms_hotel_status_broadcast', JSON.stringify(approvalPayload));
-      if (typeof BroadcastChannel !== 'undefined') {
-        const bc = new BroadcastChannel('pms_hotel_approval_channel');
-        bc.postMessage(approvalPayload);
-        bc.close();
-      }
-    } catch {}
+    const broadcastHotelApproval = () => {
+      try {
+        const approvalPayload = {
+          ts: Date.now(),
+          hotels: updatedHotels.map(h => ({
+            id: h.id,
+            name: h.name,
+            username: h.username,
+            ownerUsername: h.ownerUsername,
+            emailAddress: h.emailAddress,
+            status: h.status,
+            subscriptionStatus: h.subscriptionStatus,
+            subscriptionEndDate: h.subscriptionEndDate,
+          })),
+        };
+        localStorage.setItem('pms_hotel_status_broadcast', JSON.stringify(approvalPayload));
+        if (typeof BroadcastChannel !== 'undefined') {
+          const bc = new BroadcastChannel('pms_hotel_approval_channel');
+          bc.postMessage(approvalPayload);
+          bc.close();
+        }
+      } catch {}
+    };
+
+    broadcastHotelApproval();
+    waitForPendingSyncs().then(() => broadcastHotelApproval()).catch(() => {});
 
     updatedHotels.forEach(uh => {
       const oldH = prevHotels.find(h => h.id === uh.id);
@@ -2867,11 +2873,11 @@ export default function App() {
             category: 'Housekeeping / F&B',
             sku: 'WATER-1L',
             unit: 'Bottles',
-            currentStock: 100,
-            minStockAlert: 10,
-            costPrice: 12,
-            sellingPrice: 20,
-            supplierName: 'Bisleri India / Local Vendor',
+            currentStock: 0,
+            minStockAlert: 5,
+            costPrice: 0,
+            sellingPrice: 0,
+            supplierName: '',
             lastRestockedDate: new Date().toISOString().split('T')[0],
           },
           ...tenantProds,
@@ -2968,6 +2974,7 @@ export default function App() {
           currentRole={currentRole}
           loggedInUser={loggedInUser}
           onAddAuditLog={handleAddAuditLogDirectly}
+          setSelectedBookingForCheckin={handleSetSelectedForCheckin}
           appRooms={rooms}
           appBookings={bookings}
           appCheckins={checkins}
@@ -3847,6 +3854,14 @@ export default function App() {
     setSelectedBookingForCheckin(bk);
     setActiveTab('frontDesk');
     setFrontDeskSubTab('checkin');
+    try {
+      if (window.location.pathname !== '/admin/frontDesk/checkin') {
+        window.history.pushState({}, '', '/admin/frontDesk/checkin');
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch {
+      // ignore navigation history errors
+    }
   };
 
   const handleSetSelectedForInvoice = (bk: Booking | null) => {
