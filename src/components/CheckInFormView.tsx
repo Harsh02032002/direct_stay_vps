@@ -65,6 +65,20 @@ const getTomorrowDateStr = () => {
   return `${year}-${month}-${day}`;
 };
 
+const getFutureDateStr = (daysAhead: number, baseDateStr?: string) => {
+  const d = baseDateStr ? new Date(baseDateStr) : new Date();
+  if (isNaN(d.getTime())) {
+    const fallback = new Date();
+    fallback.setDate(fallback.getDate() + daysAhead);
+    return `${fallback.getFullYear()}-${String(fallback.getMonth() + 1).padStart(2, '0')}-${String(fallback.getDate()).padStart(2, '0')}`;
+  }
+  d.setDate(d.getDate() + daysAhead);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const getCurrentTimeStr = () => {
   const d = new Date();
   let hours = d.getHours();
