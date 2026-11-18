@@ -22,8 +22,9 @@ import {
 
 dotenv.config();
 
-// Ensure mongodb+srv:// SRV lookups succeed even when local ISP/router DNS refuses SRV queries
+// Ensure mongodb+srv:// SRV lookups succeed and prefer IPv4 so VPS never stalls on dead IPv6 routes
 try {
+  dns.setDefaultResultOrder("ipv4first");
   dns.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
 } catch {}
 
@@ -712,6 +713,105 @@ async function startServer() {
 
   app.use(express.json({ limit: "25mb" }));
 
+  // Content-addressed in-memory media store: offloads multi-MB inline base64 images from /api/db/state JSON
+  // (~3.1MB -> ~25KB!) while transparently restoring original data: URIs on any incoming write/sync.
+  const mediaBlobStore = new Map<string, { mime: string; buf: Buffer }>();
+  const mediaDataUriStore = new Map<string, string>();
+
+  function offloadDataUrisToMediaUrls(val: any, depth = 0): any {
+    if (depth > 12 || val === null || val === undefined) return val;
+    if (typeof val === "string") {
+      if (val.length > 2048 && val.startsWith("data:")) {
+        const commaIdx = val.indexOf(";base64,");
+        if (commaIdx > 5 && commaIdx < 120) {
+          const mime = val.slice(5, commaIdx).split(";")[0] || "application/octet-stream";
+          const hash = crypto.createHash("sha1").update(val).digest("hex");
+          if (!mediaBlobStore.has(hash)) {
+            try {
+              const b64 = val.slice(commaIdx + 8);
+              mediaBlobStore.set(hash, { mime, buf: Buffer.from(b64, "base64") });
+              mediaDataUriStore.set(hash, val);
+            } catch {
+              return val;
+            }
+          }
+          return `/api/media/${hash}`;
+        }
+      }
+      return val;
+    }
+    if (Array.isArray(val)) {
+      let changed = false;
+      const mapped = val.map((item) => {
+        const next = offloadDataUrisToMediaUrls(item, depth + 1);
+        if (next !== item) changed = true;
+        return next;
+      });
+      return changed ? mapped : val;
+    }
+    if (typeof val === "object") {
+      let changed = false;
+      const out: Record<string, any> = {};
+      for (const [k, v] of Object.entries(val)) {
+        const next = offloadDataUrisToMediaUrls(v, depth + 1);
+        if (next !== v) changed = true;
+        out[k] = next;
+      }
+      return changed ? out : val;
+    }
+    return val;
+  }
+
+  function rehydrateMediaUrlsToDataUris(val: any, depth = 0): any {
+    if (depth > 12 || val === null || val === undefined) return val;
+    if (typeof val === "string") {
+      if (val.startsWith("/api/media/")) {
+        const hash = val.slice("/api/media/".length).split("?")[0].trim();
+        const orig = mediaDataUriStore.get(hash);
+        if (orig) return orig;
+      }
+      return val;
+    }
+    if (Array.isArray(val)) {
+      let changed = false;
+      const mapped = val.map((item) => {
+        const next = rehydrateMediaUrlsToDataUris(item, depth + 1);
+        if (next !== item) changed = true;
+        return next;
+      });
+      return changed ? mapped : val;
+    }
+    if (typeof val === "object") {
+      let changed = false;
+      const out: Record<string, any> = {};
+      for (const [k, v] of Object.entries(val)) {
+        const next = rehydrateMediaUrlsToDataUris(v, depth + 1);
+        if (next !== v) changed = true;
+        out[k] = next;
+      }
+      return changed ? out : val;
+    }
+    return val;
+  }
+
+  app.get("/api/media/:hash", (req, res) => {
+    const hash = String(req.params.hash || "").trim();
+    const entry = mediaBlobStore.get(hash);
+    if (!entry) {
+      return res.status(404).end();
+    }
+    res.setHeader("Content-Type", entry.mime);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    return res.send(entry.buf);
+  });
+
+  app.use((req, _res, next) => {
+    if (req.body && typeof req.body === "object" && mediaDataUriStore.size > 0) {
+      req.body = rehydrateMediaUrlsToDataUris(req.body);
+    }
+    next();
+  });
+
   // Server-side Active Session Registry for RBAC & Token Invalidation
   const activeSessions = new Map<
     string,
@@ -764,7 +864,8 @@ async function startServer() {
         .findOne({ _id: "FULL_PMS_BACKUP" as any })
         .then((doc) => {
           if (doc?.data) {
-            console.log(`⚡ In-memory PMS state cache warmed (${(doc.data.hotels || []).length} hotels ready)`);
+            offloadDataUrisToMediaUrls(doc.data);
+            console.log(`⚡ In-memory PMS state & media cache warmed (${(doc.data.hotels || []).length} hotels, ${mediaBlobStore.size} media blobs ready)`);
           }
         })
         .catch(() => {});
@@ -1815,9 +1916,14 @@ async function startServer() {
           }
         }
 
+        if (Array.isArray(responseData.auditLogs) && responseData.auditLogs.length > 250) {
+          responseData.auditLogs = responseData.auditLogs.slice(0, 250);
+        }
+        const slimResponseData = offloadDataUrisToMediaUrls(responseData);
+
         const payloadStr = JSON.stringify({
           success: true,
-          data: responseData,
+          data: slimResponseData,
           updatedAt: doc.updatedAt,
         });
         const acceptEncoding = String(req.headers["accept-encoding"] || "");
@@ -10395,28 +10501,48 @@ An error occurred while connecting to the Gemini engines: *"${err.message}"*.
     const assetsPath = path.join(distPath, "assets");
     let cacheClearedOnce = false;
 
-    // Serve content-hashed Vite JS/CSS bundles fast with immutable caching; fallback to latest bundle if old hash requested
+    const gzipAssetCache = new Map<string, { mime: string; gz: Buffer }>();
+    function sendCompressedAsset(req: express.Request, res: express.Response, fullPath: string, cacheHeader: string) {
+      res.setHeader("Cache-Control", cacheHeader);
+      const mime = fullPath.endsWith(".js")
+        ? "application/javascript; charset=utf-8"
+        : fullPath.endsWith(".css")
+        ? "text/css; charset=utf-8"
+        : "";
+      if (mime && String(req.headers["accept-encoding"] || "").includes("gzip")) {
+        let cached = gzipAssetCache.get(fullPath);
+        if (!cached) {
+          const raw = fs.readFileSync(fullPath);
+          cached = { mime, gz: zlib.gzipSync(raw, { level: 6 }) };
+          gzipAssetCache.set(fullPath, cached);
+        }
+        res.setHeader("Content-Type", cached.mime);
+        res.setHeader("Content-Encoding", "gzip");
+        res.setHeader("Vary", "Accept-Encoding");
+        return res.send(cached.gz);
+      }
+      if (mime) res.setHeader("Content-Type", mime);
+      return res.sendFile(fullPath);
+    }
+
+    // Serve content-hashed Vite JS/CSS bundles fast with gzip + immutable caching; fallback to latest bundle if old hash requested
     app.get("/assets/:filename", (req, res, next) => {
       const requestedFile = path.join(assetsPath, req.params.filename);
       if (fs.existsSync(requestedFile)) {
-        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-        return res.sendFile(requestedFile);
+        return sendCompressedAsset(req, res, requestedFile, "public, max-age=31536000, immutable");
       }
-      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       try {
         const files = fs.existsSync(assetsPath) ? fs.readdirSync(assetsPath) : [];
         if (req.params.filename.endsWith(".js")) {
           const currentJs = files.find((f) => f.startsWith("index-") && f.endsWith(".js"));
           if (currentJs) {
-            res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-            return res.sendFile(path.join(assetsPath, currentJs));
+            return sendCompressedAsset(req, res, path.join(assetsPath, currentJs), "no-store, no-cache, must-revalidate");
           }
         }
         if (req.params.filename.endsWith(".css")) {
           const currentCss = files.find((f) => f.startsWith("index-") && f.endsWith(".css"));
           if (currentCss) {
-            res.setHeader("Content-Type", "text/css; charset=utf-8");
-            return res.sendFile(path.join(assetsPath, currentCss));
+            return sendCompressedAsset(req, res, path.join(assetsPath, currentCss), "no-store, no-cache, must-revalidate");
           }
         }
       } catch {}

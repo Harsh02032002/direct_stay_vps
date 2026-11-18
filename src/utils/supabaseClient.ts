@@ -354,6 +354,10 @@ export async function recoverPasswordApi(payload: {
   };
 }
 
+// In-flight deduplication so multiple components/events never trigger duplicate multi-KB state downloads concurrently
+let inFlightStatePromise: Promise<Record<string, any> | null> | null = null;
+let inFlightStateKey = '';
+
 // Fetch all app data from MongoDB Atlas via backend API (requires active session token)
 export async function fetchAllFromSupabase(): Promise<Record<string, any> | null> {
   if (!isBackendServerActive()) return null;
@@ -369,32 +373,47 @@ export async function fetchAllFromSupabase(): Promise<Record<string, any> | null
     }
     return null;
   }
-  const qs = new URLSearchParams();
-  qs.set('token', sessionHeaders['x-session-token']);
-  if (sessionHeaders['x-user-role']) qs.set('role', sessionHeaders['x-user-role']);
-  if (sessionHeaders['x-user-role'] !== 'SuperAdmin' && sessionHeaders['x-hotel-id']) {
-    qs.set('hotelId', sessionHeaders['x-hotel-id']);
+  const reqKey = `${sessionHeaders['x-session-token']}|${sessionHeaders['x-user-role'] || ''}|${sessionHeaders['x-hotel-id'] || ''}`;
+  if (inFlightStatePromise && inFlightStateKey === reqKey) {
+    return inFlightStatePromise;
   }
-  qs.set('_ts', String(Date.now()));
-  const { ok, status, data: result } = await safeFetchJson(`/api/db/state?${qs.toString()}`, {
-    cache: 'no-store',
-    headers: {
-      ...sessionHeaders
+
+  inFlightStateKey = reqKey;
+  inFlightStatePromise = (async () => {
+    try {
+      const qs = new URLSearchParams();
+      qs.set('token', sessionHeaders['x-session-token']);
+      if (sessionHeaders['x-user-role']) qs.set('role', sessionHeaders['x-user-role']);
+      if (sessionHeaders['x-user-role'] !== 'SuperAdmin' && sessionHeaders['x-hotel-id']) {
+        qs.set('hotelId', sessionHeaders['x-hotel-id']);
+      }
+      qs.set('_ts', String(Date.now()));
+      const { ok, status, data: result } = await safeFetchJson(`/api/db/state?${qs.toString()}`, {
+        cache: 'no-store',
+        headers: {
+          ...sessionHeaders
+        }
+      });
+      if (status === 401 && typeof window !== 'undefined') {
+        for (const k of ['pms_authenticated', 'pms_session_token', 'pms_auth_token', 'pms_auth_session']) {
+          sessionStorage.removeItem(k);
+          localStorage.removeItem(k);
+        }
+        window.dispatchEvent(new Event('pms-session-expired'));
+        return null;
+      }
+      if (ok && result && result.success) {
+        isDbHydrated = true;
+        return result.data && typeof result.data === 'object' ? result.data : {};
+      }
+      return null;
+    } finally {
+      inFlightStatePromise = null;
+      inFlightStateKey = '';
     }
-  });
-  if (status === 401 && typeof window !== 'undefined') {
-    for (const k of ['pms_authenticated', 'pms_session_token', 'pms_auth_token', 'pms_auth_session']) {
-      sessionStorage.removeItem(k);
-      localStorage.removeItem(k);
-    }
-    window.dispatchEvent(new Event('pms-session-expired'));
-    return null;
-  }
-  if (ok && result && result.success) {
-    isDbHydrated = true;
-    return result.data && typeof result.data === 'object' ? result.data : {};
-  }
-  return null;
+  })();
+
+  return inFlightStatePromise;
 }
 
 // Append a single immutable audit log event directly via /api/audit-logs

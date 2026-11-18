@@ -166,12 +166,12 @@ function getRoleBasePath(role: UserRole): string {
   return '/admin';
 }
 
-const FAST_SNAPSHOT_KEY = 'pms_fast_snapshot_v1';
+const FAST_SNAPSHOT_KEY = 'pms_fast_snapshot_v2';
 
 function stripHeavyInlineBlobs(val: any, depth = 0): any {
-  if (depth > 5 || val == null) return val;
+  if (depth > 12 || val == null) return val;
   if (typeof val === 'string') {
-    return val.length > 3000 && val.startsWith('data:') ? '' : val;
+    return val.length > 2048 && val.startsWith('data:') ? '' : val;
   }
   if (Array.isArray(val)) {
     return val.map((item) => stripHeavyInlineBlobs(item, depth + 1));
@@ -186,6 +186,15 @@ function stripHeavyInlineBlobs(val: any, depth = 0): any {
   return val;
 }
 
+function getScopedSnapshotKey(): string {
+  const savedRole = sessionStorage.getItem('pms_role') || localStorage.getItem('pms_role') || '';
+  const savedHotel =
+    savedRole === 'SuperAdmin'
+      ? 'SUPERADMIN'
+      : sessionStorage.getItem('pms_hotel_id') || localStorage.getItem('pms_hotel_id') || '';
+  return savedRole ? `${FAST_SNAPSHOT_KEY}:${savedRole}:${savedHotel}` : '';
+}
+
 function readFastSessionSnapshot(): Record<string, any> | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -196,12 +205,12 @@ function readFastSessionSnapshot(): Record<string, any> | null {
       localStorage.getItem('pms_auth_token') ||
       '';
     if (!tok) return null;
-    const raw = sessionStorage.getItem(FAST_SNAPSHOT_KEY);
+    const scopedKey = getScopedSnapshotKey();
+    if (!scopedKey) return null;
+    const raw = sessionStorage.getItem(scopedKey) || localStorage.getItem(scopedKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    const savedRole = sessionStorage.getItem('pms_role') || localStorage.getItem('pms_role') || '';
-    const savedHotel = sessionStorage.getItem('pms_hotel_id') || localStorage.getItem('pms_hotel_id') || '';
-    if (parsed && parsed.role === savedRole && (savedRole === 'SuperAdmin' || parsed.hotelId === savedHotel) && parsed.data) {
+    if (parsed && parsed.data) {
       return parsed.data;
     }
   } catch {}
@@ -211,14 +220,26 @@ function readFastSessionSnapshot(): Record<string, any> | null {
 function writeFastSessionSnapshot(data: Record<string, any>): void {
   if (typeof window === 'undefined' || !data) return;
   try {
-    const savedRole = sessionStorage.getItem('pms_role') || localStorage.getItem('pms_role') || '';
-    const savedHotel = sessionStorage.getItem('pms_hotel_id') || localStorage.getItem('pms_hotel_id') || '';
-    if (!savedRole) return;
+    const scopedKey = getScopedSnapshotKey();
+    if (!scopedKey) return;
     const slim = stripHeavyInlineBlobs(data);
-    sessionStorage.setItem(
-      FAST_SNAPSHOT_KEY,
-      JSON.stringify({ role: savedRole, hotelId: savedHotel, data: slim })
-    );
+    const serialized = JSON.stringify({ ts: Date.now(), data: slim });
+    sessionStorage.setItem(scopedKey, serialized);
+    localStorage.setItem(scopedKey, serialized);
+  } catch {}
+}
+
+function clearFastSessionSnapshots(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    for (const store of [sessionStorage, localStorage]) {
+      for (let i = store.length - 1; i >= 0; i--) {
+        const k = store.key(i);
+        if (k && k.startsWith('pms_fast_snapshot')) {
+          store.removeItem(k);
+        }
+      }
+    }
   } catch {}
 }
 
@@ -450,98 +471,24 @@ export default function App() {
     }
   }, [isAuthenticated, currentRole, selectedHotelId]);
 
-  // Connect to authenticated SSE notification stream + periodic polling fallback
+  // Lightweight non-blocking notification polling (avoids holding persistent HTTP/1.1 proxy sockets open across tabs)
   useEffect(() => {
     if (!isAuthenticated || typeof window === 'undefined' || !isBackendServerActive()) {
       setIsRealtimeConnected(false);
       return;
     }
 
+    setIsRealtimeConnected(true);
     refreshNotificationsFromServer();
 
-    let es: EventSource | null = null;
-    try {
-      const streamUrl = getNotificationStreamUrl();
-      es = new EventSource(streamUrl);
-
-      es.addEventListener('connected', () => {
-        setIsRealtimeConnected(true);
-        setNotificationError(null);
-      });
-
-      es.addEventListener('notification', (evt: MessageEvent) => {
-        try {
-          const incoming: AppNotification = JSON.parse(evt.data);
-          if (!incoming || !incoming.id) return;
-          setRawNotifications((prev) => {
-            if (prev.some((n) => n.id === incoming.id)) return prev;
-            const updated = [incoming, ...prev];
-            savePmsData({ notifications: updated }, true);
-            return updated;
-          });
-          if (
-            incoming.type === 'registration' ||
-            incoming.type === 'approval' ||
-            incoming.type === 'suspension' ||
-            incoming.type === 'subscription'
-          ) {
-            fetchAllFromSupabase()
-              .then((cloudData) => {
-                if (cloudData && Object.keys(cloudData).length > 0) {
-                  savePmsData(cloudData, true);
-                  applyAllPmsData(cloudData);
-                }
-              })
-              .catch(() => {});
-          }
-        } catch {}
-      });
-
-      es.addEventListener('notification_read', (evt: MessageEvent) => {
-        try {
-          const { id } = JSON.parse(evt.data);
-          if (!id) return;
-          setRawNotifications((prev) => {
-            const updated = prev.map((n) => (n.id === id ? { ...n, isRead: true } : n));
-            savePmsData({ notifications: updated }, true);
-            return updated;
-          });
-        } catch {}
-      });
-
-      es.addEventListener('notifications_read_all', () => {
-        setRawNotifications((prev) => {
-          const visibleIds = new Set(
-            filterNotificationsForRoleAndHotel(prev, currentRole, selectedHotelId).map((n) => n.id)
-          );
-          const updated = prev.map((n) => (visibleIds.has(n.id) ? { ...n, isRead: true } : n));
-          savePmsData({ notifications: updated }, true);
-          return updated;
-        });
-      });
-
-      es.onerror = () => {
-        setIsRealtimeConnected(false);
-        if (es) {
-          es.close();
-          es = null;
-        }
-      };
-    } catch {
-      setIsRealtimeConnected(false);
-    }
-
     const fallbackPoll = setInterval(() => {
-      if (isBackendServerActive()) {
+      if (isBackendServerActive() && document.visibilityState === 'visible') {
         refreshNotificationsFromServer();
       }
-    }, 30000);
+    }, 20000);
 
     return () => {
       clearInterval(fallbackPoll);
-      if (es) {
-        es.close();
-      }
       setIsRealtimeConnected(false);
     };
   }, [isAuthenticated, currentRole, selectedHotelId, refreshNotificationsFromServer]);
@@ -1067,13 +1014,17 @@ export default function App() {
     const handleUrlChange = () => {
       syncStateFromLocation();
     };
+    let lastCrossTabSyncAt = 0;
     const handleCrossTabSync = () => {
+      const now = Date.now();
+      if (now - lastCrossTabSyncAt < 15000) return;
       if (hasPendingSync()) return;
       if (isBackendServerActive()) {
         const hasToken = Boolean(
           sessionStorage.getItem('pms_session_token') || sessionStorage.getItem('pms_auth_token')
         );
         if (hasToken) {
+          lastCrossTabSyncAt = now;
           fetchAllFromSupabase()
             .then(cloudData => {
               if (hasPendingSync()) return;
@@ -1557,11 +1508,11 @@ export default function App() {
       'pms_auth_token',
       'pms_auth_session',
       'pms_staff_username',
-      FAST_SNAPSHOT_KEY,
     ]) {
       sessionStorage.removeItem(k);
       localStorage.removeItem(k);
     }
+    clearFastSessionSnapshots();
 
     // Wipe all DB-fetched data from memory so the next user starts clean
     setIsInitialHydrating(false);
