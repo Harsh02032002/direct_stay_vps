@@ -3423,45 +3423,9 @@ export default function CheckInFormView({
           );
         })()}
 
-        {/* Sub-Navigation Bar: 2 Clean Tabs (Advance Booking vs Walk-In Booking) */}
-        <div className="flex border-b border-luxury-brown-200 bg-white rounded-t-xl overflow-hidden shadow-xs">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveSubTab('form');
-              setSelectedBooking(null);
-              if (effectiveMode === 'walkin') switchWorkflowTab('checkin');
-            }}
-            className={`flex-1 py-3 px-4 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 border-b-2 transition-all cursor-pointer ${
-              activeSubTab === 'form' && selectedBooking !== null
-                ? 'border-[#9E2A2B] text-[#9E2A2B] bg-luxury-beige-50/50'
-                : activeSubTab === 'form' && effectiveMode !== 'walkin'
-                ? 'border-[#9E2A2B] text-[#9E2A2B] bg-luxury-beige-50/50'
-                : 'border-transparent text-luxury-brown-600 hover:text-luxury-brown-950 hover:bg-gray-50'
-            }`}
-          >
-            <UserCheck className="w-4 h-4" /> Advance Booking Check-In
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveSubTab('form');
-              setSelectedBooking(null);
-              if (effectiveMode !== 'walkin') switchWorkflowTab('walkin');
-            }}
-            className={`flex-1 py-3 px-4 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 border-b-2 transition-all cursor-pointer ${
-              activeSubTab === 'form' && effectiveMode === 'walkin' && !selectedBooking
-                ? 'border-[#9E2A2B] text-[#9E2A2B] bg-luxury-beige-50/50'
-                : 'border-transparent text-luxury-brown-600 hover:text-luxury-brown-950 hover:bg-gray-50'
-            }`}
-          >
-            <Users className="w-4 h-4" /> Walk-In Booking
-          </button>
-        </div>
-
         {/* TAB 1: CHECK-IN FORM */}
         {activeSubTab === 'form' && (
-          <div className="bg-white border border-luxury-brown-100 rounded-b-xl p-6 shadow-sm space-y-6">
+          <div className="bg-white border border-luxury-brown-100 rounded-2xl p-6 shadow-sm space-y-6">
 
             {/* 1-CLICK QUICK EDIT AFTER CHECK-IN BAR */}
             {(() => {
@@ -5833,7 +5797,7 @@ export default function CheckInFormView({
                   <span className="text-[10px] font-mono uppercase tracking-widest text-[#E8BD6F] font-extrabold block">
                     LIVE BOOKING SUMMARY
                   </span>
-                  <h3 className="text-base font-serif font-bold mt-1 text-white">
+                  <h3 className="text-base font-serif font-bold mt-1 text-white" style={{ color: '#FFFFFF' }}>
                     {checkInMode === 'group'
                       ? `${groupRooms.length} Room(s) • ${groupRooms.map(g => g.roomNumber).join(', ') || 'Group'}`
                       : selectedRoomNumber
@@ -5967,6 +5931,13 @@ export default function CheckInFormView({
                 <p className="text-xs text-luxury-brown-600">Currently checked-in guests, room allocations, extra bed logs, and live balance status.</p>
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setActiveSubTab('form')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold border border-[#C49A3A] bg-[#F6DE98] hover:bg-[#E8CE84] text-[#17120F] transition-all cursor-pointer"
+                >
+                  ← Back to Check-In Form
+                </button>
                 <button
                   type="button"
                   onClick={() => setFolioFilter('active')}
