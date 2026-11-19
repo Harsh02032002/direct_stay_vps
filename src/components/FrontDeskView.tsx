@@ -2979,7 +2979,12 @@ export default function FrontDeskView({
 
           <CheckInFormView
             waterBottles={waterBottles}
+            onUpdateWaterBottles={onUpdateWaterBottles}
             posOrders={posOrders}
+            inventoryProducts={inventoryProducts}
+            onUpdateInventoryProducts={onUpdateInventoryProducts}
+            inventoryStockMovements={inventoryStockMovements}
+            onUpdateInventoryMovements={onUpdateInventoryMovements}
             mode="walkin"
             onSwitchTab={(t) => onSelectSubTab(t)}
             bookings={bookings}
