@@ -120,8 +120,6 @@ export default function CheckInFormView({
   onUpdateInventoryMovements,
   travelAgents = [],
 }: CheckInFormViewProps) {
-  const [complimentaryWaterBottles, setComplimentaryWaterBottles] = useState<number>(2);
-
   const waterBottleInventoryProduct = (inventoryProducts || []).find(
     p =>
       p.name?.toLowerCase().includes('water bottle') ||
@@ -129,6 +127,13 @@ export default function CheckInFormView({
       p.name?.toLowerCase() === 'water' ||
       ((p as any).sku && String((p as any).sku).toUpperCase().includes('WATER'))
   );
+  const [complimentaryWaterBottles, setComplimentaryWaterBottles] = useState<number>(() =>
+    Math.min(2, Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0)))
+  );
+  useEffect(() => {
+    const avail = Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0));
+    setComplimentaryWaterBottles(prev => (prev > avail ? avail : prev));
+  }, [waterBottleInventoryProduct?.currentStock]);
   const [resSearchQuery, setResSearchQuery] = useState('');
   const [arrivalQueueFilter, setArrivalQueueFilter] = useState<'today' | 'all' | 'date'>('today');
   const [filterArrivalDate, setFilterArrivalDate] = useState<string>(getTodayDateStr());
@@ -680,32 +685,53 @@ export default function CheckInFormView({
     hotelSettings?.isGstEnabled === false ? 0 : billSettings.roomGstRate;
   const [gstPercent, setGstPercent] = useState<number>(configuredDefaultGst);
 
-  // Collect existing folio charges already attached to this booking/stay (POS Room Service orders, chargeable water, laundry, booking otherServices)
+  // Collect existing folio charges already attached to this booking/stay (POS Room Service orders, chargeable water, laundry, booking otherServices) — strictly deduplicated by sourceKey
   const existingStayFolioCharges: BillCharge[] = React.useMemo(() => {
     if (!selectedBooking && !editingCheckIn) return [];
+    const existingOtherServiceIds = new Set(
+      (Array.isArray((selectedBooking as any)?.otherServices)
+        ? (selectedBooking as any).otherServices
+        : []
+      )
+        .map((sv: any) => String(sv?.id || sv?.orderNumber || '').trim())
+        .filter(Boolean)
+    );
+    const filteredPosOrders = (posOrders || []).filter(
+      po =>
+        !existingOtherServiceIds.has(String(po.id || '').trim()) &&
+        !existingOtherServiceIds.has(String(po.orderNumber || '').trim())
+    );
     const collected = collectStayCharges({
       booking: selectedBooking || null,
       checkin: editingCheckIn || null,
-      posOrders,
+      posOrders: filteredPosOrders,
       waterBottles,
       rooms,
       settings: billSettings,
     });
-    return collected.charges.filter(
-      ch =>
-        ch.kind !== 'room' &&
-        ch.kind !== 'extra_bed' &&
-        ch.kind !== 'extra_person' &&
-        ch.kind !== 'early_checkin' &&
-        !String(ch.id || '').startsWith('ALLOC-CHK-') &&
-        !String(ch.id || '').startsWith('AUX-CHK-')
-    );
+    const seenKeys = new Set<string>();
+    return collected.charges.filter(ch => {
+      if (
+        ch.kind === 'room' ||
+        ch.kind === 'extra_bed' ||
+        ch.kind === 'extra_person' ||
+        ch.kind === 'early_checkin' ||
+        String(ch.id || '').startsWith('ALLOC-CHK-') ||
+        String(ch.id || '').startsWith('AUX-CHK-')
+      ) {
+        return false;
+      }
+      const dedupKey = String(ch.sourceKey || ch.id || ch.description || '');
+      if (dedupKey && seenKeys.has(dedupKey)) return false;
+      if (dedupKey) seenKeys.add(dedupKey);
+      return true;
+    });
   }, [selectedBooking, editingCheckIn, posOrders, waterBottles, rooms, billSettings]);
 
-  const existingStayFolioSubtotal = existingStayFolioCharges.reduce(
-    (sum, ch) => sum + (Number(ch.amount) || 0),
-    0
-  );
+  const existingStayFolioSubtotal =
+    Math.round(
+      existingStayFolioCharges.reduce((sum, ch) => sum + (Number(ch.amount) || 0), 0) * 100
+    ) / 100;
 
   const activeNetSubtotal = (checkInMode === 'single'
     ? (roomChargesTotal + extraPersonChargesTotal + extraBedTotal + otherCharges + servicesTotal + existingStayFolioSubtotal)
@@ -1528,8 +1554,8 @@ export default function CheckInFormView({
       if (availWater < complimentaryWaterBottles) {
         showToast(
           availWater <= 0
-            ? 'Inventory me Water Bottle stock 0 hai! Agar aapke paas water bottles available hain toh pehle Inventory me stock record add karein, ya Water Bottles 0 karein.'
-            : `Inventory me sufficient Water Bottle stock nahi hai! (Available: ${availWater}, Requested: ${complimentaryWaterBottles}). Pehle Inventory me stock add karein.`,
+            ? 'Water Bottle stock in Inventory is 0. If bottles are physically available, please add stock in Inventory first, or set Allocated Bottles to 0.'
+            : `Insufficient Water Bottle stock in Inventory (Available: ${availWater}, Requested: ${complimentaryWaterBottles}). Please add stock in Inventory first.`,
           'error'
         );
         return;
@@ -2256,9 +2282,9 @@ export default function CheckInFormView({
         }
 
         if (newStock === 0) {
-          showToast('Check-In complete! Alert: Inventory me water bottle stock ab 0 ho gaya hai — Inventory Store se fresh stock add karein.', 'warning');
+          showToast('Check-In completed! Note: Water Bottle stock in Inventory is now 0 — please restock in Inventory Store.', 'warning');
         } else if (newStock <= minAlert) {
-          showToast(`Low Stock Alert: Sirf ${newStock} water bottles bachi hain inventory me!`, 'warning');
+          showToast(`Low Stock Alert: Only ${newStock} water bottle(s) remaining in Inventory.`, 'warning');
         }
       }
     }
@@ -4358,9 +4384,14 @@ export default function CheckInFormView({
                           <button
                             type="button"
                             onClick={() => {
-                              const avail = waterBottleInventoryProduct?.currentStock ?? 100;
+                              const avail = Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0));
                               if (complimentaryWaterBottles >= avail) {
-                                showToast(`Inventory me sirf ${avail} water bottle(s) bachi hain!`, 'error');
+                                showToast(
+                                  avail <= 0
+                                    ? 'Water Bottle stock in Inventory is 0. Please add stock in Inventory before allocating bottles.'
+                                    : `Only ${avail} water bottle(s) available in Inventory.`,
+                                  'error'
+                                );
                                 return;
                               }
                               setComplimentaryWaterBottles(prev => prev + 1);

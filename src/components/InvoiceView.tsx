@@ -2503,7 +2503,7 @@ export default function InvoiceView({
                           <AlertTriangle className="w-4 h-4" /> Room Inspection & Damage / Fine / Extra Charges Box
                         </h4>
                         <p className="text-[10px] text-slate-600 mt-0.5">
-                          Kya room mein koi tod-phod / damage ya extra charge hai? Yahan Fine / Charge add karein:
+                          Record any room damage, breakage, or extra inspection charges below:
                         </p>
                       </div>
                     </div>

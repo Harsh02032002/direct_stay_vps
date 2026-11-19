@@ -1928,14 +1928,14 @@ export default function FrontDeskView({
     const availStock = Number(waterBottleInventoryProduct?.currentStock ?? 0) + prevEditQty;
     if (availStock <= 0) {
       showToast(
-        'Inventory me sufficient Water Bottle stock nahi hai (0 available)! Agar aapke paas water bottles available hain toh pehle Inventory me stock record add karein.',
+        'Insufficient Water Bottle stock in Inventory (0 available). If bottles are physically available, please add a stock record in Inventory first.',
         'error'
       );
       return;
     }
     if (availStock < qty) {
       showToast(
-        `Inventory me sufficient Water Bottle stock nahi hai! Sirf ${availStock} bottle(s) available hain aur aap ${qty} allocate kar rahe hain. Pehle Inventory me stock record add karein.`,
+        `Insufficient Water Bottle stock in Inventory! Only ${availStock} bottle(s) available while requesting ${qty}. Please add stock in Inventory first.`,
         'error'
       );
       return;
@@ -2102,10 +2102,9 @@ export default function FrontDeskView({
       );
 
       if (newStock === 0) {
-        showToast('Water Bottle allocated! Alert: Inventory me ab stock FINISH ho gaya hai (0 left).', 'warning');
-        alert('⚠️ Stock Finish Alert!\n\nWater Bottle allocate ho gaya hai, lekin ab Inventory me stock 0 ho gaya hai (Stock Finished!).\nPlease fresh stock order karein.');
+        showToast('Water Bottle allocated! Alert: Water Bottle stock in Inventory is now 0 — please restock in Inventory Store.', 'warning');
       } else if (newStock <= 5) {
-        showToast(`Low Stock Alert: Sirf ${newStock} bottles bachi hain inventory me!`, 'warning');
+        showToast(`Low Stock Alert: Only ${newStock} water bottle(s) remaining in Inventory.`, 'warning');
       }
 
       if (onUpdateInventoryMovements) {
@@ -4266,10 +4265,10 @@ export default function FrontDeskView({
                   {hasInsufficientStock && (
                     <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2 text-[11px] text-rose-900">
                       <p className="font-bold">
-                        ⚠️ Inventory me sufficient Water Bottle stock nahi hai! (Available: {effectiveAvailForEdit}, Requested: {requestedQty})
+                        ⚠️ Insufficient Water Bottle stock in Inventory! (Available: {effectiveAvailForEdit}, Requested: {requestedQty})
                       </p>
                       <p className="text-rose-700">
-                        Agar aapke paas water bottles available hain toh pehle Inventory me iska stock record add karein.
+                        If water bottles are physically available at your hotel, please add their stock record in Inventory first.
                       </p>
                       {!editingWaterBottleRecord && (
                         <button
@@ -4867,7 +4866,7 @@ export default function FrontDeskView({
                       return (
                         <div className="p-3 bg-[#FDF8ED] border border-[#C49A3A]/60 rounded-xl space-y-2.5">
                           <p className="text-[11px] text-slate-600">
-                            Jitna guest ne Cash / UPI / Card / Bank ya Custom mode mein diya hai wo niche enter karein:
+                            Enter the exact amount collected from the guest across Cash, UPI, Card, Bank, or Custom payment modes below:
                           </p>
                           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                             {SPLIT_MODES.map(m => (
@@ -4893,7 +4892,7 @@ export default function FrontDeskView({
                           </div>
                           <div>
                             <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
-                              Custom Payment Mode / Detail (Khud Type Karein — e.g. GPay, PhonePe, Cheque, Voucher)
+                              Custom Payment Mode / Detail (e.g. GPay, PhonePe, Cheque, Voucher)
                             </label>
                             <input
                               type="text"
@@ -5238,10 +5237,10 @@ export default function FrontDeskView({
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-rose-200/60 pb-2.5">
                     <div>
                       <h4 className="font-serif font-bold text-[#17120F] text-sm flex items-center gap-1.5">
-                        <AlertCircle className="w-4 h-4 text-[#D92D4B]" /> 2. Room Damage / Tod-Phod Fine Box
+                        <AlertCircle className="w-4 h-4 text-[#D92D4B]" /> 2. Room Damage & Breakage Fine Box
                       </h4>
                       <p className="text-[11px] text-slate-600 mt-0.5">
-                        Agar guest ne room mein kuch toda hai ya nuksan kiya hai toh yahan Fine add karein:
+                        If any room property was damaged or broken during the stay, add the applicable fine below:
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -5770,13 +5769,13 @@ export default function FrontDeskView({
 
                           <div>
                             <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
-                              Custom Payment Mode / Detail (Khud Type Karein — e.g. GPay, PhonePe, Cheque, Company Account)
+                              Custom Payment Mode / Detail (e.g. GPay, PhonePe, Cheque, Company Account)
                             </label>
                             <input
                               type="text"
                               value={coSplitOtherLabel}
                               onChange={e => setCoSplitOtherLabel(e.target.value)}
-                              placeholder="Type payment mode or note (e.g. 2000 Cash + baaki PhonePe QR)"
+                              placeholder="Type payment mode or note (e.g. 2000 Cash + remaining via PhonePe QR)"
                               className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449]"
                             />
                           </div>

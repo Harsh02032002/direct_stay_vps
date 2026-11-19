@@ -3617,7 +3617,7 @@ export default function TodayBookingsView({
                         <Shield className="w-4 h-4 text-rose-600" /> Room Inspection & Damage / Fine Confirmation
                       </h4>
                       <p className="text-[10px] text-slate-600 mt-0.5">
-                        Kya room mein koi tod-phod / damage ya missing item hai? Fine add karein:
+                        Record any room damage, breakage, or missing item charges below:
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5">
