@@ -28,6 +28,7 @@ interface ReportsViewProps {
   onUpdateInvoices?: (invoices: Invoice[]) => void;
   onUpdateBookings?: (bookings: Booking[]) => void;
   onAddAuditLog?: (action: string, details: string, module?: any) => void;
+  onEditCheckout?: (guest: GuestCheckIn) => void;
 }
 
 type ReportType = 'dailyCollectionSheet' | 'cashReport' | 'nightAudit' | 'pendingReport' | 'otaReport' | 'gstReport' | 'revenueReport' | 'sarai' | 'waterLogs';
@@ -45,7 +46,8 @@ export default function ReportsView({
   handovers = [],
   staff = [],
   currentSubTab,
-  onSelectSubTab
+  onSelectSubTab,
+  onEditCheckout
 }: ReportsViewProps) {
   const [reportType, setReportType] = useState<ReportType>(() => {
     if (currentSubTab === 'daily_cash') return 'cashReport';
@@ -986,6 +988,7 @@ export default function ReportsView({
           handovers={handovers}
           staff={staff}
           hotelSettings={hotelSettings}
+          onEditCheckout={onEditCheckout}
         />
       )}
 

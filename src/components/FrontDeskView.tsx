@@ -33,6 +33,7 @@ import DeletedFolderView from './DeletedFolderView';
 import TravelAgentManagerView from './TravelAgentManagerView';
 import InvoiceView from './InvoiceView';
 import InvoiceConditionsModal from './InvoiceConditionsModal';
+import EditCheckoutModal from './EditCheckoutModal';
 import ReportsView from './ReportsView';
 import DailyReportView from './DailyReportView';
 import PolicyManager from './PolicyManager';
@@ -288,6 +289,9 @@ export default function FrontDeskView({
     return Number.isFinite(n) ? Math.max(0, n) : 0;
   };
   const [isConditionsModalOpen, setIsConditionsModalOpen] = useState<boolean>(false);
+  const [editingCheckedOutGuest, setEditingCheckedOutGuest] = useState<GuestCheckIn | null>(null);
+  const [checkedOutHistoryFilter, setCheckedOutHistoryFilter] = useState<'today' | '7days' | 'all'>('all');
+  const [checkedOutSearch, setCheckedOutSearch] = useState<string>('');
 
   const handleOpenCheckoutConfirmModal = (guest: GuestCheckIn) => {
     setCheckoutConfirmGuest(guest);
@@ -3228,89 +3232,185 @@ export default function FrontDeskView({
             </div>
           </div>
 
-          {/* Recently Checked-Out (Undo available for 24 hours) */}
+          {/* Checked-Out Guests & Settlement History (Edit Check-Out anytime + 24-hr Undo Check-Out) */}
           {(() => {
-            const recentCheckouts = rawCheckinsProp
-              .filter(
-                c =>
-                  c.checkedOutDateTime &&
-                  getUndoTimeLeftMs(c) > 0 &&
-                  !rawCheckinsProp.some(
-                    ac =>
-                      ac.id !== c.id &&
-                      !ac.checkedOutDateTime &&
-                      ac.roomNumber === c.roomNumber &&
-                      isSameGuestPerson(ac, c)
-                  )
-              )
+            const nowD = new Date();
+            const todayLocalYmd = `${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, '0')}-${String(nowD.getDate()).padStart(2, '0')}`;
+            const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+            const toOutLocalYmd = (iso?: string) => {
+              const s = String(iso || '').trim();
+              if (!s) return '';
+              if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+              const dt = new Date(s);
+              if (!Number.isNaN(dt.getTime())) {
+                return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+              }
+              return s.slice(0, 10);
+            };
+
+            const allCheckedOut = rawCheckinsProp
+              .filter((c) => Boolean(c.checkedOutDateTime))
               .sort((a, b) => String(b.checkedOutDateTime).localeCompare(String(a.checkedOutDateTime)));
+
+            const filteredCheckouts = allCheckedOut.filter((c) => {
+              if (checkedOutHistoryFilter === 'today') {
+                if (toOutLocalYmd(c.checkedOutDateTime) !== todayLocalYmd && c.checkOutDate !== todayLocalYmd) {
+                  return false;
+                }
+              } else if (checkedOutHistoryFilter === '7days') {
+                const ts = new Date(c.checkedOutDateTime as string).getTime();
+                if (!Number.isNaN(ts) && ts < sevenDaysAgoMs) return false;
+              }
+              if (checkedOutSearch.trim()) {
+                const q = checkedOutSearch.trim().toLowerCase();
+                const match =
+                  String(c.guestName || '').toLowerCase().includes(q) ||
+                  String(c.mobile || '').toLowerCase().includes(q) ||
+                  String(c.roomNumber || '').toLowerCase().includes(q) ||
+                  String(c.id || '').toLowerCase().includes(q);
+                if (!match) return false;
+              }
+              return true;
+            });
+
             return (
               <div className="bg-white border border-amber-200 rounded-2xl p-6 shadow-sm space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-100 pb-3">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-amber-100 pb-3">
                   <div>
                     <h3 className="text-base font-serif font-bold text-[#263449] flex items-center gap-2">
-                      <Undo2 className="w-5 h-5 text-[#C49A3A]" /> Recently Checked-Out ({recentCheckouts.length})
+                      <Edit className="w-5 h-5 text-[#C49A3A]" /> Checked-Out Guests &amp; Settlement History ({filteredCheckouts.length})
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Checked-out by mistake? You can Undo a Check-Out within 24 hours — the guest comes back to In-House.
+                      Edit any Checked-Out guest&apos;s payment modes / hybrid split, extra charges, or discount (auto-synced to Reports &amp; Invoices), or Undo within 24 hours.
                     </p>
                   </div>
-                  <span className="text-[11px] font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
-                    Undo valid for 24 hrs
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={checkedOutSearch}
+                        onChange={(e) => setCheckedOutSearch(e.target.value)}
+                        placeholder="Search guest, room, mobile..."
+                        className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono bg-white focus:outline-none focus:border-[#C49A3A]"
+                      />
+                    </div>
+                    <div className="inline-flex rounded-lg border border-amber-200 bg-amber-50/50 p-0.5 text-[11px] font-mono font-bold">
+                      {(
+                        [
+                          { id: 'today', label: 'Today' },
+                          { id: '7days', label: 'Last 7 Days' },
+                          { id: 'all', label: `All (${allCheckedOut.length})` },
+                        ] as const
+                      ).map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setCheckedOutHistoryFilter(tab.id)}
+                          className={`px-2.5 py-1 rounded-md cursor-pointer transition-all ${
+                            checkedOutHistoryFilter === tab.id
+                              ? 'bg-[#17120F] text-[#F6DE98]'
+                              : 'text-amber-900 hover:bg-amber-100/70'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                {recentCheckouts.length === 0 ? (
+                {filteredCheckouts.length === 0 ? (
                   <p className="text-xs italic text-slate-400 py-2">
-                    No check-outs in the last 24 hours.
+                    No checked-out guest records match the selected filter.
                   </p>
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-slate-200">
-                    <table className="w-full min-w-[820px] text-left border-collapse text-xs">
+                    <table className="w-full min-w-[900px] text-left border-collapse text-xs">
                       <thead>
                         <tr className="bg-[#FBF4E0] text-[#263449] font-mono font-bold uppercase">
                           <th className="p-3 whitespace-nowrap">Room</th>
                           <th className="p-3 whitespace-nowrap">Guest</th>
                           <th className="p-3 whitespace-nowrap">Contact</th>
                           <th className="p-3 whitespace-nowrap">Checked-Out At</th>
-                          <th className="p-3 whitespace-nowrap">Final Amount</th>
-                          <th className="p-3 whitespace-nowrap">Undo Time Left</th>
-                          <th className="p-3 text-right whitespace-nowrap">Action</th>
+                          <th className="p-3 whitespace-nowrap">Final Bill</th>
+                          <th className="p-3 whitespace-nowrap">Balance</th>
+                          <th className="p-3 text-right whitespace-nowrap">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200">
-                        {recentCheckouts.map(g => (
-                          <tr key={g.id} className="hover:bg-[#FDF8ED] transition-colors">
-                            <td className="p-3 whitespace-nowrap font-mono font-bold text-[#263449]">Room {g.roomNumber}</td>
-                            <td className="p-3 whitespace-nowrap">
-                              <div className="font-serif font-bold text-sm text-[#263449] leading-tight">{g.guestName}</div>
-                              <span className="inline-block mt-0.5 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px]">
-                                Checked-Out
-                              </span>
-                            </td>
-                            <td className="p-3 whitespace-nowrap font-mono font-semibold text-[#263449]">{g.mobile}</td>
-                            <td className="p-3 whitespace-nowrap font-mono text-slate-700">
-                              {new Date(g.checkedOutDateTime as string).toLocaleString('en-IN', {
-                                day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
-                              })}
-                              {g.checkedOutBy ? <span className="block text-[10px] text-slate-400">by {g.checkedOutBy}</span> : null}
-                            </td>
-                            <td className="p-3 whitespace-nowrap font-mono font-bold text-[#15805D]">
-                              ₹{Number(g.totalAmount || 0).toLocaleString('en-IN')}
-                            </td>
-                            <td className="p-3 whitespace-nowrap font-mono font-bold text-amber-700">
-                              {formatUndoTimeLeft(getUndoTimeLeftMs(g))}
-                            </td>
-                            <td className="p-3 text-right whitespace-nowrap">
-                              <button
-                                onClick={() => handleUndoCheckOut(g)}
-                                title="Undo this Check-Out and move the guest back to In-House"
-                                className="px-3 py-1.5 bg-[#17120F] hover:bg-[#2A211B] text-[#C49A3A] border border-[#C49A3A]/50 font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
-                              >
-                                <Undo2 className="w-3.5 h-3.5" /> Undo Check-Out
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {filteredCheckouts.map((g) => {
+                          const canUndo =
+                            getUndoTimeLeftMs(g) > 0 &&
+                            !rawCheckinsProp.some(
+                              (ac) =>
+                                ac.id !== g.id &&
+                                !ac.checkedOutDateTime &&
+                                ac.roomNumber === g.roomNumber &&
+                                isSameGuestPerson(ac, g)
+                            );
+                          const pendingDue = Math.max(0, Number(g.pendingAmount || 0));
+                          return (
+                            <tr key={g.id} className="hover:bg-[#FDF8ED] transition-colors">
+                              <td className="p-3 whitespace-nowrap font-mono font-bold text-[#263449]">
+                                Room {g.roomNumber}
+                              </td>
+                              <td className="p-3 whitespace-nowrap">
+                                <div className="font-serif font-bold text-sm text-[#263449] leading-tight">{g.guestName}</div>
+                                <span className="inline-block mt-0.5 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px]">
+                                  Checked-Out
+                                </span>
+                              </td>
+                              <td className="p-3 whitespace-nowrap font-mono font-semibold text-[#263449]">{g.mobile}</td>
+                              <td className="p-3 whitespace-nowrap font-mono text-slate-700">
+                                {new Date(g.checkedOutDateTime as string).toLocaleString('en-IN', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                                {g.checkedOutBy ? (
+                                  <span className="block text-[10px] text-slate-400">by {g.checkedOutBy}</span>
+                                ) : null}
+                              </td>
+                              <td className="p-3 whitespace-nowrap font-mono font-bold text-[#15805D]">
+                                ₹{Number(g.totalAmount || 0).toLocaleString('en-IN')}
+                              </td>
+                              <td className="p-3 whitespace-nowrap font-mono font-bold">
+                                {pendingDue > 0 ? (
+                                  <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[11px]">
+                                    ₹{pendingDue.toLocaleString('en-IN')} Due
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px]">
+                                    PAID
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-3 text-right whitespace-nowrap">
+                                <div className="inline-flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingCheckedOutGuest(g)}
+                                    title="Edit Check-Out Settlement, Hybrid Split Payments, Extra Charges, or Discount"
+                                    className="px-3 py-1.5 bg-[#F6DE98] hover:bg-[#E8CE84] text-[#17120F] border border-[#C49A3A] font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
+                                  >
+                                    <Edit className="w-3.5 h-3.5 text-[#8B691E]" /> Edit Check-Out
+                                  </button>
+                                  {canUndo && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUndoCheckOut(g)}
+                                      title={`Undo Check-Out (${formatUndoTimeLeft(getUndoTimeLeftMs(g))} left)`}
+                                      className="px-3 py-1.5 bg-[#17120F] hover:bg-[#2A211B] text-[#C49A3A] border border-[#C49A3A]/50 font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
+                                    >
+                                      <Undo2 className="w-3.5 h-3.5" /> Undo
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -3920,6 +4020,7 @@ export default function FrontDeskView({
               onUpdateInvoices={onUpdateInvoices}
               onUpdateBookings={onUpdateBookings}
               onAddAuditLog={onAddAuditLog}
+              onEditCheckout={(g) => setEditingCheckedOutGuest(g)}
             />
           ) : (
             <DailyReportView
@@ -5871,6 +5972,25 @@ export default function FrontDeskView({
           </div>
         );
       })()}
+
+      {editingCheckedOutGuest && (
+        <EditCheckoutModal
+          guest={editingCheckedOutGuest}
+          rooms={rooms}
+          bookings={bookings}
+          checkins={checkins}
+          invoices={invoices}
+          posOrders={posOrders}
+          waterBottles={waterBottles}
+          hotelSettings={hotelSettings}
+          loggedInUser={loggedInUser}
+          onUpdateCheckins={onUpdateCheckins}
+          onUpdateBookings={onUpdateBookings}
+          onUpdateInvoices={onUpdateInvoices}
+          onAddAuditLog={onAddAuditLog}
+          onClose={() => setEditingCheckedOutGuest(null)}
+        />
+      )}
 
       {isConditionsModalOpen && (
         <InvoiceConditionsModal

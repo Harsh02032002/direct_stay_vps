@@ -18,6 +18,7 @@ interface DailyCollectionSheetProps {
   handovers?: CashHandover[];
   staff?: Staff[];
   hotelSettings?: HotelSettings;
+  onEditCheckout?: (guest: GuestCheckIn) => void;
 }
 
 const localTodayStr = () => {
@@ -45,7 +46,8 @@ export default function DailyCollectionSheet({
   posOrders = [],
   handovers = [],
   staff = [],
-  hotelSettings
+  hotelSettings,
+  onEditCheckout
 }: DailyCollectionSheetProps) {
   // Selected Report Date (YYYY-MM-DD)
   const [selectedDate, setSelectedDate] = useState(() => {
@@ -434,6 +436,30 @@ export default function DailyCollectionSheet({
 
       const totalFoodAmt = kitchenUpi + kitchenCash + kitchenDue;
 
+      const checkinTarget: GuestCheckIn | null =
+        c ||
+        (b
+          ? ({
+              id: b.id,
+              guestName: b.guestName,
+              mobile: b.mobile || '',
+              roomNumber: b.roomNumber || roomNumber,
+              roomType: b.roomType || 'Standard',
+              roomRate:
+                Number(b.bookedRooms?.[0]?.rate) ||
+                Math.round((Number(roomTariff) || 0) / Math.max(1, Number(nights) || 1)) ||
+                2000,
+              checkInDate: b.checkInDate,
+              checkOutDate: b.checkOutDate,
+              advanceAmount: Number(b.advanceAmount) || 0,
+              paymentMethod: b.paymentMethod || 'Cash',
+              discount: Number((b as any).discount || inv?.discount || 0),
+              totalAmount: totalStayPayable,
+              pendingAmount: balance,
+              checkedOutDateTime: inv?.dateCreated || b.checkOutDate,
+            } as GuestCheckIn)
+          : null);
+
       return {
         no: idx + 1,
         guestName,
@@ -453,7 +479,8 @@ export default function DailyCollectionSheet({
         kitchenUpi,
         kitchenCash,
         kitchenDue,
-        totalFoodAmt
+        totalFoodAmt,
+        checkinTarget
       };
     });
 
@@ -922,6 +949,11 @@ export default function DailyCollectionSheet({
                 <th colSpan={4} className="p-2 bg-[#2D2214] text-amber-300 font-black tracking-wide whitespace-nowrap">
                   KITCHEN AMOUNT
                 </th>
+                {onEditCheckout && (
+                  <th rowSpan={2} className="border-l border-luxury-brown-800 p-2 min-w-[78px] text-center whitespace-nowrap print:hidden">
+                    ACTION
+                  </th>
+                )}
               </tr>
 
               {/* Header Row 2 */}
@@ -939,7 +971,7 @@ export default function DailyCollectionSheet({
             <tbody className="divide-y divide-luxury-brown-100/70 bg-white">
               {reportRows.length === 0 ? (
                 <tr>
-                  <td colSpan={18} className="p-10 text-center bg-luxury-beige-50/20">
+                  <td colSpan={onEditCheckout ? 19 : 18} className="p-10 text-center bg-luxury-beige-50/20">
                     <div className="max-w-md mx-auto space-y-2.5 py-4">
                       <div className="w-12 h-12 rounded-2xl bg-amber-100/70 text-amber-700 flex items-center justify-center mx-auto">
                         <FileSpreadsheet className="w-6 h-6" />
@@ -1042,6 +1074,22 @@ export default function DailyCollectionSheet({
                     <td className="p-2 text-right font-mono font-black text-luxury-brown-950 bg-luxury-beige-50/40">
                       {r.totalFoodAmt > 0 ? `₹${r.totalFoodAmt.toLocaleString()}` : '—'}
                     </td>
+                    {onEditCheckout && (
+                      <td className="p-2 border-l border-luxury-brown-100/70 text-center print:hidden">
+                        {(r as any).checkinTarget ? (
+                          <button
+                            type="button"
+                            onClick={() => onEditCheckout((r as any).checkinTarget)}
+                            title="Edit Check-Out Settlement & Payment Modes"
+                            className="px-2.5 py-1 rounded-lg bg-[#F6DE98] hover:bg-[#E8CE84] border border-[#C49A3A] text-[#17120F] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                          >
+                            <Edit3 className="w-3 h-3 text-[#8B691E]" /> Edit
+                          </button>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -1099,6 +1147,9 @@ export default function DailyCollectionSheet({
                 <td className="p-3 text-right font-mono text-xs text-luxury-gold-300 font-black">
                   ₹{totals.totalFoodAmt.toLocaleString()}
                 </td>
+                {onEditCheckout && (
+                  <td className="p-3 border-l border-luxury-brown-800 print:hidden">—</td>
+                )}
               </tr>
             </tfoot>
           </table>
