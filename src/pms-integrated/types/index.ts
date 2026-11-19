@@ -302,11 +302,30 @@ export interface PosMenuItem {
   code: string;
   name: string;
   category: string;
+  subCategory?: string;
   price: number;
+  costPrice?: number;
   taxRate: number;
   isVeg: boolean;
   available: boolean;
+  isActive?: boolean;
+  image?: string;
+  description?: string;
+  prepTime?: number;
   kitchenStation: 'Main Kitchen' | 'Tandoor' | 'Beverage Bar' | 'Bakery' | string;
+  variants?: { id: string; name: string; price: number }[];
+  addons?: { id: string; name: string; price: number }[];
+  modifiers?: string[];
+  mealWindows?: ('Breakfast' | 'Lunch' | 'Dinner' | 'All Day')[];
+  stockTracking?: boolean;
+  currentStock?: number;
+  /** Recipe / Bill of Materials (BOM) linking warehouse inventory raw materials to menu dishes */
+  recipeIngredients?: {
+    inventoryItemId: string;
+    ingredientName: string;
+    quantity: number;
+    unit: string;
+  }[];
 }
 
 export interface PosOrderRecord {
@@ -317,18 +336,89 @@ export interface PosOrderRecord {
   roomName?: string;
   bookingId?: string;
   tableNumber?: string;
+  pax?: number;
+  waiterName?: string;
   customerName: string;
   customerPhone: string;
-  items: { itemId: string; name: string; qty: number; price: number; total: number }[];
+  items: {
+    itemId: string;
+    name: string;
+    qty: number;
+    price: number;
+    total: number;
+    menuPrice?: number;
+    overrideReason?: string;
+    variant?: string;
+    addons?: string[];
+    addonPriceTotal?: number;
+    kitchenStation?: string;
+    itemNotes?: string;
+    itemDiscount?: number;
+    itemStatus?: 'KOT Sent' | 'Accepted' | 'Preparing' | 'Ready' | 'Served';
+  }[];
   subtotal: number;
   discount: number;
+  packagingCharge?: number;
   taxAmount: number;
   grandTotal: number;
   paymentMethod: PaymentMethod;
-  paymentStatus: 'Paid' | 'Unpaid (Room Folio)';
-  kotStatus: 'KOT Sent' | 'Preparing' | 'Ready' | 'Served';
+  paymentStatus: 'Paid' | 'Unpaid (Room Folio)' | 'Partially Paid' | 'Unpaid';
+  kotStatus: 'KOT Sent' | 'Kitchen Accepted' | 'Preparing' | 'Ready' | 'Served' | 'Cancelled';
   instructions?: string;
   dateTime: string;
+  /** Individual payments (Hybrid / Partial / single). Truth for per-mode reporting. */
+  payments?: PosPaymentRecord[];
+  amountPaid?: number;
+  balanceDue?: number;
+  paymentSummary?: string;
+  /** Dine-in check that is still open (table not billed yet). Supplementary KOTs share the same checkId. */
+  isOpenCheck?: boolean;
+  isHeld?: boolean;
+  holdNote?: string;
+  checkId?: string;
+  kotNumber?: string;
+  isSupplementaryKot?: boolean;
+  reprintCount?: number;
+  pickupTime?: string;
+  pickupStatus?: 'Preparing' | 'Ready for Pickup' | 'Picked Up / Delivered';
+  advanceBookingId?: string;
+  advanceDepositApplied?: number;
+  isWithoutGst?: boolean;
+  gstRate?: number;
+  customerGstin?: string;
+  companyName?: string;
+  voidedAt?: string;
+  voidReason?: string;
+  voidedBy?: string;
+  refundAmount?: number;
+  discountMeta?: { type: 'percent' | 'fixed'; value: number; amount: number; couponCode?: string; reason: string; by: string; at: string };
+  settlement?: { originalAmount: number; finalAmount: number; adjustment: number; reason: string; authorisedBy: string; at: string };
+  priceOverrides?: { itemId: string; name: string; originalPrice: number; newPrice: number; reason: string; by: string; at: string }[];
+  bomDeducted?: boolean;
+  bomReversed?: boolean;
+  bomDeductionSnapshot?: { inventoryItemId: string; ingredientName: string; deductedQty: number; unit: string }[];
+}
+
+export interface PosPaymentRecord {
+  id: string;
+  method: string;
+  amount: number;
+  reference?: string;
+  time: string;
+  staff: string;
+  // Manual Verification & Detail Fields
+  upiUtr?: string;
+  verifiedBy?: string;
+  verifiedAt?: string;
+  verificationStatus?: 'Verified' | 'Pending' | 'verified' | 'unverified';
+  cardNetwork?: 'Visa' | 'Mastercard' | 'RuPay' | 'Amex' | 'Other' | string;
+  cardLast4?: string;
+  cardTerminal?: string;
+  bankName?: string;
+  bankRef?: string;
+  cashTendered?: number;
+  changeReturned?: number;
+  notes?: string;
 }
 
 export interface InventoryItemRecord {

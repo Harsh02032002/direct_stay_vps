@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { FoodAdvanceBooking } from '../types';
 import { showToast } from '../utils/toast';
 import {
@@ -20,18 +20,40 @@ interface FoodAdvanceBookingPanelProps {
   bookings: FoodAdvanceBooking[];
   hotelName?: string;
   loggedInUser?: string;
+  availableTables?: string[];
   onUpdateBookings: (updated: FoodAdvanceBooking[]) => void;
   onCreatePosOrderFromAdvance?: (adv: FoodAdvanceBooking) => void;
+  initialEditBookingId?: string | null;
+  onClearInitialEdit?: () => void;
 }
+
+const getIstTodayStr = (): string => {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const y = parts.find((p) => p.type === 'year')?.value;
+    const m = parts.find((p) => p.type === 'month')?.value;
+    const d = parts.find((p) => p.type === 'day')?.value;
+    if (y && m && d) return `${y}-${m}-${d}`;
+  } catch {}
+  return new Date().toISOString().split('T')[0];
+};
 
 export default function FoodAdvanceBookingPanel({
   bookings = [],
   hotelName = 'Hotel Restaurant & Banquet',
   loggedInUser = 'Admin',
+  availableTables = ['T-01', 'T-02', 'T-03', 'T-04', 'T-05', 'T-06', 'T-07', 'T-08'],
   onUpdateBookings,
   onCreatePosOrderFromAdvance,
+  initialEditBookingId,
+  onClearInitialEdit,
 }: FoodAdvanceBookingPanelProps) {
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getIstTodayStr();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -45,10 +67,12 @@ export default function FoodAdvanceBookingPanel({
   const [guestOrGroupName, setGuestOrGroupName] = useState('');
   const [mobile, setMobile] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [tableNumber, setTableNumber] = useState('T-01');
+  const [bookingType, setBookingType] = useState('Table Reservation');
   const [meals, setMeals] = useState<Array<'Breakfast' | 'Lunch' | 'Dinner'>>(['Lunch']);
   const [eventDate, setEventDate] = useState(todayStr);
   const [eventTime, setEventTime] = useState('01:00 PM');
-  const [pax, setPax] = useState<string>('20');
+  const [pax, setPax] = useState<string>('4');
   const [menuCuisine, setMenuCuisine] = useState('');
   const [mealTypes, setMealTypes] = useState<Array<'Veg' | 'Non-Veg'>>(['Veg']);
   const [ratePerPax, setRatePerPax] = useState<string>('350');
@@ -88,10 +112,12 @@ export default function FoodAdvanceBookingPanel({
     setGuestOrGroupName('');
     setMobile('');
     setCompanyName('');
+    setTableNumber(availableTables[0] || 'T-01');
+    setBookingType('Table Reservation');
     setMeals(['Lunch']);
     setEventDate(todayStr);
     setEventTime('01:00 PM');
-    setPax('20');
+    setPax('4');
     setMenuCuisine('');
     setMealTypes(['Veg']);
     setRatePerPax('350');
@@ -99,7 +125,7 @@ export default function FoodAdvanceBookingPanel({
     setManualTotalOverride('');
     setAdvanceAmount('0');
     setPaymentMethod('Cash');
-    setStatus('Advance');
+    setStatus('Confirmed');
     setSpecialRequest('');
     setConfirmedBy(loggedInUser || 'Manager');
     setShowModal(true);
@@ -112,6 +138,8 @@ export default function FoodAdvanceBookingPanel({
     setGuestOrGroupName(item.guestOrGroupName);
     setMobile(item.mobile || '');
     setCompanyName(item.companyName || '');
+    setTableNumber(item.tableNumber || availableTables[0] || 'T-01');
+    setBookingType(item.bookingType || 'Table Reservation');
     setMeals(item.meals?.length ? item.meals : ['Lunch']);
     setEventDate(item.eventDate || todayStr);
     setEventTime(item.eventTime || '');
@@ -129,6 +157,15 @@ export default function FoodAdvanceBookingPanel({
     setConfirmedBy(item.confirmedBy || loggedInUser || 'Manager');
     setShowModal(true);
   };
+
+  useEffect(() => {
+    if (!initialEditBookingId) return;
+    const found = bookings.find((b) => b.id === initialEditBookingId);
+    if (found) {
+      openEditModal(found);
+    }
+    if (onClearInitialEdit) onClearInitialEdit();
+  }, [initialEditBookingId, bookings]);
 
   const toggleMeal = (m: 'Breakfast' | 'Lunch' | 'Dinner') => {
     setMeals((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
@@ -148,6 +185,33 @@ export default function FoodAdvanceBookingPanel({
       showToast('Please select at least one Meal (Breakfast / Lunch / Dinner).', 'warning');
       return;
     }
+    // Rule: Prevent accidental booking for past dates (Asia/Kolkata timezone)
+    if (!editingItem && eventDate < todayStr) {
+      showToast(`Cannot book a past date (${eventDate}). Please select today (${todayStr}) or a future date.`, 'error');
+      return;
+    }
+    // Rule: Prevent double-booking of the same table for overlapping date & time / meal slot
+    const cleanTbl = tableNumber.trim().toUpperCase();
+    if (cleanTbl && cleanTbl !== 'BANQUET') {
+      const conflict = bookings.find(
+        (b) =>
+          b.id !== editingItem?.id &&
+          b.status !== 'Cancelled' &&
+          b.status !== 'Completed' &&
+          b.status !== 'No-Show' &&
+          String(b.tableNumber || '').toUpperCase() === cleanTbl &&
+          b.eventDate === eventDate &&
+          ((eventTime.trim() && String(b.eventTime || '').trim().toUpperCase() === eventTime.trim().toUpperCase()) ||
+            b.meals.some((m) => meals.includes(m)))
+      );
+      if (conflict) {
+        showToast(
+          `Double-booking prevented: Table ${cleanTbl} is already reserved on ${eventDate} (${conflict.eventTime || conflict.meals.join('/')}) for ${conflict.guestOrGroupName}.`,
+          'error'
+        );
+        return;
+      }
+    }
 
     const record: FoodAdvanceBooking = {
       id: editingItem?.id || `FAB-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
@@ -156,6 +220,8 @@ export default function FoodAdvanceBookingPanel({
       guestOrGroupName: guestOrGroupName.trim(),
       mobile: mobile.trim() || undefined,
       companyName: companyName.trim() || undefined,
+      tableNumber: cleanTbl || 'T-01',
+      bookingType,
       meals,
       eventDate,
       eventTime: eventTime.trim() || undefined,
@@ -179,7 +245,7 @@ export default function FoodAdvanceBookingPanel({
       showToast(`Food Advance Booking ${record.bookingNumber} updated!`, 'success');
     } else {
       onUpdateBookings([record, ...bookings]);
-      showToast(`Food Advance Booking ${record.bookingNumber} created!`, 'success');
+      showToast(`Food Advance Booking ${record.bookingNumber} created for Table ${record.tableNumber}!`, 'success');
     }
     setShowModal(false);
   };
@@ -196,9 +262,8 @@ export default function FoodAdvanceBookingPanel({
   };
 
   const handleDelete = (item: FoodAdvanceBooking) => {
-    if (!window.confirm(`Delete Food Advance Booking ${item.bookingNumber} (${item.guestOrGroupName})?`)) return;
     onUpdateBookings(bookings.filter((b) => b.id !== item.id));
-    showToast('Food advance booking deleted.', 'info');
+    showToast(`Food advance booking ${item.bookingNumber} deleted.`, 'info');
   };
 
   const filteredList = useMemo(() => {
@@ -422,10 +487,10 @@ export default function FoodAdvanceBookingPanel({
                         </button>
                         <button
                           onClick={() => openEditModal(b)}
-                          className="p-1.5 border border-slate-200 hover:bg-slate-100 rounded-lg text-slate-700 cursor-pointer"
-                          title="Edit"
+                          className="px-2.5 py-1 border border-amber-200 bg-amber-50 hover:bg-amber-100 rounded-lg text-amber-900 font-bold text-[10.5px] inline-flex items-center gap-1 cursor-pointer"
+                          title="Edit Booking"
                         >
-                          <Edit className="w-3.5 h-3.5" />
+                          <Edit className="w-3 h-3" /> Edit
                         </button>
                         <button
                           onClick={() => handleDelete(b)}
@@ -493,11 +558,12 @@ export default function FoodAdvanceBookingPanel({
                     onChange={(e) => setStatus(e.target.value as FoodAdvanceBooking['status'])}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold bg-white"
                   >
-                    <option value="Advance">Advance</option>
-                    <option value="In Process">In Process</option>
+                    <option value="Advance">Advance (Pending)</option>
                     <option value="Confirmed">Confirmed</option>
+                    <option value="In Process">In Process (Arrived / Seated)</option>
                     <option value="Completed">Completed</option>
                     <option value="Cancelled">Cancelled</option>
+                    <option value="No-Show">No-Show</option>
                   </select>
                 </div>
               </div>
@@ -534,6 +600,40 @@ export default function FoodAdvanceBookingPanel({
                     placeholder="Optional Company / Org"
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl"
                   />
+                </div>
+              </div>
+
+              {/* Row 2b: Table / Seating Allocation & Booking Type */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold uppercase text-slate-600 mb-1">
+                    Table / Seating Allocation *
+                  </label>
+                  <select
+                    value={tableNumber}
+                    onChange={(e) => setTableNumber(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold bg-white"
+                  >
+                    {availableTables.map((t) => (
+                      <option key={t} value={t}>
+                        Table {t}
+                      </option>
+                    ))}
+                    <option value="BANQUET">Banquet / Lawn Hall</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold uppercase text-slate-600 mb-1">Booking Type</label>
+                  <select
+                    value={bookingType}
+                    onChange={(e) => setBookingType(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold bg-white"
+                  >
+                    <option value="Table Reservation">Table Reservation</option>
+                    <option value="Group Dining">Group Dining</option>
+                    <option value="Banquet / Party">Banquet / Party</option>
+                    <option value="Corporate Meal">Corporate Meal</option>
+                  </select>
                 </div>
               </div>
 

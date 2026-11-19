@@ -233,7 +233,6 @@ export interface Booking {
   gstAmount?: number;
   isWithoutGst?: boolean;
   gstInvoice?: boolean;
-  payments?: any[];
   paymentStatus?: 'Unpaid' | 'Partially Paid' | 'Fully Paid' | 'Payment Failed' | 'Refunded';
   transactionId?: string;
   bookingDate?: string;
@@ -423,7 +422,6 @@ export interface GuestCheckIn {
   gstAmount?: number;
   isWithoutGst?: boolean;
   gstInvoice?: boolean;
-  payments?: any[];
   advanceAmount: number;
   cashAmountPaid: number;
   onlineAmountPaid: number;
@@ -1708,6 +1706,8 @@ export interface FoodAdvanceBooking {
   guestOrGroupName: string;
   mobile?: string;
   companyName?: string;
+  tableNumber?: string;
+  bookingType?: 'Table Reservation' | 'Group Dining' | 'Banquet / Party' | string;
   meals: Array<'Breakfast' | 'Lunch' | 'Dinner'>;
   eventDate: string;
   eventTime?: string;
@@ -1720,7 +1720,7 @@ export interface FoodAdvanceBooking {
   advanceAmount: number;
   balanceAmount: number;
   paymentMethod: 'Cash' | 'UPI' | 'Card' | 'Bank' | 'Voucher' | string;
-  status: 'Advance' | 'In Process' | 'Confirmed' | 'Completed' | 'Cancelled';
+  status: 'Advance' | 'In Process' | 'Confirmed' | 'Completed' | 'Cancelled' | 'No-Show';
   specialRequest?: string;
   confirmedBy?: string;
   convertedPosOrderId?: string;

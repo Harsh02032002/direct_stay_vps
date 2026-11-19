@@ -84,11 +84,14 @@ function kindFromLabel(category?: string, sourceType?: string, serviceType?: str
 
 /** POS order pre-tax amount (food enters the bill PRE-TAX; GST is applied once by the bill). */
 function posPreTax(po: AnyRec, foodRate: number): number {
+  const gross = n(po.grandTotal ?? po.totalAmount);
+  const tax = n(po.taxAmount ?? po.gstAmount);
+  if (po.settlement && gross > 0) {
+    return tax > 0 ? r2(Math.max(0, gross - tax)) : foodRate > 0 ? r2(gross / (1 + foodRate / 100)) : r2(gross);
+  }
   const sub = n(po.subtotal);
   const disc = n(po.discount);
   if (sub > 0) return r2(Math.max(0, sub - disc));
-  const gross = n(po.grandTotal ?? po.totalAmount);
-  const tax = n(po.taxAmount ?? po.gstAmount);
   if (gross > 0 && tax > 0) return r2(gross - tax);
   return foodRate > 0 ? r2(gross / (1 + foodRate / 100)) : r2(gross);
 }
@@ -211,10 +214,23 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
 
   // 2a. POS orders (accurate pre-tax) — first, so they win de-dup
   (input.posOrders || []).forEach((po) => {
-    if (!po || isPaidAtCounter(po) || !belongsToStay(po)) return;
-    if (String(po.status || '').toLowerCase() === 'cancelled') return;
+    if (!po || isPaidAtCounter(po) || !belongsToStay(po) || po.isHeld) return;
+    if (
+      String(po.status || '').toLowerCase() === 'cancelled' ||
+      String(po.kotStatus || '').toLowerCase() === 'cancelled' ||
+      String(po.kitchenStatus || '').toLowerCase() === 'cancelled'
+    ) {
+      return;
+    }
     const items = Array.isArray(po.items)
-      ? po.items.map((it: AnyRec) => `${n(it.quantity ?? it.qty) || 1}x ${it.itemName || it.name || 'Item'}`).join(', ')
+      ? po.items
+          .map((it: AnyRec) => {
+            const rawName = String(it.itemName || it.name || 'Item');
+            const v = it.selectedVariant || it.variant;
+            const label = v && !rawName.endsWith(`(${v})`) ? `${rawName} (${v})` : rawName;
+            return `${n(it.quantity ?? it.qty) || 1}x ${label}`;
+          })
+          .join(', ')
       : '';
     push({
       id: String(po.id || po.orderNumber),

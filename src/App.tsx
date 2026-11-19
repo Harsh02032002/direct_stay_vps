@@ -957,6 +957,16 @@ export default function App() {
       return;
     }
 
+    if (rootSeg === 'pos') {
+      const subSeg = segments[1] || 'terminal';
+      setIsNotFoundRoute(false);
+      setIsPublicWebsiteForced(false);
+      setPortalLoginMode(null);
+      setActiveTab('pos');
+      setPosSubTab(subSeg === 'billing' ? 'terminal' : subSeg);
+      return;
+    }
+
     if (rootSeg === 'admin') {
       if (segments.length > 3) {
         setIsNotFoundRoute(true);
@@ -985,7 +995,7 @@ export default function App() {
         if (mapped.tab === 'invoice' && sub) setInvoiceSubTab(sub);
         if (mapped.tab === 'rooms' && sub) setRoomSubTab(sub);
         if (mapped.tab === 'housekeeping' && sub) setHousekeepingSubTab(sub);
-        if (mapped.tab === 'pos' && sub) setPosSubTab(sub);
+        if (mapped.tab === 'pos' && sub) setPosSubTab(sub === 'billing' ? 'terminal' : sub);
         if (mapped.tab === 'inventory' && sub) setInventorySubTab(sub);
         if (mapped.tab === 'otaManager' && sub) setOtaSubTab(sub);
         if (mapped.tab === 'reports' && sub) setReportsSubTab(sub);

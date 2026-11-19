@@ -141,7 +141,7 @@ a[role="button"] .whitespace-normal {
 }
 
 /* Sidebar unified to Rich Espresso (#17120F) */
-aside {
+aside:not([class*="bg-white"]):not([class*="bg-transparent"]) {
   background-color: #17120F !important;
 }
 

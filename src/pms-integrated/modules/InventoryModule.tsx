@@ -1,9 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Package,
   AlertTriangle,
   Plus,
   Search,
+  Pencil,
+  Trash2,
+  X,
+  Check,
 } from 'lucide-react';
 import {
   InventoryItemRecord,
@@ -22,6 +26,8 @@ interface InventoryModuleProps {
   movements: StockMovementRecord[];
   onRecordStockMovement: (itemId: string, type: 'IN' | 'OUT', qty: number, department: string, reason: string) => void;
   onAddInventoryItem?: (item: InventoryItemRecord) => void;
+  onUpdateInventoryItem?: (item: InventoryItemRecord) => void;
+  onDeleteInventoryItem?: (itemId: string) => void;
   onAddSupplier?: (supplier: InventorySupplierRecord) => void;
   onAddPurchase?: (po: InventoryPurchaseRecord) => void;
 }
@@ -44,9 +50,12 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
   movements,
   onRecordStockMovement,
   onAddInventoryItem,
+  onUpdateInventoryItem,
+  onDeleteInventoryItem,
   onAddSupplier,
   onAddPurchase,
 }) => {
+  const skuFormRef = useRef<HTMLFormElement | null>(null);
   const [search, setSearch] = useState('');
   const [selectedItemId, setSelectedItemId] = useState(items[0]?.id || '');
   const [moveType, setMoveType] = useState<'IN' | 'OUT'>('OUT');
@@ -64,13 +73,41 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
     }
   }, [items, selectedItemId]);
 
-  // New Store Item State
+  // New / Edit Store Item State
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [newSkuCode, setNewSkuCode] = useState('');
   const [newSkuName, setNewSkuName] = useState('');
   const [newSkuCat, setNewSkuCat] = useState<InventoryItemRecord['category']>('Housekeeping & Cleaning');
   const [newSkuUnit, setNewSkuUnit] = useState<InventoryItemRecord['unit']>('Pcs');
   const [newSkuCost, setNewSkuCost] = useState<number>(50);
   const [newSkuStock, setNewSkuStock] = useState<number>(20);
   const [newSkuMin, setNewSkuMin] = useState<number>(5);
+  const [newSkuSupplier, setNewSkuSupplier] = useState('');
+
+  const startEditItem = (item: InventoryItemRecord) => {
+    setEditingItemId(item.id);
+    setNewSkuCode(item.code || '');
+    setNewSkuName(item.name || '');
+    setNewSkuCat(item.category || 'Housekeeping & Cleaning');
+    setNewSkuUnit(item.unit || 'Pcs');
+    setNewSkuCost(Number(item.purchasePrice) || 0);
+    setNewSkuStock(Number(item.currentStock) || 0);
+    setNewSkuMin(Number(item.minStock) || 0);
+    setNewSkuSupplier(item.supplierName || '');
+    skuFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
+  const resetSkuForm = () => {
+    setEditingItemId(null);
+    setNewSkuCode('');
+    setNewSkuName('');
+    setNewSkuCat('Housekeeping & Cleaning');
+    setNewSkuUnit('Pcs');
+    setNewSkuCost(50);
+    setNewSkuStock(20);
+    setNewSkuMin(5);
+    setNewSkuSupplier('');
+  };
 
   // New Supplier State
   const [supName, setSupName] = useState('');
@@ -167,40 +204,83 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Quick Stock Issue / Restock Form + Add New Item */}
           <div className="space-y-4 h-fit">
-            {onAddInventoryItem && (
+            {(onAddInventoryItem || onUpdateInventoryItem) && (
               <form
+                ref={skuFormRef}
                 onSubmit={(e) => {
                   e.preventDefault();
                   if (!newSkuName.trim()) return;
-                  const newItem: InventoryItemRecord = {
-                    id: `inv-${Date.now()}`,
-                    code: `SKU-${Math.floor(100 + Math.random() * 900)}`,
-                    name: newSkuName.trim(),
-                    category: newSkuCat,
-                    unit: newSkuUnit || 'Pcs',
-                    purchasePrice: Number(newSkuCost) || 0,
-                    currentStock: Number(newSkuStock) || 0,
-                    minStock: Number(newSkuMin) || 5,
-                    supplierName: localSuppliers[0]?.name || 'Direct Vendor',
-                    lastUpdated: new Date().toISOString().slice(0, 10),
-                  };
-                  onAddInventoryItem(newItem);
-                  setSelectedItemId(newItem.id);
-                  setNewSkuName('');
+                  if (editingItemId && onUpdateInventoryItem) {
+                    const existing = items.find((i) => i.id === editingItemId);
+                    const updatedItem: InventoryItemRecord = {
+                      id: editingItemId,
+                      code: newSkuCode.trim() || existing?.code || `SKU-${Math.floor(100 + Math.random() * 900)}`,
+                      name: newSkuName.trim(),
+                      category: newSkuCat || 'Housekeeping & Cleaning',
+                      unit: newSkuUnit || 'Pcs',
+                      purchasePrice: Math.max(0, Number(newSkuCost) || 0),
+                      currentStock: Math.max(0, Number(newSkuStock) || 0),
+                      minStock: Math.max(0, Number(newSkuMin) || 0),
+                      supplierName: newSkuSupplier.trim() || existing?.supplierName || localSuppliers[0]?.name || 'Direct Vendor',
+                      lastUpdated: new Date().toISOString().slice(0, 10),
+                    };
+                    onUpdateInventoryItem(updatedItem);
+                    resetSkuForm();
+                    return;
+                  }
+                  if (onAddInventoryItem) {
+                    const newItem: InventoryItemRecord = {
+                      id: `inv-${Date.now()}`,
+                      code: newSkuCode.trim() || `SKU-${Math.floor(100 + Math.random() * 900)}`,
+                      name: newSkuName.trim(),
+                      category: newSkuCat,
+                      unit: newSkuUnit || 'Pcs',
+                      purchasePrice: Math.max(0, Number(newSkuCost) || 0),
+                      currentStock: Math.max(0, Number(newSkuStock) || 0),
+                      minStock: Math.max(0, Number(newSkuMin) || 0),
+                      supplierName: newSkuSupplier.trim() || localSuppliers[0]?.name || 'Direct Vendor',
+                      lastUpdated: new Date().toISOString().slice(0, 10),
+                    };
+                    onAddInventoryItem(newItem);
+                    setSelectedItemId(newItem.id);
+                    resetSkuForm();
+                  }
                 }}
-                className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3"
+                className={`bg-white p-5 rounded-2xl border shadow-sm space-y-3 transition-all ${
+                  editingItemId ? 'border-amber-400 ring-2 ring-amber-100' : 'border-slate-200/80'
+                }`}
               >
-                <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-                  <Plus className="w-4 h-4 text-amber-500" />
-                  + Add Dynamic Store SKU
-                </h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                    {editingItemId ? (
+                      <>
+                        <Pencil className="w-4 h-4 text-amber-600" />
+                        <span>Edit Store SKU</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4 text-amber-500" />
+                        <span>+ Add Dynamic Store SKU</span>
+                      </>
+                    )}
+                  </h3>
+                  {editingItemId && (
+                    <button
+                      type="button"
+                      onClick={resetSkuForm}
+                      className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" /> Cancel
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-2.5 text-xs">
                   <input
                     type="text"
                     required
                     value={newSkuName}
                     onChange={(e) => setNewSkuName(e.target.value)}
-                    placeholder="Item Name (e.g. Bath Towel, Water 1L)"
+                    placeholder="Item Name (e.g. Basmati Rice, Water 1L)"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold"
                   />
                   <div className="grid grid-cols-2 gap-2">
@@ -217,8 +297,9 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                         {Array.from(
                           new Set([
                             ...items.map((i) => i.category).filter(Boolean),
-                            'Housekeeping & Cleaning',
+                            'Kitchen Raw Materials',
                             'Kitchen & F&B',
+                            'Housekeeping & Cleaning',
                             'Guest Toiletries',
                             'Linen & Bedding',
                             'Electrical & Maintenance',
@@ -239,7 +320,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                         className="w-full px-2.5 py-2 rounded-xl border border-slate-200 font-bold bg-white"
                       />
                       <datalist id="inventory-sku-units">
-                        {['Pcs', 'Kg', 'Ltr', 'Box', 'Pack', 'Bottle', 'Roll', 'Set'].map((u) => (
+                        {['Pcs', 'Kg', 'gm', 'Ltr', 'ml', 'Box', 'Pack', 'Bottle', 'Roll', 'Set'].map((u) => (
                           <option key={u} value={u} />
                         ))}
                       </datalist>
@@ -251,16 +332,20 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                       <input
                         type="number"
                         min={0}
+                        step="any"
                         value={newSkuCost}
                         onChange={(e) => setNewSkuCost(Number(e.target.value))}
                         className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 font-bold"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">Opening Qty</label>
+                      <label className="block text-[10px] text-slate-500 mb-0.5">
+                        {editingItemId ? 'Current Stock' : 'Opening Qty'}
+                      </label>
                       <input
                         type="number"
                         min={0}
+                        step="any"
                         value={newSkuStock}
                         onChange={(e) => setNewSkuStock(Number(e.target.value))}
                         className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 font-bold"
@@ -271,19 +356,53 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                       <input
                         type="number"
                         min={0}
+                        step="any"
                         value={newSkuMin}
                         onChange={(e) => setNewSkuMin(Number(e.target.value))}
                         className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 font-bold"
                       />
                     </div>
                   </div>
+                  {editingItemId && (
+                    <div className="grid grid-cols-2 gap-2 pt-0.5">
+                      <div>
+                        <label className="block text-[10px] text-slate-500 mb-0.5">SKU Code</label>
+                        <input
+                          type="text"
+                          value={newSkuCode}
+                          onChange={(e) => setNewSkuCode(e.target.value)}
+                          placeholder="SKU-101"
+                          className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 font-mono text-[11px]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-500 mb-0.5">Supplier</label>
+                        <input
+                          type="text"
+                          list="inventory-po-vendors"
+                          value={newSkuSupplier}
+                          onChange={(e) => setNewSkuSupplier(e.target.value)}
+                          placeholder="Vendor Name"
+                          className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 font-semibold text-[11px]"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <button
-                  type="submit"
-                  className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs"
-                >
-                  + Add Item to Store
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {editingItemId ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" /> Save SKU Changes
+                      </>
+                    ) : (
+                      '+ Add Item to Store'
+                    )}
+                  </button>
+                </div>
               </form>
             )}
 
@@ -339,7 +458,8 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                     <label className="block font-bold text-slate-600 mb-1">Quantity</label>
                     <input
                       type="number"
-                      min={1}
+                      min={0.01}
+                      step="any"
                       value={moveQty}
                       onChange={(e) => setMoveQty(Number(e.target.value))}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold"
@@ -450,16 +570,16 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                 </div>
               </div>
               <div className="overflow-x-auto w-full">
-                <table className="w-full min-w-[660px] text-left text-xs">
+                <table className="w-full text-left text-xs">
                   <thead>
-                    <tr className="bg-slate-50 text-[11px] font-bold uppercase text-slate-500 border-b border-slate-200">
-                      <th className="py-3 px-4">SKU & Item</th>
-                      <th className="py-3 px-4">Category</th>
-                      <th className="py-3 px-4">Unit Cost</th>
-                      <th className="py-3 px-4">Current Stock</th>
-                      <th className="py-3 px-4">Min Par</th>
-                      <th className="py-3 px-4">Supplier</th>
-                      <th className="py-3 px-4">Status</th>
+                    <tr className="bg-slate-50 text-[10px] font-bold uppercase text-slate-500 border-b border-slate-200">
+                      <th className="py-2.5 px-3">SKU & Item</th>
+                      <th className="py-2.5 px-3">Category</th>
+                      <th className="py-2.5 px-3">Cost</th>
+                      <th className="py-2.5 px-3">Stock</th>
+                      <th className="py-2.5 px-3">Min Par</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -475,29 +595,61 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                         .filter((i) => !search || i.name.toLowerCase().includes(search.toLowerCase()))
                         .map((item) => {
                           const isLow = item.currentStock <= item.minStock;
+                          const isEditingRow = editingItemId === item.id;
                           return (
-                            <tr key={item.id}>
-                              <td className="py-3 px-4 whitespace-nowrap">
-                                <div className="font-bold text-slate-900">{item.name}</div>
-                                <div className="text-[10px] text-slate-400">{item.code}</div>
+                            <tr
+                              key={item.id}
+                              className={isEditingRow ? 'bg-amber-50/70' : 'hover:bg-slate-50/60'}
+                            >
+                              <td className="py-2.5 px-3">
+                                <div className="font-bold text-slate-900 leading-tight">{item.name}</div>
+                                <div className="text-[10px] text-slate-400">
+                                  {item.code} {item.supplierName ? `• ${item.supplierName}` : ''}
+                                </div>
                               </td>
-                              <td className="py-3 px-4 whitespace-nowrap">{item.category}</td>
-                              <td className="py-3 px-4 font-semibold whitespace-nowrap">{formatCurrency(item.purchasePrice)}</td>
-                              <td className="py-3 px-4 font-extrabold text-slate-900 whitespace-nowrap">
-                                {item.currentStock} {item.unit}
+                              <td className="py-2.5 px-3 text-slate-700">{item.category}</td>
+                              <td className="py-2.5 px-3 font-semibold whitespace-nowrap">{formatCurrency(item.purchasePrice)}</td>
+                              <td className="py-2.5 px-3 font-extrabold text-slate-900 whitespace-nowrap">
+                                {Number(Number(item.currentStock || 0).toFixed(4))} {item.unit}
                               </td>
-                              <td className="py-3 px-4 text-slate-500 whitespace-nowrap">
+                              <td className="py-2.5 px-3 text-slate-500 whitespace-nowrap">
                                 {item.minStock} {item.unit}
                               </td>
-                              <td className="py-3 px-4 whitespace-nowrap">{item.supplierName}</td>
-                              <td className="py-3 px-4 whitespace-nowrap">
+                              <td className="py-2.5 px-3 whitespace-nowrap">
                                 <span
-                                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                     isLow ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
                                   }`}
                                 >
                                   {isLow ? 'Reorder Now' : 'Optimal'}
                                 </span>
+                              </td>
+                              <td className="py-2.5 px-3 whitespace-nowrap text-right">
+                                <div className="inline-flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditItem(item)}
+                                    title="Edit Store Item"
+                                    className="px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Pencil className="w-3 h-3" /> Edit
+                                  </button>
+                                  {onDeleteInventoryItem && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (window.confirm(`Delete "${item.name}" from Central Inventory Store?`)) {
+                                          if (editingItemId === item.id) resetSkuForm();
+                                          onDeleteInventoryItem(item.id);
+                                        }
+                                      }}
+                                      title="Delete Store Item"
+                                      className="p-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 cursor-pointer"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );

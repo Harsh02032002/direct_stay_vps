@@ -779,14 +779,26 @@ export function computeHotelFinancialSummary(input: ComputeFinanceInput): HotelF
   let outputGstPosDirect = 0;
 
   for (const order of posOrders) {
-    if (order.status === 'Cancelled' || order.isHeld) continue;
+    if (
+      order.status === 'Cancelled' ||
+      (order as any).kotStatus === 'Cancelled' ||
+      (order as any).kitchenStatus === 'Cancelled' ||
+      (order as any).paymentStatusDetail === 'Voided' ||
+      order.isHeld
+    ) {
+      continue;
+    }
 
-    const grandTotal = Math.max(0, Number(order.grandTotal || 0));
+    const grandTotal = Math.max(0, Number(order.grandTotal ?? (order as any).totalAmount ?? 0));
     const taxAmt = Math.max(
       0,
-      Number(order.taxAmount ?? ((Number((order as any).cgst || 0) + Number((order as any).sgst || 0)) || 0))
+      Number(
+        order.taxAmount ??
+          (order as any).gstAmount ??
+          (Number((order as any).cgst || 0) + Number((order as any).sgst || 0) || 0)
+      )
     );
-    const netPosSubtotal = Math.max(0, Number(order.subtotal ?? (grandTotal - taxAmt)));
+    const netPosSubtotal = Math.max(0, Number((grandTotal - taxAmt).toFixed(2)));
     if (grandTotal <= 0) continue;
 
     const rawPosPayMethod = order.paymentMethod || (order as any).paymentMode || '';
@@ -794,9 +806,12 @@ export function computeHotelFinancialSummary(input: ComputeFinanceInput): HotelF
 
     const isRoomCharge =
       rawPosPayMethod === 'Room Charge' ||
+      rawPosPayMethod === 'Room Folio' ||
       order.orderType === 'Room Charge' ||
       (order.status as string) === 'Charged to Room' ||
+      (order.paymentStatus as string) === 'Posted to Room' ||
       Boolean((order as any).postedToRoomBill) ||
+      Boolean((order as any).postToRoomBill) ||
       Boolean(order.linkedInvoiceId) ||
       folioPosOrderIds.has(order.id) ||
       (order.orderType === 'Room Service' &&
@@ -811,6 +826,7 @@ export function computeHotelFinancialSummary(input: ComputeFinanceInput): HotelF
       const isCoveredByInvoice =
         (order.linkedInvoiceId && invoices.some((i) => i.id === order.linkedInvoiceId)) ||
         (order.checkInId && invoicedBookingIds.has(order.checkInId)) ||
+        ((order as any).bookingId && invoicedBookingIds.has((order as any).bookingId)) ||
         (order.roomNumber && invoicedRoomNumbersWithFood.has(order.roomNumber));
 
       if (!isCoveredByInvoice) {
@@ -823,7 +839,7 @@ export function computeHotelFinancialSummary(input: ComputeFinanceInput): HotelF
             sourceType: 'inhouse_folio',
             sourceId: order.id,
             invoiceReference: order.orderNumber || order.id,
-            bookingId: order.checkInId || (order as any).guestId || '',
+            bookingId: order.checkInId || (order as any).bookingId || (order as any).guestId || '',
             guestName: order.guestName || `Room ${order.roomNumber} Guest`,
             roomNumber: order.roomNumber || '-',
             date: orderDate,
@@ -841,15 +857,58 @@ export function computeHotelFinancialSummary(input: ComputeFinanceInput): HotelF
     }
 
     // Direct POS order (not charged to a room folio)
+    const posCgst = Number((taxAmt / 2).toFixed(2));
+    const posSgst = Number((taxAmt - posCgst).toFixed(2));
+    const posSlabPct = taxAmt > 0 ? Number((order as any).gstRate ?? (order as any).gstPct ?? 5) : 0;
     posDirectRevenue += netPosSubtotal;
     outputGstPosDirect += taxAmt;
-    outputCgst += taxAmt / 2;
-    outputSgst += taxAmt / 2;
-    recordTaxSlab(5, netPosSubtotal, taxAmt, false);
+    outputCgst += posCgst;
+    outputSgst += posSgst;
+    if (posSlabPct > 0) {
+      recordTaxSlab(posSlabPct, netPosSubtotal, taxAmt, false);
+    }
 
-    if (order.paymentStatus === 'Paid') {
-      const mBucket = normalizePaymentMethod(rawPosPayMethod);
-      addMethodInflow(mBucket, grandTotal);
+    const posPayRows: any[] = Array.isArray((order as any).payments)
+      ? (order as any).payments.filter((p: any) => p && Number(p.amount) > 0 && !String(p.method || '').toLowerCase().includes('room'))
+      : [];
+    const rowsPaidSum = Number(posPayRows.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2));
+    const explicitPaid =
+      rowsPaidSum > 0
+        ? Math.min(grandTotal, rowsPaidSum)
+        : order.paymentStatus === 'Paid'
+        ? grandTotal
+        : Math.min(grandTotal, Math.max(0, Number((order as any).amountPaid || 0)));
+    const outstandingPosAmt = Math.max(0, Number((grandTotal - explicitPaid).toFixed(2)));
+
+    if (posPayRows.length > 0) {
+      let remainingCap = grandTotal;
+      posPayRows.forEach((pr: any, idx: number) => {
+        const legAmt = Math.min(remainingCap, Math.max(0, Number(pr.amount || 0)));
+        if (legAmt <= 0) return;
+        remainingCap = Math.max(0, Number((remainingCap - legAmt).toFixed(2)));
+        const mBucket = normalizePaymentMethod(pr.method);
+        addMethodInflow(mBucket, legAmt);
+        transactions.push({
+          id: `TX-POS-${order.id}-${pr.id || idx}`,
+          hotelId,
+          date: (pr.at || orderDate).slice(0, 10),
+          type: 'POS Sale',
+          direction: 'Inflow',
+          category: `POS (${order.orderType})`,
+          partyName: order.guestName || (order.tableNo ? `Table ${order.tableNo}` : 'Walk-in Diner'),
+          referenceNo: pr.reference || pr.upiUtr || order.orderNumber || order.id,
+          sourceType: 'pos_order',
+          sourceId: order.id,
+          amount: legAmt,
+          taxAmount: idx === 0 ? taxAmt : 0,
+          paymentMethod: mBucket,
+          status: outstandingPosAmt <= 0.01 ? 'Paid' : 'Partially Paid',
+          notes: `${order.items?.length || 0} items settled via ${pr.method}`,
+        });
+      });
+    } else if (explicitPaid > 0) {
+      const mBucket = normalizePaymentMethod(rawPosPayMethod || 'Cash');
+      addMethodInflow(mBucket, explicitPaid);
       transactions.push({
         id: `TX-POS-${order.id}`,
         hotelId,
@@ -861,48 +920,52 @@ export function computeHotelFinancialSummary(input: ComputeFinanceInput): HotelF
         referenceNo: order.orderNumber || order.id,
         sourceType: 'pos_order',
         sourceId: order.id,
-        amount: grandTotal,
+        amount: explicitPaid,
         taxAmount: taxAmt,
         paymentMethod: mBucket,
-        status: 'Paid',
-        notes: `${order.items?.length || 0} items settled via ${rawPosPayMethod}`,
+        status: outstandingPosAmt <= 0.01 ? 'Paid' : 'Partially Paid',
+        notes: `${order.items?.length || 0} items settled via ${rawPosPayMethod || 'Cash'}`,
       });
-    } else {
-      // Unpaid direct POS bill (e.g. Credit customer)
+    }
+
+    if (outstandingPosAmt > 0.01) {
+      const posArStatus: 'Partially Paid' | 'Unpaid' = explicitPaid > 0 ? 'Partially Paid' : 'Unpaid';
       receivableItems.push({
         id: `AR-POS-${order.id}`,
         sourceType: 'pos_credit',
         sourceId: order.id,
         invoiceReference: order.orderNumber || order.id,
         bookingId: '',
-        guestName: order.guestName || 'POS Credit Customer',
+        guestName: order.guestName || (order.tableNo ? `Table ${order.tableNo}` : 'POS Credit Customer'),
         guestMobile: order.customerPhone,
         roomNumber: order.roomNumber || '-',
-        date: order.date,
-        dueDate: order.date,
+        date: orderDate,
+        dueDate: orderDate,
         originalAmount: grandTotal,
-        amountPaid: 0,
-        outstandingAmount: grandTotal,
-        status: 'Unpaid',
-        ageDays: computeAgeDays(order.date),
-        notes: `Unpaid POS Order (${order.orderType})`,
+        amountPaid: explicitPaid,
+        outstandingAmount: outstandingPosAmt,
+        status: posArStatus,
+        ageDays: computeAgeDays(orderDate),
+        notes: `${posArStatus} POS Order (${order.orderType})`,
       });
-      transactions.push({
-        id: `TX-POS-UNPAID-${order.id}`,
-        hotelId,
-        date: order.date,
-        type: 'POS Sale',
-        direction: 'Accrual (Non-Cash)',
-        category: `POS (${order.orderType})`,
-        partyName: order.guestName || 'POS Credit Customer',
-        referenceNo: order.orderNumber || order.id,
-        sourceType: 'pos_order',
-        sourceId: order.id,
-        amount: grandTotal,
-        taxAmount: taxAmt,
-        paymentMethod: 'Credit / Unpaid',
-        status: 'Unpaid',
-      });
+      if (explicitPaid <= 0) {
+        transactions.push({
+          id: `TX-POS-UNPAID-${order.id}`,
+          hotelId,
+          date: orderDate,
+          type: 'POS Sale',
+          direction: 'Accrual (Non-Cash)',
+          category: `POS (${order.orderType})`,
+          partyName: order.guestName || 'POS Credit Customer',
+          referenceNo: order.orderNumber || order.id,
+          sourceType: 'pos_order',
+          sourceId: order.id,
+          amount: grandTotal,
+          taxAmount: taxAmt,
+          paymentMethod: 'Credit / Unpaid',
+          status: 'Unpaid',
+        });
+      }
     }
   }
 

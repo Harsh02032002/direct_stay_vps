@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import QuickAddBookingModal from './components/QuickAddBookingModal';
 import BookingDetailsDrawer from './components/BookingDetailsDrawer';
 import QuickCheckInModal from './components/QuickCheckInModal';
@@ -1123,6 +1123,98 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   const [suppliers, setSuppliers] = useState<InventorySupplierRecord[]>([]);
   const [purchases, setPurchases] = useState<InventoryPurchaseRecord[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovementRecord[]>([]);
+
+  const latestInvItemsRef = useRef<InventoryItemRecord[]>([]);
+  const latestAppInvProductsRef = useRef<InventoryProduct[]>(appInventoryProducts);
+  const latestAppInvMovementsRef = useRef<InventoryStockMovement[]>(appInventoryStockMovements);
+  const stockMovSeqRef = useRef<number>(0);
+
+  useEffect(() => {
+    latestInvItemsRef.current = inventoryItems;
+  }, [inventoryItems]);
+  useEffect(() => {
+    latestAppInvProductsRef.current = appInventoryProducts;
+  }, [appInventoryProducts]);
+  useEffect(() => {
+    latestAppInvMovementsRef.current = appInventoryStockMovements;
+  }, [appInventoryStockMovements]);
+
+  const recordWarehouseStockMovement = (
+    itemId: string,
+    type: 'IN' | 'OUT',
+    qty: number,
+    department: string,
+    reason: string
+  ) => {
+    const r4 = (v: number) => Math.round(v * 10000) / 10000;
+    const cleanQty = r4(Math.max(0, Number(qty) || 0));
+    if (cleanQty <= 0) return;
+
+    const currentItems = latestInvItemsRef.current;
+    const target = currentItems.find((i) => i.id === itemId);
+    if (!target) return;
+
+    const nextItems = currentItems.map((i) => {
+      if (i.id !== itemId) return i;
+      const nextStock =
+        type === 'IN' ? r4((Number(i.currentStock) || 0) + cleanQty) : r4(Math.max(0, (Number(i.currentStock) || 0) - cleanQty));
+      return { ...i, currentStock: nextStock };
+    });
+    latestInvItemsRef.current = nextItems;
+    setInventoryItems(nextItems);
+
+    if (onUpdateInventoryProducts) {
+      const nextProducts = latestAppInvProductsRef.current.map((ip) => {
+        if (ip.id !== itemId) return ip;
+        const nextStock =
+          type === 'IN'
+            ? r4((Number(ip.currentStock) || 0) + cleanQty)
+            : r4(Math.max(0, (Number(ip.currentStock) || 0) - cleanQty));
+        const minSt = Number(ip.minimumStock ?? target.minStock) || 0;
+        return {
+          ...ip,
+          currentStock: nextStock,
+          status: nextStock <= minSt ? 'Low Stock' : 'In Stock',
+          lastUpdated: new Date().toISOString().slice(0, 10),
+        } as InventoryProduct;
+      });
+      latestAppInvProductsRef.current = nextProducts;
+      onUpdateInventoryProducts(nextProducts);
+    }
+
+    stockMovSeqRef.current += 1;
+    const newMovId = `SM-${Date.now()}-${stockMovSeqRef.current}`;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const localMov: StockMovementRecord = {
+      id: newMovId,
+      date: todayIso,
+      productName: target.name,
+      type,
+      qty: cleanQty,
+      department,
+      reason,
+      handledBy: loggedInUser || 'Restaurant Staff',
+    };
+    setStockMovements((prev) => [localMov, ...prev]);
+
+    if (onUpdateInventoryMovements) {
+      const dbMov: InventoryStockMovement = {
+        id: newMovId,
+        hotelId: selectedHotelId,
+        productId: target.id,
+        productName: target.name,
+        productCode: target.code,
+        type,
+        quantity: cleanQty,
+        date: todayIso,
+        reason: `${department}: ${reason}`,
+        notes: reason,
+      };
+      const nextDbMovs = [dbMov, ...latestAppInvMovementsRef.current];
+      latestAppInvMovementsRef.current = nextDbMovs;
+      onUpdateInventoryMovements(nextDbMovs);
+    }
+  };
   const [otaChannels, setOtaChannels] = useState<OtaChannelRecord[]>([
     {
       id: 'ota-mmt',
@@ -1660,45 +1752,119 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         code: pi.code || (pi as any).sku || pi.id.slice(-5).toUpperCase(),
         name: pi.name,
         category: (pi.category as any) || 'North Indian',
+        subCategory: (pi as any).subCategory,
         price: Number(pi.price) || 0,
+        costPrice: (pi as any).costPrice !== undefined ? Number((pi as any).costPrice) : undefined,
         taxRate: Number(pi.taxRate ?? (pi as any).gstRate) || 5,
         isVeg: (pi as any).isVeg !== false,
         available: pi.available !== false && (pi as any).isAvailable !== false,
+        isActive: (pi as any).isActive !== false,
+        image: pi.image,
+        description: (pi as any).description,
+        prepTime: (pi as any).prepTime !== undefined ? Number((pi as any).prepTime) : undefined,
         kitchenStation: (pi.kitchenStation as any) || 'Main Kitchen',
+        variants: Array.isArray(pi.variants) ? pi.variants : undefined,
+        addons: Array.isArray(pi.addons) ? pi.addons : undefined,
+        modifiers: Array.isArray(pi.modifiers) ? pi.modifiers : undefined,
+        mealWindows: Array.isArray((pi as any).mealWindows) ? (pi as any).mealWindows : undefined,
+        stockTracking: Boolean((pi as any).stockTracking),
+        currentStock: (pi as any).currentStock !== undefined ? Number((pi as any).currentStock) : undefined,
+        recipeIngredients: Array.isArray((pi as any).recipeIngredients) ? (pi as any).recipeIngredients : undefined,
       }))
     );
     setPosOrders(
-      appPosOrders.map((po) => ({
-        id: po.id,
-        orderNumber: po.orderNumber || po.id,
-        orderType:
-          po.orderType === 'Room Service' || po.orderType === 'Room Charge'
-            ? 'Room Service'
-            : po.orderType === 'Takeaway'
-            ? 'Takeaway'
-            : 'Dine In',
-        roomNumber: po.roomNumber,
-        roomName: po.roomNumber ? `Room ${po.roomNumber}` : undefined,
-        bookingId: (po as any).bookingId,
-        tableNumber: po.tableNo || (po as any).tableNumber,
-        customerName: po.guestName || 'Guest',
-        customerPhone: po.customerPhone || (po as any).guestMobile || '',
-        items: (po.items || []).map((it) => ({
-          itemId: it.itemId,
-          name: it.itemName || (it as any).name || 'Item',
-          qty: Number(it.quantity) || 1,
-          price: Number(it.price) || 0,
-          total: Number(it.total) || (Number(it.quantity) || 1) * (Number(it.price) || 0),
-        })),
-        subtotal: Number(po.subtotal) || 0,
-        discount: Number(po.discount) || 0,
-        taxAmount: Number(po.taxAmount ?? (po as any).gstAmount) || 0,
-        grandTotal: Number(po.grandTotal ?? (po as any).totalAmount) || 0,
-        paymentMethod: (po.paymentMethod as any) || 'Cash',
-        paymentStatus: po.paymentStatus === 'Paid' ? 'Paid' : 'Unpaid (Room Folio)',
-        kotStatus: (po.kitchenStatus as any) || 'Served',
-        dateTime: po.date || (po as any).createdAt || '',
-      }))
+      appPosOrders.map((po) => {
+        const anyPo = po as any;
+        const resolvedPaySt: PosOrderRecord['paymentStatus'] =
+          anyPo.paymentStatusDetail ||
+          (po.paymentMethod === 'Room Charge' || anyPo.postToRoomBill
+            ? 'Unpaid (Room Folio)'
+            : po.paymentStatus === 'Paid'
+            ? 'Paid'
+            : (Number(anyPo.amountPaid) || 0) > 0
+            ? 'Partially Paid'
+            : 'Unpaid');
+        return {
+          id: po.id,
+          orderNumber: po.orderNumber || po.id,
+          orderType:
+            po.orderType === 'Room Service' || po.orderType === 'Room Charge'
+              ? 'Room Service'
+              : po.orderType === 'Takeaway'
+              ? 'Takeaway'
+              : 'Dine In',
+          roomNumber: po.roomNumber,
+          roomName: po.roomNumber ? `Room ${po.roomNumber}` : undefined,
+          bookingId: anyPo.bookingId,
+          tableNumber: po.tableNo || anyPo.tableNumber,
+          pax: anyPo.pax,
+          waiterName: po.waiterName || anyPo.waiterName,
+          customerName: po.guestName || 'Guest',
+          customerPhone: po.customerPhone || anyPo.guestMobile || '',
+          items: (po.items || []).map((it: any) => ({
+            itemId: it.itemId,
+            name: it.itemName || it.name || 'Item',
+            qty: Number(it.quantity ?? it.qty) || 1,
+            price: Number(it.price) || 0,
+            total: Number(it.total) || (Number(it.quantity ?? it.qty) || 1) * (Number(it.price) || 0),
+            menuPrice: it.menuPrice,
+            overrideReason: it.overrideReason,
+            variant: it.selectedVariant || it.variant,
+            addons: it.selectedAddons || it.addons,
+            addonPriceTotal: it.addonPriceTotal,
+            kitchenStation: it.kitchenStation,
+            itemNotes: it.itemNotes,
+            itemDiscount: it.itemDiscount,
+            itemStatus: it.itemStatus,
+          })),
+          subtotal: Number(po.subtotal) || 0,
+          discount: Number(po.discount) || 0,
+          packagingCharge: anyPo.packagingCharge ? Number(anyPo.packagingCharge) : undefined,
+          taxAmount: Number(po.taxAmount ?? anyPo.gstAmount) || 0,
+          grandTotal: Number(po.grandTotal ?? anyPo.totalAmount) || 0,
+          paymentMethod: (po.paymentMethod as any) || 'Cash',
+          paymentStatus: resolvedPaySt,
+          kotStatus:
+            (po.kitchenStatus as any) ||
+            anyPo.kotStatus ||
+            (po.status === 'Cancelled'
+              ? 'Cancelled'
+              : po.status === 'KOT Sent'
+              ? 'KOT Sent'
+              : 'Served'),
+          instructions: po.notes || anyPo.instructions,
+          dateTime: anyPo.createdAt || po.date || '',
+          payments: Array.isArray(anyPo.payments) ? anyPo.payments : undefined,
+          amountPaid: anyPo.amountPaid !== undefined ? Number(anyPo.amountPaid) : undefined,
+          balanceDue: anyPo.balanceDue !== undefined ? Number(anyPo.balanceDue) : undefined,
+          paymentSummary: anyPo.paymentSummary,
+          isOpenCheck: Boolean(anyPo.isOpenCheck),
+          isHeld: Boolean(po.isHeld || anyPo.isHeld),
+          holdNote: po.holdNote || anyPo.holdNote,
+          checkId: anyPo.checkId,
+          kotNumber: anyPo.kotNumber,
+          isSupplementaryKot: Boolean(anyPo.isSupplementaryKot),
+          reprintCount: anyPo.reprintCount,
+          pickupTime: anyPo.pickupTime,
+          pickupStatus: anyPo.pickupStatus,
+          advanceBookingId: anyPo.advanceBookingId,
+          advanceDepositApplied: anyPo.advanceDepositApplied,
+          isWithoutGst: Boolean(po.isWithoutGst),
+          gstRate: anyPo.gstRate,
+          customerGstin: anyPo.customerGstin,
+          companyName: anyPo.companyName,
+          voidedAt: anyPo.voidedAt,
+          voidReason: anyPo.voidReason,
+          voidedBy: anyPo.voidedBy,
+          refundAmount: anyPo.refundAmount,
+          discountMeta: anyPo.discountMeta,
+          settlement: anyPo.settlement,
+          priceOverrides: anyPo.priceOverrides,
+          bomDeducted: Boolean(anyPo.bomDeducted),
+          bomReversed: Boolean(anyPo.bomReversed),
+          bomDeductionSnapshot: Array.isArray(anyPo.bomDeductionSnapshot) ? anyPo.bomDeductionSnapshot : undefined,
+        };
+      })
     );
 
     // Map Inventory
@@ -1711,7 +1877,12 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         unit: (ip.unit as any) || 'Pcs',
         purchasePrice: Number(ip.purchasePrice ?? (ip as any).costPrice) || 0,
         currentStock: Number(ip.currentStock) || 0,
-        minStock: Number(ip.minimumStock ?? (ip as any).minStockLevel) || 5,
+        minStock:
+          ip.minimumStock !== undefined
+            ? Number(ip.minimumStock)
+            : (ip as any).minStockLevel !== undefined
+            ? Number((ip as any).minStockLevel)
+            : 5,
         supplierName: (ip as any).supplierName || 'Vendor',
         lastUpdated: ip.lastUpdated || new Date().toISOString().slice(0, 10),
       }))
@@ -3371,11 +3542,68 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     }
   };
 
+  // 9b. Apply payments to existing open POS checks (consolidated table bill). Updates both the live POS ledger and the persisted orders.
+  const handleSettlePosOrders = (
+    updates: {
+      id: string;
+      payments: any[];
+      amountPaid: number;
+      balanceDue: number;
+      paymentStatus: 'Paid' | 'Partially Paid' | 'Unpaid';
+      paymentMethod: PaymentMethod;
+      paymentSummary: string;
+    }[]
+  ) => {
+    const map = new Map(updates.map((u) => [u.id, u]));
+    setPosOrders((prev) =>
+      prev.map((o) => {
+        const u = map.get(o.id);
+        return u
+          ? {
+              ...o,
+              payments: u.payments,
+              amountPaid: u.amountPaid,
+              balanceDue: u.balanceDue,
+              paymentStatus: u.paymentStatus,
+              paymentMethod: u.paymentMethod,
+              paymentSummary: u.paymentSummary,
+              isOpenCheck: u.balanceDue > 0.5,
+            }
+          : o;
+      })
+    );
+    if (onUpdatePosOrders) {
+      onUpdatePosOrders(
+        appPosOrders.map((po) => {
+          const u = map.get(po.id);
+          if (!u) return po;
+          const paid = u.paymentStatus === 'Paid';
+          return {
+            ...po,
+            paymentMethod: u.paymentMethod as any,
+            paymentStatus: paid ? 'Paid' : 'Unpaid',
+            status: paid ? 'Settled' : po.status,
+            isSettled: paid,
+            settledAt: paid ? new Date().toISOString() : (po as any).settledAt,
+            ...({
+              payments: u.payments,
+              amountPaid: u.amountPaid,
+              balanceDue: u.balanceDue,
+              paymentSummary: u.paymentSummary,
+              paymentStatusDetail: u.paymentStatus,
+              isOpenCheck: u.balanceDue > 0.5,
+            } as any),
+          } as PosOrder;
+        })
+      );
+    }
+  };
+
   // 9. Create POS Order (Uses billSettings.foodGstRate; excludes counter-paid Dine-In/Takeaway from room folio; recalculates Room Service via buildStayBill so F&B GST is NEVER taxed twice!)
   const handleCreatePosOrder = (order: PosOrderRecord, postToBookingId?: string) => {
     const isPostToRoom =
       order.paymentMethod === 'Room Charge' ||
-      (order.orderType === 'Room Service' && order.paymentStatus !== 'Paid');
+      (order.orderType === 'Room Service' && order.paymentStatus === 'Unpaid (Room Folio)');
 
     const targetBooking = isPostToRoom
       ? bookings.find((b) => b.id === (postToBookingId || order.bookingId)) ||
@@ -3402,7 +3630,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       bookingId: effectiveBookingId,
       roomNumber: effectiveRoomNumber,
       roomName: effectiveRoomNumber ? `Room ${effectiveRoomNumber}` : undefined,
-      paymentStatus: isPostToRoom ? 'Unpaid (Room Folio)' : 'Paid',
+      paymentStatus: isPostToRoom ? 'Unpaid (Room Folio)' : order.paymentStatus || 'Paid',
     };
 
     setPosOrders((prev) => [enrichedOrder, ...prev]);
@@ -3429,20 +3657,69 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         itemCode: it.itemId.slice(-5).toUpperCase(),
         quantity: it.qty,
         price: it.price,
-        taxRate: billSettings.foodGstRate,
+        taxRate: enrichedOrder.isWithoutGst ? 0 : (enrichedOrder.gstRate ?? billSettings.foodGstRate),
         total: it.total,
+        ...({
+          menuPrice: it.menuPrice,
+          overrideReason: it.overrideReason,
+          selectedVariant: it.variant,
+          variant: it.variant,
+          selectedAddons: it.addons,
+          addons: it.addons,
+          addonPriceTotal: it.addonPriceTotal,
+          kitchenStation: it.kitchenStation,
+          itemNotes: it.itemNotes,
+          itemDiscount: it.itemDiscount,
+          itemStatus: it.itemStatus || 'KOT Sent',
+        } as any),
       })),
       subtotal: enrichedOrder.subtotal,
       discount: enrichedOrder.discount,
       taxAmount: enrichedOrder.taxAmount,
       grandTotal: enrichedOrder.grandTotal,
       paymentMethod: isPostToRoom ? 'Room Charge' : (enrichedOrder.paymentMethod as any) || 'Cash',
-      paymentStatus: isPostToRoom ? 'Unpaid' : 'Paid',
-      status: 'KOT Sent',
+      paymentStatus: isPostToRoom ? 'Unpaid' : enrichedOrder.paymentStatus === 'Paid' ? 'Paid' : 'Unpaid',
+      status: enrichedOrder.isHeld
+        ? 'Held'
+        : enrichedOrder.kotStatus === 'Cancelled'
+        ? 'Cancelled'
+        : 'KOT Sent',
       date: todayIso,
       ...({
+        kitchenStatus: enrichedOrder.kotStatus || 'KOT Sent',
+        kotStatus: enrichedOrder.kotStatus || 'KOT Sent',
+        notes: enrichedOrder.instructions,
+        instructions: enrichedOrder.instructions,
+        payments: enrichedOrder.payments,
+        amountPaid: enrichedOrder.amountPaid,
+        balanceDue: enrichedOrder.balanceDue,
+        paymentSummary: enrichedOrder.paymentSummary,
+        paymentStatusDetail: enrichedOrder.paymentStatus,
+        pax: enrichedOrder.pax,
+        waiterName: enrichedOrder.waiterName,
+        packagingCharge: enrichedOrder.packagingCharge,
+        isOpenCheck: enrichedOrder.isOpenCheck,
+        isHeld: enrichedOrder.isHeld,
+        holdNote: enrichedOrder.holdNote,
+        checkId: enrichedOrder.checkId,
+        kotNumber: enrichedOrder.kotNumber,
+        isSupplementaryKot: enrichedOrder.isSupplementaryKot,
+        reprintCount: enrichedOrder.reprintCount,
+        pickupTime: enrichedOrder.pickupTime,
+        pickupStatus: enrichedOrder.pickupStatus,
+        advanceBookingId: enrichedOrder.advanceBookingId,
+        advanceDepositApplied: enrichedOrder.advanceDepositApplied,
+        isWithoutGst: enrichedOrder.isWithoutGst,
+        customerGstin: enrichedOrder.customerGstin,
+        companyName: enrichedOrder.companyName,
+        discountMeta: enrichedOrder.discountMeta,
+        settlement: enrichedOrder.settlement,
+        priceOverrides: enrichedOrder.priceOverrides,
+        bomDeducted: enrichedOrder.bomDeducted,
+        bomReversed: enrichedOrder.bomReversed,
+        bomDeductionSnapshot: enrichedOrder.bomDeductionSnapshot,
         postToRoomBill: isPostToRoom,
-        gstRate: billSettings.foodGstRate,
+        gstRate: enrichedOrder.isWithoutGst ? 0 : (enrichedOrder.gstRate ?? billSettings.foodGstRate),
         gstAmount: enrichedOrder.taxAmount,
         totalAmount: enrichedOrder.grandTotal,
         createdAt: enrichedOrder.dateTime || todayIso,
@@ -4183,8 +4460,14 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           hotelName={effectiveHotelProfile.name}
           loggedInUser={loggedInUser}
           foodGstRate={billSettings.foodGstRate}
+          inventoryItems={inventoryItems}
+          hotelSettings={effectiveHotelProfile}
+          onRecordStockMovement={recordWarehouseStockMovement}
           posAdvanceBookings={appPosAdvanceBookings}
           onUpdatePosAdvanceBookings={onUpdatePosAdvanceBookings}
+          currentRole={currentRole}
+          onAddAuditLog={onAddAuditLog}
+          onSettlePosOrders={handleSettlePosOrders}
           onCreatePosOrder={handleCreatePosOrder}
           onUpdateKotStatus={(ordId, status) => {
             setPosOrders((prev) =>
@@ -4192,7 +4475,111 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
             );
             if (onUpdatePosOrders) {
               onUpdatePosOrders(
-                appPosOrders.map((po) => (po.id === ordId ? { ...po, kitchenStatus: status as any } : po))
+                appPosOrders.map((po) =>
+                  po.id === ordId
+                    ? ({
+                        ...po,
+                        status: status === 'Cancelled' ? 'Cancelled' : po.status,
+                        kitchenStatus: status as any,
+                        kotStatus: status,
+                      } as any)
+                    : po
+                )
+              );
+            }
+          }}
+          onUpdatePosOrder={(updatedOrd) => {
+            setPosOrders((prev) => prev.map((o) => (o.id === updatedOrd.id ? updatedOrd : o)));
+            if (onUpdatePosOrders) {
+              onUpdatePosOrders(
+                appPosOrders.map((po) =>
+                  po.id === updatedOrd.id
+                    ? ({
+                        ...po,
+                        orderType:
+                          updatedOrd.orderType === 'Room Service'
+                            ? 'Room Service'
+                            : updatedOrd.orderType === 'Takeaway'
+                            ? 'Takeaway'
+                            : 'Dine In',
+                        roomNumber: updatedOrd.roomNumber,
+                        roomName: updatedOrd.roomName,
+                        bookingId: updatedOrd.bookingId,
+                        tableNo: updatedOrd.tableNumber,
+                        tableNumber: updatedOrd.tableNumber,
+                        pax: updatedOrd.pax,
+                        waiterName: updatedOrd.waiterName,
+                        guestName: updatedOrd.customerName,
+                        customerName: updatedOrd.customerName,
+                        customerPhone: updatedOrd.customerPhone,
+                        subtotal: updatedOrd.subtotal,
+                        discount: updatedOrd.discount,
+                        packagingCharge: updatedOrd.packagingCharge,
+                        taxAmount: updatedOrd.taxAmount,
+                        gstAmount: updatedOrd.taxAmount,
+                        grandTotal: updatedOrd.grandTotal,
+                        totalAmount: updatedOrd.grandTotal,
+                        notes: updatedOrd.instructions,
+                        instructions: updatedOrd.instructions,
+                        pickupTime: updatedOrd.pickupTime,
+                        isWithoutGst: updatedOrd.isWithoutGst,
+                        gstRate: updatedOrd.gstRate,
+                        customerGstin: updatedOrd.customerGstin,
+                        companyName: updatedOrd.companyName,
+                        discountMeta: updatedOrd.discountMeta,
+                        settlement: updatedOrd.settlement,
+                        priceOverrides: updatedOrd.priceOverrides,
+                        bomDeducted: updatedOrd.bomDeducted,
+                        bomReversed: updatedOrd.bomReversed,
+                        bomDeductionSnapshot: updatedOrd.bomDeductionSnapshot,
+                        status: updatedOrd.isHeld
+                          ? 'Held'
+                          : updatedOrd.kotStatus === 'Cancelled'
+                          ? 'Cancelled'
+                          : updatedOrd.paymentStatus === 'Paid'
+                          ? 'Settled'
+                          : 'KOT Sent',
+                        kitchenStatus: updatedOrd.kotStatus as any,
+                        kotStatus: updatedOrd.kotStatus,
+                        paymentMethod: updatedOrd.paymentMethod as any,
+                        paymentStatus: updatedOrd.paymentStatus === 'Paid' ? 'Paid' : 'Unpaid',
+                        paymentStatusDetail: updatedOrd.paymentStatus,
+                        payments: updatedOrd.payments,
+                        amountPaid: updatedOrd.amountPaid,
+                        balanceDue: updatedOrd.balanceDue,
+                        paymentSummary: updatedOrd.paymentSummary,
+                        isOpenCheck: updatedOrd.isOpenCheck,
+                        isHeld: updatedOrd.isHeld,
+                        holdNote: updatedOrd.holdNote,
+                        reprintCount: updatedOrd.reprintCount,
+                        pickupStatus: updatedOrd.pickupStatus,
+                        voidedAt: updatedOrd.voidedAt,
+                        voidReason: updatedOrd.voidReason,
+                        voidedBy: updatedOrd.voidedBy,
+                        refundAmount: updatedOrd.refundAmount,
+                        items: updatedOrd.items.map((it) => ({
+                          itemId: it.itemId,
+                          itemName: it.name,
+                          itemCode: it.itemId.slice(-5).toUpperCase(),
+                          quantity: it.qty,
+                          price: it.price,
+                          taxRate: updatedOrd.isWithoutGst ? 0 : (updatedOrd.gstRate ?? billSettings.foodGstRate),
+                          total: it.total,
+                          menuPrice: it.menuPrice,
+                          overrideReason: it.overrideReason,
+                          selectedVariant: it.variant,
+                          variant: it.variant,
+                          selectedAddons: it.addons,
+                          addons: it.addons,
+                          addonPriceTotal: it.addonPriceTotal,
+                          kitchenStation: it.kitchenStation,
+                          itemNotes: it.itemNotes,
+                          itemDiscount: it.itemDiscount,
+                          itemStatus: it.itemStatus,
+                        })),
+                      } as any)
+                    : po
+                )
               );
             }
           }}
@@ -4200,6 +4587,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
             setPosMenu((prev) => [...prev, item]);
             if (onUpdatePosItems) {
               const dbItem: PosItem = {
+                ...(item as any),
                 id: item.id,
                 hotelId: selectedHotelId,
                 code: item.code,
@@ -4218,6 +4606,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
             setPosMenu((prev) => prev.map((m) => (m.id === item.id ? item : m)));
             if (onUpdatePosItems) {
               const dbItem: PosItem = {
+                ...(item as any),
                 id: item.id,
                 hotelId: selectedHotelId,
                 code: item.code,
@@ -4264,8 +4653,80 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
                 minimumStock: newItem.minStock,
                 status: newItem.currentStock <= newItem.minStock ? 'Low Stock' : 'In Stock',
                 lastUpdated: newItem.lastUpdated,
+                ...(newItem.supplierName ? ({ supplierName: newItem.supplierName } as any) : {}),
               };
               onUpdateInventoryProducts([...appInventoryProducts, dbProd]);
+            }
+          }}
+          onUpdateInventoryItem={(updatedItem) => {
+            setInventoryItems((prev) =>
+              prev.map((it) => (it.id === updatedItem.id ? updatedItem : it))
+            );
+            if (onUpdateInventoryProducts) {
+              const existsInDb = appInventoryProducts.some((ip) => ip.id === updatedItem.id);
+              const nextDbProd: InventoryProduct = {
+                id: updatedItem.id,
+                hotelId: selectedHotelId,
+                code: updatedItem.code,
+                name: updatedItem.name,
+                category: updatedItem.category,
+                unit: updatedItem.unit,
+                purchasePrice: updatedItem.purchasePrice,
+                currentStock: updatedItem.currentStock,
+                minimumStock: updatedItem.minStock,
+                status: updatedItem.currentStock <= updatedItem.minStock ? 'Low Stock' : 'In Stock',
+                lastUpdated: updatedItem.lastUpdated,
+                ...(updatedItem.supplierName ? ({ supplierName: updatedItem.supplierName } as any) : {}),
+              };
+              onUpdateInventoryProducts(
+                existsInDb
+                  ? appInventoryProducts.map((ip) => (ip.id === updatedItem.id ? nextDbProd : ip))
+                  : [...appInventoryProducts, nextDbProd]
+              );
+            }
+            // Sync name & unit inside any linked POS Recipe BOM ingredients
+            const hasLinkedPosItem = posMenu.some((m) =>
+              m.recipeIngredients?.some((ri) => ri.inventoryItemId === updatedItem.id)
+            );
+            if (hasLinkedPosItem) {
+              setPosMenu((prev) =>
+                prev.map((m) =>
+                  m.recipeIngredients?.some((ri) => ri.inventoryItemId === updatedItem.id)
+                    ? {
+                        ...m,
+                        recipeIngredients: m.recipeIngredients.map((ri) =>
+                          ri.inventoryItemId === updatedItem.id
+                            ? { ...ri, ingredientName: updatedItem.name, unit: updatedItem.unit }
+                            : ri
+                        ),
+                      }
+                    : m
+                )
+              );
+              if (onUpdatePosItems) {
+                onUpdatePosItems(
+                  appPosItems.map((pi) => {
+                    const recs = (pi as any).recipeIngredients as any[] | undefined;
+                    if (!Array.isArray(recs) || !recs.some((ri) => ri.inventoryItemId === updatedItem.id)) {
+                      return pi;
+                    }
+                    return {
+                      ...pi,
+                      recipeIngredients: recs.map((ri) =>
+                        ri.inventoryItemId === updatedItem.id
+                          ? { ...ri, ingredientName: updatedItem.name, unit: updatedItem.unit }
+                          : ri
+                      ),
+                    } as PosItem;
+                  })
+                );
+              }
+            }
+          }}
+          onDeleteInventoryItem={(itemId) => {
+            setInventoryItems((prev) => prev.filter((it) => it.id !== itemId));
+            if (onUpdateInventoryProducts) {
+              onUpdateInventoryProducts(appInventoryProducts.filter((ip) => ip.id !== itemId));
             }
           }}
           onAddSupplier={(newSup) => {
@@ -4309,63 +4770,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
               onUpdateInventoryPurchases([dbPo, ...appInventoryPurchases]);
             }
           }}
-          onRecordStockMovement={(itemId, type, qty, department, reason) => {
-            const target = inventoryItems.find((i) => i.id === itemId);
-            if (!target) return;
-            const nextItems = inventoryItems.map((i) =>
-              i.id === itemId
-                ? {
-                    ...i,
-                    currentStock:
-                      type === 'IN' ? i.currentStock + qty : Math.max(0, i.currentStock - qty),
-                  }
-                : i
-            );
-            setInventoryItems(nextItems);
-            if (onUpdateInventoryProducts) {
-              onUpdateInventoryProducts(
-                appInventoryProducts.map((ip) =>
-                  ip.id === itemId
-                    ? {
-                        ...ip,
-                        currentStock:
-                          type === 'IN' ? (Number(ip.currentStock) || 0) + qty : Math.max(0, (Number(ip.currentStock) || 0) - qty),
-                      }
-                    : ip
-                )
-              );
-            }
-            const newMovId = `SM-${Date.now()}`;
-            const todayIso = new Date().toISOString().slice(0, 10);
-            setStockMovements((prev) => [
-              {
-                id: newMovId,
-                date: todayIso,
-                productName: target.name,
-                type,
-                qty,
-                department,
-                reason,
-                handledBy: loggedInUser || 'Store Manager',
-              },
-              ...prev,
-            ]);
-            if (onUpdateInventoryMovements) {
-              const dbMov: InventoryStockMovement = {
-                id: newMovId,
-                hotelId: selectedHotelId,
-                productId: target.id,
-                productName: target.name,
-                productCode: target.code,
-                type,
-                quantity: qty,
-                date: todayIso,
-                reason: `${department}: ${reason}`,
-                notes: reason,
-              };
-              onUpdateInventoryMovements([dbMov, ...appInventoryStockMovements]);
-            }
-          }}
+          onRecordStockMovement={recordWarehouseStockMovement}
         />
       )}
 

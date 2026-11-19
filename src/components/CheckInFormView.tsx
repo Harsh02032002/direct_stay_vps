@@ -50,47 +50,107 @@ interface CheckInFormViewProps {
   onUpdateTravelAgents?: (agents: TravelAgent[]) => void;
 }
 
-const getTodayDateStr = () => {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+const getIstNowParts = () => {
+  const now = new Date();
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(now);
+    const get = (t: string) => parts.find(p => p.type === t)?.value || '00';
+    const year = get('year');
+    const month = get('month');
+    const day = get('day');
+    let h24 = parseInt(get('hour'), 10);
+    if (Number.isNaN(h24) || h24 >= 24) h24 = 0;
+    const min = get('minute');
+    const hh24 = String(h24).padStart(2, '0');
+    const ampm = h24 >= 12 ? 'PM' : 'AM';
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    return {
+      ymd: `${year}-${month}-${day}`,
+      hhmm: `${hh24}:${min}`,
+      displayTime: `${String(h12).padStart(2, '0')}:${min} ${ampm}`,
+    };
+  } catch {
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const h24 = now.getHours();
+    const min = String(now.getMinutes()).padStart(2, '0');
+    const ampm = h24 >= 12 ? 'PM' : 'AM';
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    return {
+      ymd: `${year}-${month}-${day}`,
+      hhmm: `${String(h24).padStart(2, '0')}:${min}`,
+      displayTime: `${String(h12).padStart(2, '0')}:${min} ${ampm}`,
+    };
+  }
 };
 
-const getTomorrowDateStr = () => {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+const addDaysYmd = (baseYmd: string, daysAhead: number): string => {
+  const m = String(baseYmd || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) {
+    return addDaysYmd(getIstNowParts().ymd, daysAhead);
+  }
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + daysAhead));
+  const y = dt.getUTCFullYear();
+  const mo = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dt.getUTCDate()).padStart(2, '0');
+  return `${y}-${mo}-${d}`;
 };
+
+const getTodayDateStr = () => getIstNowParts().ymd;
+
+const getTomorrowDateStr = () => addDaysYmd(getIstNowParts().ymd, 1);
 
 const getFutureDateStr = (daysAhead: number, baseDateStr?: string) => {
-  const d = baseDateStr ? new Date(baseDateStr) : new Date();
-  if (isNaN(d.getTime())) {
-    const fallback = new Date();
-    fallback.setDate(fallback.getDate() + daysAhead);
-    return `${fallback.getFullYear()}-${String(fallback.getMonth() + 1).padStart(2, '0')}-${String(fallback.getDate()).padStart(2, '0')}`;
-  }
-  d.setDate(d.getDate() + daysAhead);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return addDaysYmd(baseDateStr || getIstNowParts().ymd, daysAhead);
 };
 
-const getCurrentTimeStr = () => {
-  const d = new Date();
-  let hours = d.getHours();
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12; // the hour '0' should be '12'
-  const hoursStr = String(hours).padStart(2, '0');
-  return `${hoursStr}:${minutes} ${ampm}`;
+const formatDdmmyyyy = (ymd?: string): string => {
+  const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(ymd || '—');
+  return `${m[3]}-${m[2]}-${m[1]}`;
 };
+
+const to24hTime = (raw?: string, fallback = '11:00'): string => {
+  const s = String(raw || '').trim().toUpperCase();
+  if (!s) return fallback;
+  const m12 = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const min = m12[2];
+    const ap = m12[3];
+    if (ap === 'PM' && h < 12) h += 12;
+    if (ap === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${min}`;
+  }
+  const m24 = s.match(/^(\d{1,2}):(\d{2})/);
+  if (m24) {
+    return `${String(Math.min(23, Math.max(0, parseInt(m24[1], 10)))).padStart(2, '0')}:${m24[2]}`;
+  }
+  return fallback;
+};
+
+const to12hTime = (hhmm?: string, fallback = '11:00 AM'): string => {
+  const s = String(hhmm || '').trim();
+  if (!s) return fallback;
+  if (/am|pm/i.test(s)) return s.toUpperCase();
+  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return fallback;
+  const h24 = parseInt(m[1], 10);
+  const ampm = h24 >= 12 ? 'PM' : 'AM';
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${String(h12).padStart(2, '0')}:${m[2]} ${ampm}`;
+};
+
+const getCurrentTimeStr = () => getIstNowParts().displayTime;
 
 export default function CheckInFormView({
   mode = 'checkin',
@@ -255,6 +315,7 @@ export default function CheckInFormView({
   const [selectedCheckInForView, setSelectedCheckInForView] = useState<GuestCheckIn | null>(null);
 
   const handleAddSecondaryGuest = () => {
+    userCountTouchedRef.current = true;
     setSecondaryGuests(prev => {
       const next = [
         ...prev,
@@ -266,6 +327,7 @@ export default function CheckInFormView({
   };
 
   const handleRemoveSecondaryGuest = (index: number) => {
+    userCountTouchedRef.current = true;
     setSecondaryGuests(prev => {
       const next = prev.filter((_, i) => i !== index);
       setManualExtraPaxCount(next.length);
@@ -280,6 +342,10 @@ export default function CheckInFormView({
       }
       return sg;
     }));
+  };
+
+  const handleUpdateSecondaryGuest = (index: number, field: keyof SecondaryGuest, value: any) => {
+    setSecondaryGuests(prev => prev.map((sg, i) => (i === index ? { ...sg, [field]: value } : sg)));
   };
 
   const handleSyncExtraGuestRows = (rawCount: number) => {
@@ -311,6 +377,11 @@ export default function CheckInFormView({
   const [customAddonQty, setCustomAddonQty] = useState<number>(1);
   const [customAddonRate, setCustomAddonRate] = useState<number>(0);
   const [customAddonNotes, setCustomAddonNotes] = useState<string>('');
+  const [customExtraRows, setCustomExtraRows] = useState<Array<{ id: string; label: string; qty: number | ''; rate: number | '' }>>([]);
+  const [servicePriceMap, setServicePriceMap] = useState<Record<string, number | ''>>({});
+  const [extraPersonRateOverride, setExtraPersonRateOverride] = useState<number | ''>('');
+  const userCountTouchedRef = React.useRef(false);
+  const extraChargeTouchedRef = React.useRef(false);
   const [discountEnabled, setDiscountEnabled] = useState<boolean>(false);
   const [discountMode, setDiscountMode] = useState<'percent' | 'fixed'>('fixed');
   const [discountInputValue, setDiscountInputValue] = useState<number>(0);
@@ -336,8 +407,8 @@ export default function CheckInFormView({
   const [isEditBannerExpanded, setIsEditBannerExpanded] = useState<boolean>(false);
   const [selectedRoomNumber, setSelectedRoomNumber] = useState('');
   const [roomType, setRoomType] = useState('');
-  const [adults, setAdults] = useState<number | ''>(2);
-  const [children, setChildren] = useState<number | ''>(0);
+  const [adults, setAdults] = useState<number | ''>(mode === 'walkin' ? 2 : '');
+  const [children, setChildren] = useState<number | ''>(mode === 'walkin' ? 0 : '');
   const [maleCount, setMaleCount] = useState<number>(1);
   const [femaleCount, setFemaleCount] = useState<number>(1);
   const [childCount, setChildCount] = useState<number>(0);
@@ -349,8 +420,8 @@ export default function CheckInFormView({
   const [commissionValue, setCommissionValue] = useState<number>(0);
 
   // Pricing State
-  const [standardRate, setStandardRate] = useState(2000);
-  const [roomRate, setRoomRate] = useState(2000); // Flexible room rate per night
+  const [standardRate, setStandardRate] = useState(mode === 'walkin' ? 2000 : 0);
+  const [roomRate, setRoomRate] = useState(mode === 'walkin' ? 2000 : 0); // Flexible room rate per night (Check-In page starts empty until a room is chosen)
   const [manualDiscount, setManualDiscount] = useState<number>(0); // Independent discount concession (Point 8)
   const [extraPersonCharge, setExtraPersonCharge] = useState(500);
   const [baseOccupancy, setBaseOccupancy] = useState(2);
@@ -396,6 +467,10 @@ export default function CheckInFormView({
   useEffect(() => {
     if (!selectedRoomNumber) {
       lastSyncedSingleRoomRef.current = '';
+      if (effectiveMode !== 'walkin' && !editingCheckIn && !selectedBooking) {
+        setRoomRate(0);
+        setStandardRate(0);
+      }
       return;
     }
     const selectedRoom = rooms.find(r => r.number === selectedRoomNumber);
@@ -431,23 +506,164 @@ export default function CheckInFormView({
   // Handle direct adjusted tariff or auto-calculate discount
   const discountPerNight = Math.max(0, standardRate - roomRate);
 
-  // 6. Stay Details state
+  // 6. Stay Details state (Strict Asia/Kolkata timezone + hotel configured checkout time)
+  const defaultHotelCheckOutTime = to12hTime(hotelSettings?.checkOutTime, '11:00 AM');
   const [checkInDate, setCheckInDate] = useState(getTodayDateStr());
   const [arrivalTime, setArrivalTime] = useState(getCurrentTimeStr());
   const [checkOutDate, setCheckOutDate] = useState(getTomorrowDateStr());
-  const [departureTime, setDepartureTime] = useState('11:00 AM');
+  const [departureTime, setDepartureTime] = useState(defaultHotelCheckOutTime);
+
+  // Redesigned Single-Page Check-In / Reservation States
+  const [bookingCategory, setBookingCategory] = useState<'individual' | 'group' | 'corporate' | 'event'>('individual');
+  const [addressLine2, setAddressLine2] = useState<string>('');
+  const [pincode, setPincode] = useState<string>('');
+  const [guestSearchTerm, setGuestSearchTerm] = useState<string>('');
+  const [showPackagesSection, setShowPackagesSection] = useState<boolean>(false);
+  const [showExtraChargesSection, setShowExtraChargesSection] = useState<boolean>(false);
+  const isExtraBedAllowedForRoom = (roomNumber: string) =>
+    rooms.find(r => r.number === roomNumber)?.allowExtraBed !== false;
+  const [showSpecialReqSection, setShowSpecialReqSection] = useState<boolean>(false);
+  const [specialRequestTags, setSpecialRequestTags] = useState<string[]>([]);
+  const [specialRequestNotes, setSpecialRequestNotes] = useState<string>('');
+  const [commEmail, setCommEmail] = useState<boolean>(true);
+  const [commSms, setCommSms] = useState<boolean>(true);
+  const [showQuickGroupPicker, setShowQuickGroupPicker] = useState<boolean>(false);
+  const [quickGroupSelectedRooms, setQuickGroupSelectedRooms] = useState<string[]>([]);
+  const [showAdvanceLookup, setShowAdvanceLookup] = useState<boolean>(false);
+  const [eventVenueName, setEventVenueName] = useState<string>('');
+  const [isSubmittingAction, setIsSubmittingAction] = useState<boolean>(false);
+  const [inlineBookingSuccess, setInlineBookingSuccess] = useState<{
+    id: string;
+    actionLabel: string;
+    guestName: string;
+    roomsLabel: string;
+    checkInDate: string;
+    checkOutDate: string;
+    totalAmount: number;
+    paidAmount: number;
+    status: string;
+  } | null>(null);
 
   const calcStayDays = (inDate: string, outDate: string) => {
-    if (!outDate) return 1; // Open / Flexible stay
-    if (inDate === outDate) return 1; // Same-day / short-stay hourly
-    const d1 = new Date(inDate);
-    const d2 = new Date(outDate);
-    const diff = Math.abs(d2.getTime() - d1.getTime());
-    const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-    return isNaN(days) || days <= 0 ? 1 : days;
+    if (!inDate || !outDate) return 1;
+    const m1 = String(inDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const m2 = String(outDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m1 || !m2) return 1;
+    const u1 = Date.UTC(Number(m1[1]), Number(m1[2]) - 1, Number(m1[3]));
+    const u2 = Date.UTC(Number(m2[1]), Number(m2[2]) - 1, Number(m2[3]));
+    const days = Math.round((u2 - u1) / 86400000);
+    return Number.isNaN(days) || days <= 0 ? 1 : days;
   };
 
+  const todayIstStr = getTodayDateStr();
   const stayNights = calcStayDays(checkInDate, checkOutDate);
+  const isEditingExistingDates = Boolean(editingCheckIn || selectedBooking);
+  const isFutureAdvanceArrival = Boolean(!editingCheckIn && !selectedBooking && checkInDate > todayIstStr);
+
+  // Sync bookingCategory when an existing booking is loaded (never altering its saved dates!)
+  useEffect(() => {
+    if (!selectedBooking) return;
+    const multiCount =
+      (selectedBooking.bookedRooms && selectedBooking.bookedRooms.length) ||
+      String(selectedBooking.roomNumber || '').split(',').map(x => x.trim()).filter(Boolean).length;
+    if (multiCount > 1) {
+      setBookingCategory('group');
+    } else if (selectedBooking.companyName || selectedBooking.gstNumber) {
+      setBookingCategory('corporate');
+    } else {
+      setBookingCategory('individual');
+    }
+    setShowAdvanceLookup(true);
+  }, [selectedBooking]);
+
+  const handleArrivalDateChange = (rawNewDate: string) => {
+    if (!rawNewDate) return;
+    const todayIst = getTodayDateStr();
+    let nextIn = rawNewDate;
+    if (!isEditingExistingDates && nextIn < todayIst) {
+      nextIn = todayIst;
+      showToast('Past arrival dates cannot be selected for new bookings.', 'warning');
+    }
+    const prevDuration = Math.max(1, calcStayDays(checkInDate, checkOutDate));
+    setCheckInDate(nextIn);
+    if (!checkOutDate || nextIn >= checkOutDate) {
+      setCheckOutDate(getFutureDateStr(prevDuration, nextIn));
+    }
+    // Prevent past time if switching back to today on a new booking
+    if (!isEditingExistingDates && nextIn === todayIst) {
+      const nowIst = getIstNowParts();
+      if (to24hTime(arrivalTime, nowIst.hhmm) < nowIst.hhmm) {
+        setArrivalTime(nowIst.displayTime);
+      }
+    }
+  };
+
+  const handleArrivalTimeChange = (newHhmm: string) => {
+    if (!newHhmm) return;
+    const todayIst = getTodayDateStr();
+    const nowIst = getIstNowParts();
+    if (!isEditingExistingDates && checkInDate === todayIst && newHhmm < nowIst.hhmm) {
+      setArrivalTime(nowIst.displayTime);
+      showToast('Past arrival time cannot be selected for today\'s new booking.', 'warning');
+      return;
+    }
+    setArrivalTime(to12hTime(newHhmm, nowIst.displayTime));
+  };
+
+  const handleDepartureDateChange = (rawNewOut: string) => {
+    if (!rawNewOut) return;
+    const minOut = getFutureDateStr(1, checkInDate || getTodayDateStr());
+    if (rawNewOut <= checkInDate) {
+      setCheckOutDate(minOut);
+      showToast('Departure date must always be later than arrival date.', 'warning');
+      return;
+    }
+    setCheckOutDate(rawNewOut);
+  };
+
+  const handleDepartureTimeChange = (newHhmm: string) => {
+    if (!newHhmm) return;
+    setDepartureTime(to12hTime(newHhmm, defaultHotelCheckOutTime));
+  };
+
+  // Switch booking category while strictly preserving selected dates!
+  const handleSelectBookingCategory = (nextCat: 'individual' | 'group' | 'corporate' | 'event') => {
+    setBookingCategory(nextCat);
+    if (nextCat === 'individual') {
+      setCheckInMode('single');
+      setShowQuickGroupPicker(false);
+    } else if (nextCat === 'group' || nextCat === 'event') {
+      setCheckInMode('group');
+      if (groupRooms.length === 0) {
+        const firstRoom =
+          (selectedRoomNumber && rooms.find(r => r.number === selectedRoomNumber)) ||
+          rooms.find(r => isRoomTrulyAvailable(r));
+        if (firstRoom) {
+          setGroupRooms([
+            {
+              id: `GR-${Date.now()}-1`,
+              roomNumber: firstRoom.number,
+              category: firstRoom.category,
+              rate: firstRoom.rate,
+              originalRate: firstRoom.rate,
+              adults: Number(adults) || 2,
+              children: Number(children) || 0,
+              assignedGuestName: guestName || '',
+              assignedGuestMobile: mobile || '',
+              hasExtraBed: false,
+              extraBedCount: 1,
+              extraBedRate: Number(firstRoom.extraPersonCharge) > 0 ? Number(firstRoom.extraPersonCharge) : 500,
+            },
+          ]);
+        }
+      }
+      if (nextCat === 'event' && !groupName) {
+        setGroupName('Event / Banquet Block');
+      }
+    } else if (nextCat === 'corporate') {
+      setWalkInBookingSource('Corporate');
+    }
+  };
 
   // 7. Extra Guest Charges Calculation (Strictly Opt-In so agreed Room Tariff is NEVER silently inflated!)
   const [applyExtraPersonCharge, setApplyExtraPersonCharge] = useState<boolean>(false);
@@ -460,10 +676,10 @@ export default function CheckInFormView({
     manualExtraPaxCount !== ''
       ? Math.max(0, Number(manualExtraPaxCount) || 0)
       : secondaryGuests.length;
-  const resolvedSingleExtraPaxCount =
-    extraGuestExplicitCount > 0 ? extraGuestExplicitCount : extraGuestsCount;
+  const resolvedSingleExtraPaxCount = extraGuestsCount;
+  const effectiveExtraPaxRate = extraPersonRateOverride !== '' ? Math.max(0, Number(extraPersonRateOverride) || 0) : extraPersonCharge;
   const extraPersonChargesTotal = applyExtraPersonCharge
-    ? resolvedSingleExtraPaxCount * extraPersonCharge * stayNights
+    ? resolvedSingleExtraPaxCount * effectiveExtraPaxRate * stayNights
     : 0;
 
   // --- SUB-NAVIGATION TABS ---
@@ -544,7 +760,7 @@ export default function CheckInFormView({
       if (selectedBooking && b.id === selectedBooking.id) return false;
       if (editingCheckIn && b.id === editingCheckIn.id) return false;
       const rawSt = String(b.status || '').toLowerCase().replace(/[\s_-]/g, '');
-      if (b.status === 'Cancelled' || rawSt === 'cancelled' || rawSt === 'noshow') return false;
+      if (b.status === 'Cancelled' || rawSt === 'cancelled' || rawSt === 'noshow' || rawSt === 'draft' || rawSt === 'waiting') return false;
       if (b.isCompleted || (b as any).isCheckedOut || rawSt === 'checkedout' || rawSt === 'completed') return false;
       const matchingCheckIn = checkins.find(c => c.id === b.id || (c as any).bookingId === b.id);
       if (
@@ -570,27 +786,64 @@ export default function CheckInFormView({
     });
   };
 
-  const isRoomTrulyAvailable = (r: Room): boolean => {
-    const isCurrentEditedRoom = Boolean(editingCheckIn && editingCheckIn.roomNumber === r.number);
-    const isSelectedReservationRoom = Boolean(selectedBooking && selectedBooking.roomNumber === r.number);
+  const isRoomTrulyAvailable = (
+    r: Room,
+    rangeStart: string = checkInDate,
+    rangeEnd: string = checkOutDate
+  ): boolean => {
+    const isCurrentEditedRoom = Boolean(
+      editingCheckIn &&
+        (editingCheckIn.roomNumber === r.number ||
+          (editingCheckIn.bookedRooms || []).some(br => br.roomNumber === r.number))
+    );
+    const isSelectedReservationRoom = Boolean(
+      selectedBooking &&
+        (selectedBooking.roomNumber === r.number ||
+          (selectedBooking.bookedRooms || []).some(br => br.roomNumber === r.number))
+    );
     if (isCurrentEditedRoom || isSelectedReservationRoom) return true;
-    const isMaint = r.status === 'Maintenance' || (r.status as string) === 'Out of Order';
-    const hasActiveOccupant = checkins.some(c => {
+
+    const isMaint =
+      r.status === 'Maintenance' ||
+      (r.status as string) === 'Out of Order' ||
+      (r.status as string) === 'Out of Service' ||
+      (r.status as string) === 'Blocked';
+    if (isMaint) return false;
+
+    const todayStr = getTodayDateStr();
+    const effStart = rangeStart || todayStr;
+    const effEnd = rangeEnd && rangeEnd > effStart ? rangeEnd : getFutureDateStr(1, effStart);
+
+    // Validate active in-house occupant overlap against the FULL selected date range [effStart, effEnd)
+    const hasOverlappingOccupant = checkins.some(c => {
       if (c.checkedOutDateTime) return false;
       const cSt = String(c.status || '').toLowerCase().replace(/[\s_-]/g, '');
       if (cSt === 'checkedout' || cSt === 'completed' || cSt === 'cancelled' || (c as any).isCheckedOut) return false;
       if (c.id === (selectedBooking?.id || '') || c.id === (editingCheckIn?.id || '')) return false;
-      return c.roomNumber === r.number || (c.bookedRooms || []).some(br => br.roomNumber === r.number);
+      const matchesRoom =
+        c.roomNumber === r.number || (c.bookedRooms || []).some(br => br.roomNumber === r.number);
+      if (!matchesRoom) return false;
+      const occStart = c.checkInDate || todayStr;
+      const occEnd =
+        c.checkOutDate && c.checkOutDate > occStart
+          ? c.checkOutDate
+          : getFutureDateStr(1, Math.max(0, occStart.localeCompare(todayStr)) ? occStart : todayStr);
+      // Overlap check: [effStart, effEnd) intersects [occStart, occEnd)
+      return effStart < occEnd && effEnd > occStart;
     });
-    const isOccupied = r.status === 'Occupied' || hasActiveOccupant;
-    const overlappingBooking = getRoomOverlappingBooking(r.number, checkInDate, checkOutDate);
-    const effectiveOut = checkOutDate || getFutureDateStr(1, checkInDate || getTodayDateStr());
+
+    // If room is flagged Occupied in inventory without an active checkin record, block for current/today dates
+    const isOccupiedNowWithoutRecord =
+      r.status === 'Occupied' && effStart <= todayStr && effEnd > todayStr;
+
+    const overlappingBooking = getRoomOverlappingBooking(r.number, effStart, effEnd);
     const isReservedToday =
       r.status === 'Reserved' &&
-      checkInDate <= getTodayDateStr() &&
-      effectiveOut > getTodayDateStr() &&
+      effStart <= todayStr &&
+      effEnd > todayStr &&
       Boolean(overlappingBooking);
-    return !isOccupied && !isMaint && !overlappingBooking && !isReservedToday;
+
+    return !hasOverlappingOccupant && !isOccupiedNowWithoutRecord && !overlappingBooking && !isReservedToday;
   };
 
   useEffect(() => {
@@ -632,6 +885,13 @@ export default function CheckInFormView({
   };
 
   const handleUpdateGroupRoom = (id: string, field: keyof GroupRoomItem, value: any) => {
+    if (field === 'hasExtraBed' && value) {
+      const target = groupRooms.find(g => g.id === id);
+      if (target && rooms.find(r => r.number === target.roomNumber)?.allowExtraBed === false) {
+        showToast(`Room ${target.roomNumber} does not allow an extra bed / mattress.`, 'warning');
+        return;
+      }
+    }
     setGroupRooms(prev => prev.map(gr => {
       if (gr.id === id) {
         const updated = { ...gr, [field]: value };
@@ -688,7 +948,7 @@ export default function CheckInFormView({
     const rmObj = rooms.find(rm => rm.number === r.roomNumber);
     const base = rmObj?.baseOccupancy ?? 2;
     const extraPax = Math.max(0, Number(r.adults || 0) + Number(r.children || 0) - base);
-    const paxRate = Number(rmObj?.extraPersonCharge) > 0 ? Number(rmObj?.extraPersonCharge) : extraPersonCharge;
+    const paxRate = extraPersonRateOverride !== '' ? Math.max(0, Number(extraPersonRateOverride) || 0) : Number(rmObj?.extraPersonCharge) > 0 ? Number(rmObj?.extraPersonCharge) : extraPersonCharge;
     return sum + extraPax * paxRate;
   }, 0);
   const groupExtraPersonChargesTotal =
@@ -704,6 +964,13 @@ export default function CheckInFormView({
     : 0;
   const effectiveRoomChargesTotal = checkInMode === 'single' ? roomChargesTotal : groupRoomChargesTotal;
   const effectiveExtraBedTotal = checkInMode === 'single' ? extraBedTotal : groupExtraBedChargesTotal;
+
+  // Auto-apply extra-person charge when the user increases guest count beyond base occupancy (user can still untick / override)
+  useEffect(() => {
+    if (editingCheckIn) return;
+    if (!userCountTouchedRef.current || extraChargeTouchedRef.current) return;
+    setApplyExtraPersonCharge(effectiveExtraGuestsCount > 0);
+  }, [effectiveExtraGuestsCount, editingCheckIn]);
 
   // Ticked optional hotel services (exclude any service already billed on a separate invoice)
   const separatelyBilledServiceNames = React.useMemo(() => {
@@ -733,15 +1000,30 @@ export default function CheckInFormView({
     }
     return true;
   });
+  const serviceUnitOf = (s: WaterBottleRecord) => {
+    const ov = servicePriceMap[String(s.id)];
+    return ov !== undefined && ov !== '' ? Math.max(0, Number(ov) || 0) : serviceAmountOf(s);
+  };
   const serviceLineTotalOf = (s: WaterBottleRecord) => {
     const qty = Math.max(1, Number(serviceQtyMap[String(s.id)] ?? 1) || 1);
-    return serviceAmountOf(s) * qty;
+    return serviceUnitOf(s) * qty;
   };
   const servicesTotal = tickedServices.reduce((sum, s) => sum + serviceLineTotalOf(s), 0);
-  const customAddonTotal =
+  const customAddonSingleTotal =
     customAddonLabel.trim() && (Number(customAddonQty) || 0) > 0 && (Number(customAddonRate) || 0) > 0
       ? Math.round((Number(customAddonQty) || 1) * (Number(customAddonRate) || 0) * 100) / 100
       : 0;
+
+  const customExtraRowCharges: BillCharge[] = customExtraRows
+    .filter(r => String(r.label || '').trim() && (Number(r.qty) || 0) > 0 && (Number(r.rate) || 0) > 0)
+    .map(r => ({
+      id: `ci-cx-${r.id}`,
+      kind: 'service' as const,
+      description: `${String(r.label).trim()} × ${Math.max(1, Number(r.qty) || 1)}`,
+      amount: Math.round(Math.max(1, Number(r.qty) || 1) * (Number(r.rate) || 0) * 100) / 100,
+    }));
+  const customExtraRowsTotal = customExtraRowCharges.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+  const customAddonTotal = customAddonSingleTotal + customExtraRowsTotal;
 
   // Early check-in surcharge detection & customizable toggle (defaults to false so agreed tariff is not inflated)
   const [applyEarlyCheckInCharge, setApplyEarlyCheckInCharge] = useState<boolean>(() =>
@@ -912,17 +1194,18 @@ export default function CheckInFormView({
               roomNumber: selectedRoomNumber || '101',
             };
           }),
-          ...(customAddonTotal > 0
+          ...(customAddonSingleTotal > 0
             ? [
                 {
                   id: 'ci-custom-addon',
                   kind: 'service' as const,
                   description: `${customAddonLabel.trim()} × ${Math.max(1, Number(customAddonQty) || 1)}`,
-                  amount: customAddonTotal,
+                  amount: customAddonSingleTotal,
                   roomNumber: selectedRoomNumber || '101',
                 },
               ]
             : []),
+          ...customExtraRowCharges,
           ...(otherCharges > 0
             ? [
                 {
@@ -985,16 +1268,17 @@ export default function CheckInFormView({
               amount: serviceLineTotalOf(s),
             };
           }),
-          ...(customAddonTotal > 0
+          ...(customAddonSingleTotal > 0
             ? [
                 {
                   id: 'ci-gr-custom-addon',
                   kind: 'service' as const,
                   description: `${customAddonLabel.trim()} × ${Math.max(1, Number(customAddonQty) || 1)}`,
-                  amount: customAddonTotal,
+                  amount: customAddonSingleTotal,
                 },
               ]
             : []),
+          ...customExtraRowCharges,
           ...(otherCharges > 0
             ? [
                 {
@@ -1089,6 +1373,24 @@ export default function CheckInFormView({
       ? Math.round((Math.max(0, activeNetSubtotal) * Math.max(0, Number(commissionValue) || 0)) / 100)
       : Math.round(Math.max(0, Number(commissionValue) || 0))
     : 0;
+
+  const handleSelectTravelAgent = (id: string) => {
+    setSelectedAgentId(id);
+    const ag = travelAgents.find(a => a.id === id);
+    if (ag) {
+      setCommissionType(ag.commissionType || 'percentage');
+      setCommissionValue(Number(ag.commissionValue) || 0);
+      setWalkInBookingSource('Travel Agent');
+    } else if (walkInBookingSource === 'Travel Agent') {
+      setWalkInBookingSource('Direct');
+    }
+  };
+
+  useEffect(() => {
+    if (selectedBooking?.travelAgentId) {
+      setWalkInBookingSource('Travel Agent');
+    }
+  }, [selectedBooking?.id]);
 
   // Signature & Reception Verification Section meta
   const [checkedInBy, setCheckedInBy] = useState(loggedInUser || 'Front Desk Executive');
@@ -1296,11 +1598,11 @@ export default function CheckInFormView({
     const loadedBookingDiscount = Number((b as any).discount || (b as any).discountAmount || 0);
     setManualDiscount(loadedBookingDiscount);
     setDiscountEnabled(loadedBookingDiscount > 0);
-    setDiscountMode('flat');
+    setDiscountMode('fixed');
     setDiscountInputValue(loadedBookingDiscount);
     setSettlementEnabled(false);
     setSettlementAdjustmentInput(0);
-    setSettlementTargetInput(0);
+    setSettlementTargetInput('');
     setSettlementReason('');
     setIsHybridCheckInPay(false);
     setCheckInSplitRows([
@@ -1603,11 +1905,11 @@ export default function CheckInFormView({
     const loadedCheckInDisc = Number(c.discount ?? c.discountAmount ?? 0);
     setManualDiscount(loadedCheckInDisc);
     setDiscountEnabled(loadedCheckInDisc > 0);
-    setDiscountMode('flat');
+    setDiscountMode('fixed');
     setDiscountInputValue(loadedCheckInDisc);
     setSettlementEnabled(false);
     setSettlementAdjustmentInput(0);
-    setSettlementTargetInput(0);
+    setSettlementTargetInput('');
     setSettlementReason('');
     setCheckInDate(c.checkInDate || getTodayDateStr());
     setCheckOutDate(c.checkOutDate || getTomorrowDateStr());
@@ -1709,8 +2011,8 @@ export default function CheckInFormView({
     setSelectedRoomNumber('');
     setApplyExtraPersonCharge(false);
     setManualExtraPaxCount('');
-    setAdults(2);
-    setChildren(0);
+    setAdults(effectiveMode === 'walkin' ? 2 : '');
+    setChildren(effectiveMode === 'walkin' ? 0 : '');
     setSelectedServiceIds([]);
     setOtherCharges(0);
     setAdvanceAmount(0);
@@ -1720,7 +2022,7 @@ export default function CheckInFormView({
     setDiscountInputValue(0);
     setSettlementEnabled(false);
     setSettlementAdjustmentInput(0);
-    setSettlementTargetInput(0);
+    setSettlementTargetInput('');
     setSettlementReason('');
     setIsHybridCheckInPay(false);
     setCheckInSplitRows([
@@ -1754,10 +2056,441 @@ export default function CheckInFormView({
     showToast('Edit cancelled.', 'info');
   };
 
-  const handleSaveCheckIn = (e: React.FormEvent) => {
+  // Helper: Add multiple selected rooms to Group / Event / Corporate booking in 1 click
+  const handleAddMultipleGroupRooms = (roomNumbersToAdd: string[]) => {
+    const validAdds = roomNumbersToAdd
+      .filter(rn => !groupRooms.some(gr => gr.roomNumber === rn))
+      .map(rn => rooms.find(r => r.number === rn))
+      .filter((r): r is Room => Boolean(r && isRoomTrulyAvailable(r)));
+    if (validAdds.length === 0) {
+      showToast('Select at least one available room to add to the group.', 'warning');
+      return;
+    }
+    setGroupRooms(prev => [
+      ...prev,
+      ...validAdds.map((avail, idx) => ({
+        id: `GR-${Date.now()}-${prev.length + idx + 1}`,
+        roomNumber: avail.number,
+        category: avail.category,
+        rate: avail.rate,
+        originalRate: avail.rate,
+        adults: 2,
+        children: 0,
+        assignedGuestName: guestName ? `${guestName} (Rm ${avail.number})` : '',
+        assignedGuestMobile: mobile || '',
+        hasExtraBed: false,
+        extraBedCount: 1,
+        extraBedRate: Number(avail.extraPersonCharge) > 0 ? Number(avail.extraPersonCharge) : 500,
+      })),
+    ]);
+    setQuickGroupSelectedRooms([]);
+    setShowQuickGroupPicker(false);
+    showToast(`Added ${validAdds.length} room(s) to Group Booking.`, 'success');
+  };
+
+  // Helper: convert an Individual single-room booking into a multi-room booking and add one more room
+  const handleAddExtraRoomFromSingle = () => {
+    userCountTouchedRef.current = true;
+    const cur = rooms.find(r => r.number === selectedRoomNumber);
+    const seed: GroupRoomItem[] = cur
+      ? [
+          {
+            id: `GR-${Date.now()}-0`,
+            roomNumber: cur.number,
+            category: cur.category,
+            rate: Number(roomRate) || cur.rate,
+            originalRate: cur.rate,
+            adults: Number(adults) || 2,
+            children: Number(children) || 0,
+            assignedGuestName: guestName,
+            assignedGuestMobile: mobile,
+            hasExtraBed: cur.allowExtraBed === false ? false : hasExtraBed,
+            extraBedCount,
+            extraBedRate,
+          },
+        ]
+      : [];
+    const next = rooms.find(r => r.number !== selectedRoomNumber && isRoomTrulyAvailable(r, checkInDate, checkOutDate));
+    if (!next) {
+      showToast('No other room is available for the selected dates.', 'warning');
+      return;
+    }
+    seed.push({
+      id: `GR-${Date.now()}-1`,
+      roomNumber: next.number,
+      category: next.category,
+      rate: next.rate,
+      originalRate: next.rate,
+      adults: 2,
+      children: 0,
+      assignedGuestName: guestName ? `${guestName} (Rm ${next.number})` : '',
+      assignedGuestMobile: mobile,
+      hasExtraBed: false,
+      extraBedCount: 1,
+      extraBedRate: Number(next.extraPersonCharge) > 0 ? Number(next.extraPersonCharge) : 500,
+    });
+    setGroupRooms(seed);
+    setCheckInMode('group');
+    showToast('Extra room added. You can now manage all rooms in the rooming list.', 'success');
+  };
+
+  // Helper: Print Blank GRC form for front desk offline registration
+  const handleBlankGrcPrint = () => {
+    const blankCheckIn = {
+      id: 'BLANK-GRC',
+      guestName: '________________________________',
+      mobile: '________________________',
+      roomNumber: selectedRoomNumber || '______',
+      roomType: roomType || '____________',
+      roomRate: roomRate || 0,
+      checkInDate: checkInDate || getTodayDateStr(),
+      checkOutDate: checkOutDate || getTomorrowDateStr(),
+      arrivalTime,
+      departureTime,
+      adults: Number(adults) || 1,
+      children: Number(children) || 0,
+      nationality: 'Indian',
+      idType: 'Aadhaar / Passport',
+      idNumber: '________________________',
+      address: '________________________________________________',
+      city: '________________',
+      state: '________________',
+      country: 'India',
+    } as unknown as GuestCheckIn;
+    handlePrintOfficialGrc(blankCheckIn);
+  };
+
+  // Helper: Confirm Advance Booking / Confirm Reservation Only / Save as Draft / Add to Waitlist
+  // Never sets room status to Occupied! Persists to bookings & verifies backend sync before showing inline success.
+  const handleCreateReservationAction = async (
+    targetStatus: 'Confirmed' | 'Draft' | 'Waiting',
+    actionLabelOverride?: string
+  ) => {
+    if (isSubmittingAction) return;
+    if (!guestName.trim() || !mobile.trim()) {
+      showToast('Guest Full Name and Mobile Number are required.', 'warning');
+      return;
+    }
+    if (checkInMode === 'single' && !(Number(adults) >= 1)) {
+      showToast('Please enter the number of adults (at least 1).', 'warning');
+      return;
+    }
+
+    const todayIst = getTodayDateStr();
+    if (!isEditingExistingDates && checkInDate < todayIst) {
+      showToast('Past arrival dates cannot be selected for new bookings.', 'error');
+      return;
+    }
+    if (!checkOutDate || checkOutDate <= checkInDate) {
+      showToast('Departure date must be later than arrival date.', 'error');
+      return;
+    }
+
+    const isMulti = checkInMode === 'group' && groupRooms.length > 0;
+    const allocatedRoomNumbers = isMulti
+      ? groupRooms.map(r => r.roomNumber).filter(Boolean)
+      : selectedRoomNumber
+      ? [selectedRoomNumber]
+      : [];
+
+    const bedBlockedRoom = isMulti
+      ? groupRooms.find(g => g.hasExtraBed && !isExtraBedAllowedForRoom(g.roomNumber))?.roomNumber
+      : hasExtraBed && allocatedRoomNumbers[0] && !isExtraBedAllowedForRoom(allocatedRoomNumbers[0])
+      ? allocatedRoomNumbers[0]
+      : '';
+    if (bedBlockedRoom) {
+      showToast(`Room ${bedBlockedRoom} does not allow an extra bed / mattress. Please untick it.`, 'error');
+      return;
+    }
+
+    if (targetStatus === 'Confirmed' && allocatedRoomNumbers.length === 0) {
+      showToast('Please select at least one available room for the reservation.', 'warning');
+      return;
+    }
+
+    if (targetStatus === 'Confirmed') {
+      for (const rNum of allocatedRoomNumbers) {
+        const rmObj = rooms.find(r => r.number === rNum);
+        if (!rmObj || !isRoomTrulyAvailable(rmObj, checkInDate, checkOutDate)) {
+          showToast(
+            `Room ${rNum} is not available for ${formatDdmmyyyy(checkInDate)} → ${formatDdmmyyyy(checkOutDate)}. Please choose another room or date range.`,
+            'error'
+          );
+          return;
+        }
+      }
+    }
+
+    if (isHybridCheckInPay && effectiveDeskReceivedNow > 0 && activeCheckInSplits.length < 2) {
+      showToast('Hybrid payment requires at least two payment methods with amounts greater than ₹0.', 'error');
+      return;
+    }
+    if (advanceAmount + effectiveDeskReceivedNow > finalAmount + 0.5) {
+      showToast('Total received payment cannot exceed the final payable amount.', 'error');
+      return;
+    }
+    if (settlementEnabled && !settlementReason.trim()) {
+      showToast('Please enter a reason for the negotiated settlement adjustment.', 'warning');
+      return;
+    }
+
+    setIsSubmittingAction(true);
+    try {
+      const existingIds = new Set([...bookings, ...checkins].map(item => String(item.id || '')));
+      let nextNum = Math.max(1001, Number(String(Date.now()).slice(-6)));
+      while (existingIds.has(`GP-BKG-${nextNum}`)) nextNum += 1;
+      const newResId =
+        selectedBooking?.id ||
+        (isMulti ? groupBookingId : !existingIds.has(walkInPreviewBookingId) ? walkInPreviewBookingId : `GP-BKG-${nextNum}`);
+
+      const activeHotelId =
+        selectedBooking?.hotelId ||
+        rooms.find(r => r.number === allocatedRoomNumbers[0])?.hotelId ||
+        hotelSettings?.id ||
+        '';
+
+      const combinedAddr = [address.trim(), addressLine2.trim(), pincode.trim() ? `PIN: ${pincode.trim()}` : '']
+        .filter(Boolean)
+        .join(', ');
+
+      const payDateLocal = paymentDate || getTodayDateStr();
+      const totalCollectedNow = Math.round((advanceAmount + effectiveDeskReceivedNow) * 100) / 100;
+      const reservationPayments: any[] = [];
+      if (isHybridCheckInPay && activeCheckInSplits.length > 0) {
+        activeCheckInSplits.forEach((sp, idx) => {
+          const amt = Number(sp.amount) || 0;
+          if (amt <= 0) return;
+          reservationPayments.push({
+            id: `PAY-${newResId}-adv-${idx + 1}`,
+            amount: amt,
+            method: sp.method,
+            paymentMethod: sp.method,
+            paymentType: 'Advance Deposit',
+            date: payDateLocal,
+            dateTime: `${payDateLocal}T12:00:00`,
+            referenceId: sp.ref || (sp as any).reference || undefined,
+            notes: (sp.ref || (sp as any).reference)
+              ? `Advance Hybrid (${sp.method}) • Ref: ${sp.ref || (sp as any).reference}`
+              : `Advance Hybrid (${sp.method})`,
+          });
+        });
+      } else if (totalCollectedNow > 0) {
+        reservationPayments.push({
+          id: `PAY-${newResId}-adv-1`,
+          amount: totalCollectedNow,
+          method: paymentMethod,
+          paymentMethod,
+          paymentType: 'Advance Deposit',
+          date: payDateLocal,
+          dateTime: `${payDateLocal}T12:00:00`,
+          referenceId: singlePaymentRef || undefined,
+          notes: singlePaymentRef ? `Advance Payment (${paymentMethod}) • Ref: ${singlePaymentRef}` : `Advance Payment (${paymentMethod})`,
+        });
+      }
+
+      const resolvedMethodLabel =
+        isHybridCheckInPay && activeCheckInSplits.length > 0
+          ? activeCheckInSplits.map(sp => `${sp.method} ₹${sp.amount}`).join(' + ')
+          : paymentMethod;
+
+      const bookedRoomsPayload = isMulti
+        ? groupRooms.map(gr => ({
+            roomNumber: gr.roomNumber,
+            category: gr.category as any,
+            roomType: gr.category,
+            rate: gr.rate,
+            originalRate: gr.originalRate || gr.rate,
+            guestsCount: (Number(gr.adults) || 1) + (Number(gr.children) || 0),
+            guestName: gr.assignedGuestName || guestName.trim(),
+            guestMobile: gr.assignedGuestMobile || mobile.trim(),
+            hasExtraBed: gr.hasExtraBed,
+            extraBedCount: gr.hasExtraBed ? gr.extraBedCount : 0,
+            extraBedRate: gr.hasExtraBed ? gr.extraBedRate : 0,
+          }))
+        : allocatedRoomNumbers[0]
+        ? [
+            {
+              roomNumber: allocatedRoomNumbers[0],
+              category: (roomType || 'Standard') as any,
+              roomType: roomType || 'Standard',
+              rate: roomRate,
+              originalRate: standardRate,
+              guestsCount: (Number(adults) || 1) + (Number(children) || 0) + secondaryGuests.length,
+              guestName: guestName.trim(),
+              guestMobile: mobile.trim(),
+              hasExtraBed,
+              extraBedCount: hasExtraBed ? extraBedCount : 0,
+              extraBedRate: hasExtraBed ? extraBedRate : 0,
+            },
+          ]
+        : undefined;
+
+      const bookedServicesPayload = tickedServices.map(s => ({
+        serviceId: String(s.id),
+        serviceName: String(s.serviceName || 'Hotel Service'),
+        amount: serviceLineTotalOf(s),
+        isChargeable: serviceLineTotalOf(s) > 0,
+      }));
+
+      const notesPieces = [
+        bookingCategory === 'corporate' ? `Corporate Booking${companyName ? `: ${companyName}` : ''}` : '',
+        bookingCategory === 'event' ? `Event / Banquet${eventVenueName ? `: ${eventVenueName}` : ''}` : '',
+        specialRequestTags.length > 0 ? `Preferences: ${specialRequestTags.join(', ')}` : '',
+        specialRequestNotes.trim() ? `Notes: ${specialRequestNotes.trim()}` : '',
+      ].filter(Boolean);
+
+      const newBookingRecord: Booking = {
+        id: newResId,
+        hotelId: activeHotelId,
+        guestName: guestName.trim(),
+        dob: dob || undefined,
+        mobile: mobile.trim(),
+        email: emailAddress.trim() || undefined,
+        address: combinedAddr || undefined,
+        nationality: nationality || 'Indian',
+        aadhaarNumber: idType === 'Aadhaar' ? idNumber : undefined,
+        passportNumber: idType === 'Passport' ? idNumber : undefined,
+        companyName:
+          companyName.trim() ||
+          (bookingCategory === 'group' || bookingCategory === 'event' ? groupName.trim() : '') ||
+          undefined,
+        gstNumber: gstNumber.trim() || undefined,
+        roomNumber: allocatedRoomNumbers.join(', '),
+        roomType: (isMulti ? groupRooms[0]?.category : roomType) || 'Standard',
+        checkInDate,
+        checkOutDate,
+        checkInTime: arrivalTime,
+        checkOutTime: departureTime,
+        nights: stayNights,
+        adults: Number(adults) || 1,
+        children: Number(children) || 0,
+        mealPlan,
+        purposeOfVisit: purposeOfVisit || 'Leisure',
+        comingFrom: comingFrom || undefined,
+        goingTo: goingTo || undefined,
+        voucherNumber: voucherNumber || undefined,
+        travelAgentId: selectedAgentId || undefined,
+        commissionType: selectedAgentId ? commissionType : undefined,
+        commissionValue: selectedAgentId ? commissionValue : undefined,
+        commissionAmount: selectedAgentId ? computedAgentCommission : undefined,
+        bookingDate: getTodayDateStr(),
+        bookingSource:
+          bookingCategory === 'corporate'
+            ? 'Corporate'
+            : walkInBookingSource || 'Direct',
+        status: targetStatus as BookingStatus,
+        isCheckedIn: false,
+        isCompleted: false,
+        bookingAmount: effectiveRoomChargesTotal,
+        discount: totalEffectiveDiscount,
+        advanceAmount: totalCollectedNow,
+        amountPaid: totalCollectedNow,
+        dueAmount: Math.max(0, Math.round((finalAmount - totalCollectedNow) * 100) / 100),
+        totalAmount: finalAmount,
+        gstRate: gstPercent,
+        isWithoutGst: gstPercent <= 0,
+        gstInvoice: gstPercent > 0,
+        paymentMethod: resolvedMethodLabel as any,
+        paymentStatus:
+          totalCollectedNow >= finalAmount && finalAmount > 0
+            ? 'Paid'
+            : totalCollectedNow > 0
+            ? 'Partially Paid'
+            : 'Unpaid',
+        payments: reservationPayments,
+        bookedRooms: bookedRoomsPayload,
+        bookedServices: bookedServicesPayload.length > 0 ? bookedServicesPayload : undefined,
+        hasExtraBed: !isMulti ? hasExtraBed : undefined,
+        extraBedCount: !isMulti && hasExtraBed ? extraBedCount : undefined,
+        extraBedRate: !isMulti && hasExtraBed ? extraBedRate : undefined,
+        extraPersonChargeApplied: effectiveExtraPersonChargesTotal,
+        groupBookingId: isMulti ? newResId : undefined,
+        specialRequests: notesPieces.join(' | ') || undefined,
+        createdAt: new Date().toISOString(),
+      } as Booking;
+
+      // Verify backend health before confirming inline success
+      try {
+        const res = await fetch('/api/health');
+        if (!res.ok) {
+          throw new Error(`Server returned HTTP ${res.status}`);
+        }
+      } catch (netErr: any) {
+        showToast(
+          `Backend server did not confirm the booking (${netErr?.message || 'connection failed'}). Please retry.`,
+          'error'
+        );
+        return;
+      }
+
+      const nextBookings = bookings.some(b => b.id === newResId)
+        ? bookings.map(b => (b.id === newResId ? newBookingRecord : b))
+        : [newBookingRecord, ...bookings];
+      onUpdateBookings(nextBookings);
+
+      const resolvedLabel =
+        actionLabelOverride ||
+        (targetStatus === 'Draft'
+          ? 'Draft Saved'
+          : targetStatus === 'Waiting'
+          ? 'Added to Waitlist'
+          : isFutureAdvanceArrival
+          ? 'Advance Booking Confirmed'
+          : 'Reservation Confirmed');
+
+      onAddAuditLog(
+        resolvedLabel,
+        `${resolvedLabel} #${newResId} for ${guestName.trim()} (${allocatedRoomNumbers.join(', ') || 'Room TBD'}, ${formatDdmmyyyy(checkInDate)} → ${formatDdmmyyyy(checkOutDate)}, ₹${finalAmount}).`
+      );
+
+      setInlineBookingSuccess({
+        id: newResId,
+        actionLabel: resolvedLabel,
+        guestName: guestName.trim(),
+        roomsLabel: allocatedRoomNumbers.length > 0 ? allocatedRoomNumbers.join(', ') : 'Unassigned',
+        checkInDate,
+        checkOutDate,
+        totalAmount: finalAmount,
+        paidAmount: totalCollectedNow,
+        status: targetStatus,
+      });
+
+      showToast(
+        `${resolvedLabel}: #${newResId} for ${guestName.trim()} (${formatDdmmyyyy(checkInDate)} → ${formatDdmmyyyy(checkOutDate)}).`,
+        'success'
+      );
+
+      setSelectedBooking(null);
+      setWalkInIdSeed(Number(String(Date.now()).slice(-6)) + 1);
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  const handleSaveCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    // If new booking has a future arrival date, save as Confirmed Advance Booking (never occupy room early!)
+    if (isFutureAdvanceArrival && effectiveMode !== 'walkin') {
+      await handleCreateReservationAction('Confirmed', 'Advance Booking Confirmed');
+      return;
+    }
+
     if (!guestName.trim() || !mobile.trim()) {
       showToast('Missing primary guest attributes: Guest Name and Mobile are required.', 'warning');
+      return;
+    }
+
+    if (effectiveMode !== 'walkin' && checkInMode === 'single' && !(Number(adults) >= 1)) {
+      showToast('Please enter the number of adults (at least 1).', 'warning');
+      return;
+    }
+    const todayIst = getTodayDateStr();
+    if (!isEditingExistingDates && checkInDate < todayIst) {
+      showToast('Past arrival dates cannot be selected for new check-ins.', 'error');
+      return;
+    }
+    if (!checkOutDate || checkOutDate <= checkInDate) {
+      showToast('Departure date must be later than arrival date.', 'error');
       return;
     }
 
@@ -1801,6 +2534,18 @@ export default function CheckInFormView({
       return;
     }
 
+    {
+      const badExtraBedRoom =
+        checkInMode === 'single'
+          ? hasExtraBed && selectedRoomNumber && !isExtraBedAllowedForRoom(selectedRoomNumber)
+            ? selectedRoomNumber
+            : ''
+          : groupRooms.find(g => g.hasExtraBed && !isExtraBedAllowedForRoom(g.roomNumber))?.roomNumber || '';
+      if (badExtraBedRoom) {
+        showToast(`Room ${badExtraBedRoom} does not allow an extra bed / mattress. Please untick it.`, 'error');
+        return;
+      }
+    }
     if (checkInMode === 'single' && !selectedRoomNumber) {
       showToast('Please select a room allocation.', 'warning');
       return;
@@ -1997,7 +2742,7 @@ export default function CheckInFormView({
           paymentType: 'Partial Payment',
           dateTime: `${payDateLocal}T12:00:00`,
           date: payDateLocal,
-          notes: `Check-in Hybrid Payment (${sp.method}${sp.ref.trim() ? ` • Ref: ${sp.ref.trim()}` : ''})`,
+          notes: `Check-in Hybrid Payment (${sp.method}${(sp.ref || (sp as any).reference || '').trim() ? ` • Ref: ${(sp.ref || (sp as any).reference || '').trim()}` : ''})`,
         });
       });
     } else if (effectiveDeskReceivedNow > 0) {
@@ -2138,15 +2883,24 @@ export default function CheckInFormView({
         sourceType: 'guest_service' as const,
         sourceId: a.id
       }));
-    if (customAddonTotal > 0) {
+    if (customAddonSingleTotal > 0) {
       stayServiceExtraCharges.push({
         id: `ADDON-CHK-${resolvedCheckInId}`,
         category: 'Other' as const,
         description: `${customAddonLabel.trim()} × ${Math.max(1, Number(customAddonQty) || 1)}${customAddonNotes.trim() ? ` (${customAddonNotes.trim()})` : ''}`,
-        amount: customAddonTotal,
+        amount: customAddonSingleTotal,
         dateTime: nowIsoSrv,
       });
     }
+    customExtraRowCharges.forEach(c => {
+      stayServiceExtraCharges.push({
+        id: `${c.id}-${resolvedCheckInId}`,
+        category: 'Other' as const,
+        description: c.description,
+        amount: c.amount,
+        dateTime: nowIsoSrv,
+      });
+    });
     if (otherCharges > 0) {
       stayServiceExtraCharges.push({
         id: `AUX-CHK-${resolvedCheckInId}`,
@@ -2183,7 +2937,10 @@ export default function CheckInFormView({
     const autoNowIso = new Date().toISOString();
     const autoNowDateStr = getTodayDateStr();
     const autoNowTimeStr = getCurrentTimeStr();
-    const composedGuestAddress = composeFullAddress(address, city, state, country);
+    const combinedPrimaryAddr = [address.trim(), addressLine2.trim(), pincode.trim() ? `PIN: ${pincode.trim()}` : '']
+      .filter(Boolean)
+      .join(', ');
+    const composedGuestAddress = composeFullAddress(combinedPrimaryAddr, city, state, country);
     const resolvedCheckInTimestamp = editingCheckIn?.checkInTimestamp || `${autoNowDateStr} • ${autoNowTimeStr}`;
     const resolvedWalkInSource: BookingSource =
       selectedAgentId && walkInBookingSource === 'Walk-in' ? 'Travel Agent' : walkInBookingSource;
@@ -2649,8 +3406,23 @@ export default function CheckInFormView({
       showToast(`Walk-In Guest ${guestName} directly checked in to Room ${primaryRoom}!`, 'success');
     }
 
-    // Set printable card active & scroll to top so GRC slip is immediately visible
+    // Set printable card active & inline confirmation after backend check
     setActivePrintDocument(newCheckIn);
+    setInlineBookingSuccess({
+      id: newCheckIn.id,
+      actionLabel: editingCheckIn
+        ? 'Stay Updated'
+        : effectiveBooking
+        ? 'Reservation Check-In Completed'
+        : 'Guest Checked In',
+      guestName: newCheckIn.guestName,
+      roomsLabel: newCheckIn.roomNumber,
+      checkInDate: newCheckIn.checkInDate,
+      checkOutDate: newCheckIn.checkOutDate,
+      totalAmount: newCheckIn.totalAmount || finalAmount,
+      paidAmount: Number(newCheckIn.advanceAmount || 0) + Number(newCheckIn.cashAmountPaid || 0) + Number(newCheckIn.onlineAmountPaid || 0),
+      status: 'Checked-In',
+    });
     setSelectedBooking(null);
     setEditingCheckIn(null);
     if (typeof window !== 'undefined') {
@@ -2676,8 +3448,8 @@ export default function CheckInFormView({
     setSelectedRoomNumber('');
     setApplyExtraPersonCharge(false);
     setManualExtraPaxCount('');
-    setAdults(2);
-    setChildren(0);
+    setAdults(effectiveMode === 'walkin' ? 2 : '');
+    setChildren(effectiveMode === 'walkin' ? 0 : '');
     setSelectedServiceIds([]);
     setOtherCharges(0);
     setAdvanceAmount(0);
@@ -2687,7 +3459,7 @@ export default function CheckInFormView({
     setDiscountInputValue(0);
     setSettlementEnabled(false);
     setSettlementAdjustmentInput(0);
-    setSettlementTargetInput(0);
+    setSettlementTargetInput('');
     setSettlementReason('');
     setIsHybridCheckInPay(false);
     setCheckInSplitRows([
@@ -2728,6 +3500,11 @@ export default function CheckInFormView({
     setCustomAddonQty(1);
     setCustomAddonRate(0);
     setCustomAddonNotes('');
+      setCustomExtraRows([]);
+      setServicePriceMap({});
+      setExtraPersonRateOverride('');
+      userCountTouchedRef.current = false;
+      extraChargeTouchedRef.current = false;
     setDiscountEnabled(false);
     setDiscountInputValue(0);
     setDiscountReason('');
@@ -5884,80 +6661,1254 @@ export default function CheckInFormView({
               </>
             ) : (
               <>
-            {/* 5-STEP GUIDED CHECK-IN WIZARD + STICKY LIVE BOOKING SUMMARY (DirectStay Luxury Theme • v3 Format & Fields) */}
-            <div className="bg-[#FAF7F2] border border-luxury-brown-200 rounded-2xl p-3.5 sm:p-4 shadow-2xs no-print">
-              <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                {(
-                  [
-                    { num: 1, label: 'Stay & Room' },
-                    { num: 2, label: 'Guest & ID' },
-                    { num: 3, label: 'Services & Add-ons' },
-                    { num: 4, label: 'Billing & Payment' },
-                    { num: 5, label: 'Review' },
-                  ] as const
-                ).map((st, idx, arr) => {
-                  const isActive = wizardStep === st.num;
-                  const isDone = wizardStep > st.num;
-                  return (
-                    <React.Fragment key={st.num}>
-                      <button
-                        type="button"
-                        onClick={() => setWizardStep(st.num)}
-                        className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left transition-all cursor-pointer shrink-0 ${
-                          isActive
-                            ? 'bg-[#FDF6E2] border-[#C49A3A] shadow-2xs'
-                            : isDone
-                            ? 'bg-emerald-50/70 border-emerald-200 hover:bg-emerald-50'
-                            : 'bg-white border-luxury-brown-200/80 hover:bg-luxury-beige-50/50'
-                        }`}
-                      >
-                        <span
-                          className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-extrabold shrink-0 ${
-                            isActive
-                              ? 'bg-gradient-to-br from-[#F4CF87] to-[#B78334] text-[#2B1D07]'
-                              : isDone
-                              ? 'bg-emerald-600 text-white'
-                              : 'bg-slate-100 text-slate-600 border border-slate-200'
-                          }`}
-                        >
-                          {isDone ? '✓' : st.num}
-                        </span>
-                        <span
-                          className={`text-xs font-bold whitespace-nowrap ${
-                            isActive ? 'text-luxury-brown-950' : isDone ? 'text-emerald-900' : 'text-slate-600'
-                          }`}
-                        >
-                          {st.label}
-                        </span>
-                      </button>
-                      {idx < arr.length - 1 && (
-                        <div className={`h-[2px] flex-1 min-w-[14px] ${isDone ? 'bg-emerald-300' : 'bg-luxury-brown-200/70'}`} />
-                      )}
-                    </React.Fragment>
-                  );
-                })}
-              </div>
-            </div>
+            {/* REDESIGNED SINGLE-PAGE CHECK-IN & RESERVATION WORKSPACE (DirectStay Light Luxury Theme) */}
+            <form onSubmit={handleSaveCheckIn} className="space-y-4">
+              {/* TOP ACTION BAR */}
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-[#F4F6F9] border border-[#DCE3EC] rounded-2xl px-4 py-3 shadow-2xs no-print">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h2 className="text-base sm:text-lg font-serif font-bold text-[#263449]">
+                    {editingCheckIn
+                      ? `Edit Stay — #${editingCheckIn.id}`
+                      : selectedBooking
+                      ? `Check-In Reservation — #${selectedBooking.id}`
+                      : isFutureAdvanceArrival
+                      ? 'New Advance Reservation'
+                      : 'New Check-In & Reservation'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanceLookup(prev => !prev)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer inline-flex items-center gap-1.5 ${
+                      showAdvanceLookup || selectedBooking
+                        ? 'bg-[#FDF8ED] border-[#C49A3A] text-[#8B691E]'
+                        : 'bg-white border-[#DCE3EC] text-[#263449] hover:bg-[#F4F6F9]'
+                    }`}
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    {selectedBooking
+                      ? `Loaded: ${selectedBooking.id}`
+                      : `Load Existing Booking (${eligibleReservations.length})`}
+                  </button>
+                </div>
 
-            <form onSubmit={handleSaveCheckIn} className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
-              {/* LEFT COLUMN: 5-STEP FORM PANEL */}
-              <div className="bg-white border border-luxury-brown-200 rounded-2xl shadow-xs overflow-hidden">
-                <div className="p-5 sm:p-6 space-y-6">
-                  {/* ========================================================= */}
-                  {/* STEP 1: STAY & ROOM DETAILS                               */}
-                  {/* ========================================================= */}
-                  {wizardStep === 1 && (
-                    <div className="space-y-5 animate-fade-in">
-                      <div className="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-luxury-brown-100">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-[#FFF3D7] border border-[#E6CE9A] text-[#9E6E24] flex items-center justify-center shrink-0">
-                            <Hotel className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <h2 className="text-base font-serif font-bold text-luxury-brown-950">Stay &amp; Room Details</h2>
-                            <p className="text-xs text-luxury-brown-600">Choose reservation type, assign room(s), and confirm stay dates &amp; tariff.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSubTab('folios')}
+                    className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#F4F6F9] border border-[#DCE3EC] text-xs font-bold text-[#263449] cursor-pointer"
+                  >
+                    ← Folios &amp; History
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSubmittingAction}
+                    onClick={() => handleCreateReservationAction('Draft', 'Draft Saved')}
+                    className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#FDF8ED] border border-[#C2CDD9] text-xs font-bold text-[#263449] cursor-pointer disabled:opacity-50"
+                  >
+                    Save Draft
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingAction}
+                    className="px-4 py-1.5 rounded-lg bg-[#C49A3A] hover:bg-[#A8812B] text-white border border-[#A8812B] text-xs font-extrabold inline-flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+                  >
+                    <FileCheck className="w-3.5 h-3.5" />
+                    {editingCheckIn
+                      ? 'Update Stay'
+                      : isFutureAdvanceArrival
+                      ? 'Confirm Advance Booking'
+                      : selectedBooking
+                      ? 'Complete Check-In Now'
+                      : 'Reserve & Check-In Now'}
+                  </button>
+                </div>
+              </div>
+
+              {/* INLINE BACKEND-CONFIRMED SUCCESS BANNER */}
+              {inlineBookingSuccess && (
+                <div className="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-fade-in no-print">
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-emerald-700 text-white text-[10px] font-mono font-bold uppercase">
+                        ✓ Confirmed by Server
+                      </span>
+                      <span className="text-sm font-serif font-bold text-emerald-950">
+                        {inlineBookingSuccess.actionLabel} — #{inlineBookingSuccess.id}
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-900 font-mono">
+                      Guest: <strong>{inlineBookingSuccess.guestName}</strong> • Room(s):{' '}
+                      <strong>{inlineBookingSuccess.roomsLabel}</strong> • Stay:{' '}
+                      <strong>
+                        {formatDdmmyyyy(inlineBookingSuccess.checkInDate)} → {formatDdmmyyyy(inlineBookingSuccess.checkOutDate)}
+                      </strong>{' '}
+                      • Total: <strong>₹{inlineBookingSuccess.totalAmount.toLocaleString('en-IN')}</strong> • Paid:{' '}
+                      <strong>₹{inlineBookingSuccess.paidAmount.toLocaleString('en-IN')}</strong> ({inlineBookingSuccess.status})
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setInlineBookingSuccess(null)}
+                    className="px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-900 text-xs font-bold hover:bg-emerald-100 cursor-pointer shrink-0"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* MAIN 2-COLUMN WORKSPACE: LEFT STICKY SIDEBAR + RIGHT SINGLE-PAGE SECTIONS */}
+              <div className="grid grid-cols-1 lg:grid-cols-[272px_minmax(0,1fr)] gap-5 items-start">
+                {/* ================= LEFT SIDEBAR ================= */}
+                <div className="space-y-4 lg:sticky lg:top-4 no-print bg-transparent">
+                  {/* CARD 1: LIVE GUEST PREVIEW */}
+                  <div className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs overflow-hidden">
+                    <div className="px-4 py-3 bg-[#F4F6F9] border-b border-[#DCE3EC]/80 flex items-center justify-between">
+                      <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#263449] flex items-center gap-1.5">
+                        <Contact className="w-3.5 h-3.5 text-[#C49A3A]" /> GUEST PREVIEW
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50 text-[9px] font-mono font-extrabold uppercase">
+                        {bookingCategory === 'event' ? 'EVENT' : bookingCategory.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div className="p-4 space-y-3 text-xs">
+                      <div>
+                        <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400 font-bold block">
+                          PRIMARY GUEST / NAME
+                        </span>
+                        <p className={`text-sm font-serif font-bold mt-0.5 ${guestName.trim() ? 'text-[#263449]' : 'text-slate-400 italic'}`}>
+                          {guestName.trim() || 'Not entered yet'}
+                        </p>
+                        {mobile.trim() && (
+                          <span className="text-[11px] font-mono text-slate-600 block">{mobile}</span>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5 pt-2 border-t border-[#DCE3EC] font-mono text-[11px]">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500">Dates:</span>
+                          <strong className="text-[#263449] text-right">
+                            {formatDdmmyyyy(checkInDate)} → {formatDdmmyyyy(checkOutDate)}
+                          </strong>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500">Duration:</span>
+                          <strong className="text-[#263449]">
+                            {stayNights} night{stayNights === 1 ? '' : 's'}
+                          </strong>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500">Guests (Pax):</span>
+                          <strong className="text-[#263449] text-right">
+                            {checkInMode === 'group'
+                              ? `${groupRooms.reduce((s, r) => s + (Number(r.adults) || 0), 0)} Adult, ${groupRooms.reduce((s, r) => s + (Number(r.children) || 0), 0)} Child${secondaryGuests.length > 0 ? ` (+${secondaryGuests.length} Extra)` : ''}`
+                              : `${Number(adults) || 0} Adult, ${Number(children) || 0} Child${secondaryGuests.length > 0 ? ` (+${secondaryGuests.length} Extra)` : ''}`}
+                          </strong>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500">Room(s):</span>
+                          <strong className="text-[#263449] text-right truncate max-w-[140px]">
+                            {checkInMode === 'group'
+                              ? groupRooms.length > 0
+                                ? `${groupRooms.length} Rm (${groupRooms.map(r => r.roomNumber).join(', ')})`
+                                : 'Not selected'
+                              : selectedRoomNumber
+                              ? `Rm ${selectedRoomNumber} (${roomType || 'Std'})`
+                              : 'Not selected'}
+                          </strong>
+                        </div>
+                      </div>
+
+                      <div className="pt-2.5 border-t border-[#DCE3EC] space-y-1.5 font-mono">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-[#263449]">Total:</span>
+                          <strong className="text-base font-extrabold text-[#8B691E]">
+                            ₹{finalAmount.toLocaleString('en-IN')}
+                          </strong>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-emerald-700">Paid: ₹{(advanceAmount + effectiveDeskReceivedNow).toLocaleString('en-IN')}</span>
+                          <span className={balanceAmount > 0 ? 'text-amber-700 font-bold' : 'text-emerald-700 font-bold'}>
+                            {balanceAmount > 0 ? `Due: ₹${balanceAmount.toLocaleString('en-IN')}` : 'PAID'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CARD 2: BOOKING TYPE SELECTOR */}
+                  <div className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs p-3.5 space-y-2.5">
+                    <span className="text-xs font-serif font-bold text-[#263449] block px-1">
+                      Booking type
+                    </span>
+                    <div className="grid grid-cols-2 lg:grid-cols-1 gap-1.5">
+                      {(
+                        [
+                          {
+                            id: 'individual',
+                            title: 'Individual',
+                            sub: 'Single guest or family',
+                            icon: UserCheck,
+                          },
+                          {
+                            id: 'group',
+                            title: 'Group',
+                            sub: 'Block of rooms • rooming list',
+                            icon: Users,
+                          },
+                          {
+                            id: 'corporate',
+                            title: 'Corporate',
+                            sub: 'Negotiated rate • direct bill',
+                            icon: Building,
+                          },
+                          {
+                            id: 'event',
+                            title: 'Event / Banquet',
+                            sub: 'Venue • catering + AV',
+                            icon: Sparkles,
+                          },
+                        ] as const
+                      ).map(item => {
+                        const Icon = item.icon;
+                        const active = bookingCategory === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => handleSelectBookingCategory(item.id)}
+                            className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all flex items-start gap-2.5 cursor-pointer ${
+                              active
+                                ? 'bg-[#FDF8ED] border-[#C49A3A] shadow-2xs'
+                                : 'bg-white border-transparent hover:bg-[#F4F6F9] hover:border-[#DCE3EC]/70'
+                            }`}
+                          >
+                            <Icon
+                              className={`w-4 h-4 mt-0.5 shrink-0 ${
+                                active ? 'text-[#8B691E]' : 'text-slate-400'
+                              }`}
+                            />
+                            <div>
+                              <span
+                                className={`text-xs font-bold block leading-tight ${
+                                  active ? 'text-[#8B691E]' : 'text-[#263449]'
+                                }`}
+                              >
+                                {item.title}
+                              </span>
+                              <span className="text-[10.5px] text-slate-500 block mt-0.5">
+                                {item.sub}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ================= MAIN RIGHT SINGLE-PAGE FORM ================= */}
+                <div className="space-y-4">
+                  {/* SECTION 1: STAY & RATE */}
+                  <section className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs p-5 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-sm sm:text-base font-serif font-bold text-[#263449]">
+                          Stay &amp; rate
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Stay dates (Asia/Kolkata • DD-MM-YYYY), room allocation, meal plan &amp; rate plan
+                        </p>
+                      </div>
+                      {isFutureAdvanceArrival && (
+                        <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-mono font-bold">
+                          Advance Booking Mode • Room stays Available until Check-In
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Optional Existing Advance Reservation Selector */}
+                    {(showAdvanceLookup || selectedBooking) && !editingCheckIn && (
+                      <div className="space-y-2.5 bg-[#FDF8ED] p-3.5 rounded-xl border border-[#D4AD50]">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] font-mono font-bold uppercase text-[#8B691E] flex items-center gap-1.5">
+                            <UserCheck className="w-3.5 h-3.5" />
+                            {arrivalQueueFilter === 'today'
+                              ? `Today's Advance Arrivals (${todayEligibleReservations.length})`
+                              : arrivalQueueFilter === 'date'
+                              ? `Advance Arrivals for ${formatDdmmyyyy(filterArrivalDate)} (${dateEligibleReservations.length})`
+                              : `All Advance Bookings (${eligibleReservations.length})`}
+                          </span>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+                            <button
+                              type="button"
+                              onClick={() => setArrivalQueueFilter('all')}
+                              className={`px-2 py-1 rounded font-bold cursor-pointer ${
+                                arrivalQueueFilter === 'all' ? 'bg-[#C49A3A] text-white' : 'bg-white border border-[#DCE3EC] text-slate-700'
+                              }`}
+                            >
+                              All ({eligibleReservations.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setArrivalQueueFilter('today')}
+                              className={`px-2 py-1 rounded font-bold cursor-pointer ${
+                                arrivalQueueFilter === 'today' ? 'bg-[#C49A3A] text-white' : 'bg-white border border-[#DCE3EC] text-slate-700'
+                              }`}
+                            >
+                              Today ({todayEligibleReservations.length})
+                            </button>
+                            <input
+                              type="date"
+                              value={filterArrivalDate}
+                              onChange={e => {
+                                setFilterArrivalDate(e.target.value);
+                                setArrivalQueueFilter('date');
+                              }}
+                              className="px-2 py-0.5 rounded border border-[#DCE3EC] bg-white text-[11px] font-mono font-bold"
+                            />
+                            {selectedBooking && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBooking(null)}
+                                className="px-2 py-1 rounded bg-amber-50 text-amber-700 border border-slate-200 font-bold cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            )}
                           </div>
                         </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                          <div className="relative">
+                            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                              type="text"
+                              value={resSearchQuery}
+                              onChange={e => setResSearchQuery(e.target.value)}
+                              placeholder="Booking ID, Name or Mobile..."
+                              className="w-full pl-8 pr-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs bg-white font-mono"
+                            />
+                          </div>
+                          <div className="md:col-span-2">
+                            <select
+                              value={selectedBooking?.id || ''}
+                              onChange={e => {
+                                const found = bookings.find(b => b.id === e.target.value);
+                                if (found) handleSelectAdvanceBooking(found);
+                                else setSelectedBooking(null);
+                              }}
+                              className="w-full px-3 py-1.5 border border-[#C2CDD9] rounded-lg text-xs bg-white font-bold text-[#263449]"
+                            >
+                              <option value="">
+                                {filteredEligibleReservations.length === 0
+                                  ? "-- No pending advance bookings found (switch to 'All' to view all dates) --"
+                                  : '-- Select Advance Booking to Auto-Fill --'}
+                              </option>
+                              {filteredEligibleReservations.map(b => (
+                                <option key={b.id} value={b.id}>
+                                  {b.id} — {b.guestName} • Rm {b.roomNumber || 'TBD'} ({formatDdmmyyyy(b.checkInDate)} → {formatDdmmyyyy(b.checkOutDate)}) • Adv ₹{Number(b.advanceAmount || 0).toLocaleString('en-IN')}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Row 1: Choose Date (Arrival) | Departure | Nights | Source */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                      <div className="md:col-span-4 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-[#263449]">
+                            Choose Date <span className="text-[#A8812B]">*</span>
+                          </label>
+                          <span className="text-[10px] font-mono font-bold text-[#8B691E]">
+                            {formatDdmmyyyy(checkInDate)} / {arrivalTime}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-[1fr_102px] gap-1.5">
+                          <input
+                            type="date"
+                            required
+                            min={!isEditingExistingDates ? todayIstStr : undefined}
+                            value={checkInDate}
+                            onChange={e => handleArrivalDateChange(e.target.value)}
+                            className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                          />
+                          <input
+                            type="time"
+                            value={to24hTime(arrivalTime, getIstNowParts().hhmm)}
+                            min={!isEditingExistingDates && checkInDate === todayIstStr ? getIstNowParts().hhmm : undefined}
+                            onChange={e => handleArrivalTimeChange(e.target.value)}
+                            className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="md:col-span-4 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-[#263449]">
+                            Departure <span className="text-[#A8812B]">*</span>
+                          </label>
+                          <span className="text-[10px] font-mono font-bold text-slate-600">
+                            {formatDdmmyyyy(checkOutDate)} / {departureTime}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-[1fr_102px] gap-1.5">
+                          <input
+                            type="date"
+                            required
+                            min={getFutureDateStr(1, checkInDate || todayIstStr)}
+                            value={checkOutDate}
+                            onChange={e => handleDepartureDateChange(e.target.value)}
+                            className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                          />
+                          <input
+                            type="time"
+                            value={to24hTime(departureTime, to24hTime(hotelSettings?.checkOutTime, '11:00'))}
+                            onChange={e => handleDepartureTimeChange(e.target.value)}
+                            className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="md:col-span-1 space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">Nights</label>
+                        <div className="py-2 px-2 rounded-xl border border-[#DCE3EC] bg-[#F4F6F9] text-center text-xs font-mono font-extrabold text-[#263449] whitespace-nowrap">
+                          {stayNights} nt{stayNights > 1 ? 's' : ''}
+                        </div>
+                      </div>
+
+                      <div className="md:col-span-3 space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">
+                          Source <span className="text-[#A8812B]">*</span>
+                        </label>
+                        <select
+                          value={walkInBookingSource}
+                          onChange={e => {
+                            const v = e.target.value as BookingSource;
+                            setWalkInBookingSource(v);
+                            if (v !== 'Travel Agent') setSelectedAgentId('');
+                          }}
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                        >
+                          <option value="Walk-in">Walk-in / Direct</option>
+                          <option value="Direct">Direct Desk</option>
+                          <option value="Phone">Phone / WhatsApp</option>
+                          <option value="Website">Hotel Website</option>
+                          <option value="OTA">OTA (MakeMyTrip / Booking.com)</option>
+                          <option value="Travel Agent">Travel Agent</option>
+                          <option value="Corporate">Corporate</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Travel Agent / Partner (linked to Travel Agents master list) */}
+                    {walkInBookingSource === 'Travel Agent' && (
+                    <div className="grid grid-cols-2 md:grid-cols-12 gap-3 p-3 rounded-xl bg-[#F4F6F9]/70 border border-[#DCE3EC] items-end">
+                      <div className="col-span-2 md:col-span-5 space-y-1">
+                        <label className="text-[11px] font-bold text-[#263449] block">Travel Agent / OTA Partner</label>
+                        <select
+                          value={selectedAgentId}
+                          onChange={e => handleSelectTravelAgent(e.target.value)}
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-bold bg-white"
+                        >
+                          <option value="">Direct / No Agent</option>
+                          {travelAgents
+                            .filter(a => a.status !== 'Inactive' || a.id === selectedAgentId)
+                            .map(a => (
+                              <option key={a.id} value={a.id}>
+                                {a.agencyName && a.agencyName !== a.name ? `${a.name} (${a.agencyName})` : a.name}
+                              </option>
+                            ))}
+                        </select>
+                        {travelAgents.length === 0 && (
+                          <span className="text-[10px] text-amber-700 block">No agents found. Add agents under Front Desk → Travel Agents / Partners.</span>
+                        )}
+                      </div>
+                      {selectedAgentId && (
+                        <>
+                          <div className="md:col-span-2 space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Commission</label>
+                            <select
+                              value={commissionType}
+                              onChange={e => setCommissionType(e.target.value as 'percentage' | 'fixed')}
+                              className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-bold bg-white"
+                            >
+                              <option value="percentage">%</option>
+                              <option value="fixed">Fixed ₹</option>
+                            </select>
+                          </div>
+                          <div className="md:col-span-2 space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Value</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={commissionValue}
+                              onChange={e => setCommissionValue(Math.max(0, Number(e.target.value) || 0))}
+                              className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white"
+                            />
+                          </div>
+                          <div className="md:col-span-3 text-right text-xs font-mono font-bold text-[#8B691E] pb-2">
+                            Agent commission: ₹{computedAgentCommission.toLocaleString('en-IN')}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    )}
+
+                    {/* Corporate Extra Row (shown when Corporate booking type selected) */}
+                    {bookingCategory === 'corporate' && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-xl bg-[#F4F6F9] border border-[#C49A3A]/40">
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-[#263449] block">Company / Corporate Name *</label>
+                          <input
+                            type="text"
+                            value={companyName}
+                            onChange={e => setCompanyName(e.target.value)}
+                            placeholder="e.g. Tata Consultancy Services"
+                            className="w-full px-3 py-2 border border-[#DCE3EC] rounded-lg text-xs bg-white font-semibold"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-[#263449] block">Company GSTIN</label>
+                          <input
+                            type="text"
+                            value={gstNumber}
+                            onChange={e => setGstNumber(e.target.value.toUpperCase())}
+                            placeholder="e.g. 27ABCDE1234F1Z5"
+                            className="w-full px-3 py-2 border border-[#DCE3EC] rounded-lg text-xs font-mono bg-white font-bold"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-[#263449] block">Room Allocation Mode</label>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setCheckInMode('single')}
+                              className={`flex-1 py-2 rounded-lg text-xs font-bold border cursor-pointer ${
+                                checkInMode === 'single'
+                                  ? 'bg-[#C49A3A] text-white border-[#C49A3A]'
+                                  : 'bg-white text-slate-700 border-[#DCE3EC]'
+                              }`}
+                            >
+                              Single Room
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCheckInMode('group');
+                                if (groupRooms.length === 0) handleAddGroupRoom();
+                              }}
+                              className={`flex-1 py-2 rounded-lg text-xs font-bold border cursor-pointer ${
+                                checkInMode === 'group'
+                                  ? 'bg-[#C49A3A] text-white border-[#C49A3A]'
+                                  : 'bg-white text-slate-700 border-[#DCE3EC]'
+                              }`}
+                            >
+                              Multi-Room
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Event / Banquet Extra Row */}
+                    {bookingCategory === 'event' && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3.5 rounded-xl bg-[#F4F6F9] border border-[#C49A3A]/40">
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-[#263449] block">Event / Function Name</label>
+                          <input
+                            type="text"
+                            value={groupName}
+                            onChange={e => setGroupName(e.target.value)}
+                            placeholder="e.g. Sharma Wedding / Annual Conference"
+                            className="w-full px-3 py-2 border border-[#DCE3EC] rounded-lg text-xs bg-white font-semibold"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-[#263449] block">Venue / Hall &amp; Catering Notes</label>
+                          <input
+                            type="text"
+                            value={eventVenueName}
+                            onChange={e => setEventVenueName(e.target.value)}
+                            placeholder="e.g. Grand Banquet Hall + Lawn + Projector AV"
+                            className="w-full px-3 py-2 border border-[#DCE3EC] rounded-lg text-xs bg-white"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ROOM CONFIGURATION BOX — STRICT INDIVIDUAL vs GROUP LOGIC */}
+                    {checkInMode === 'single' ? (
+                      /* INDIVIDUAL / SINGLE-ROOM BOX: NO Add Room / Add Group Rooms buttons! */
+                      <div className="p-4 rounded-xl bg-[#F4F6F9]/80 border border-[#DCE3EC] space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] text-slate-500">Need more than one room for this booking? Add extra rooms below.</span>
+                          <button
+                            type="button"
+                            onClick={handleAddExtraRoomFromSingle}
+                            className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#FDF8ED] border border-[#C49A3A] text-xs font-bold text-[#8B691E] cursor-pointer"
+                          >
+                            + Add Extra Room
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className="space-y-1 sm:col-span-2">
+                            <label className="text-[11px] font-bold text-[#263449] block">
+                              Select Room ({formatDdmmyyyy(checkInDate)} → {formatDdmmyyyy(checkOutDate)}) <span className="text-[#A8812B]">*</span>
+                            </label>
+                            <select
+                              value={selectedRoomNumber}
+                              onChange={e => setSelectedRoomNumber(e.target.value)}
+                              className="w-full px-3 py-2 border border-[#C2CDD9] rounded-xl text-xs font-bold bg-white text-[#263449] focus:border-[#C49A3A] focus:outline-none"
+                            >
+                              <option value="">-- Choose Available Room --</option>
+                              {rooms.map(r => {
+                                const avail = isRoomTrulyAvailable(r, checkInDate, checkOutDate);
+                                const conflictBkg = !avail ? getRoomOverlappingBooking(r.number, checkInDate, checkOutDate) : undefined;
+                                return (
+                                  <option key={r.number} value={r.number} disabled={!avail}>
+                                    Room {r.number} — {r.category} • ₹{r.rate}/nt {avail ? '(Available)' : conflictBkg ? `(Booked: ${conflictBkg.guestName})` : `(${r.status})`}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">
+                              Tariff / Night (₹)
+                            </label>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min={0}
+                                value={roomRate || ''}
+                                placeholder="Select room"
+                                onChange={e => setRoomRate(Math.max(0, Number(e.target.value) || 0))}
+                                className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white"
+                              />
+                              {roomRate !== standardRate && (
+                                <button
+                                  type="button"
+                                  onClick={handleRenewPrice}
+                                  title={`Reset to rack rate ₹${standardRate}`}
+                                  className="p-2 rounded-lg bg-white border border-[#DCE3EC] hover:bg-amber-50 text-[#8B691E] cursor-pointer"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Meal Plan</label>
+                            <select
+                              value={mealPlan}
+                              onChange={e => setMealPlan(e.target.value as MealPlanType)}
+                              className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-bold bg-white"
+                            >
+                              <option value="EP">EP (Room Only)</option>
+                              <option value="CP">CP (With Breakfast)</option>
+                              <option value="MAP">MAP (Breakfast + 1 Meal)</option>
+                              <option value="AP">AP (All Meals)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Adults</label>
+                            <input
+                              type="number"
+                              min={1}
+                              value={adults}
+                              placeholder="Enter adults"
+                              onChange={e => {
+                                userCountTouchedRef.current = true;
+                                setAdults(e.target.value === '' ? '' : Math.max(1, Number(e.target.value)));
+                              }}
+                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Children</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={children}
+                              placeholder="Enter children"
+                              onChange={e => {
+                                userCountTouchedRef.current = true;
+                                setChildren(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)));
+                              }}
+                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                            />
+                          </div>
+                          <div className="col-span-2 flex flex-wrap items-center gap-3 pt-4">
+                            {(() => {
+                              const bedBlocked = Boolean(selectedRoomNumber) && activeSelectedRoomObj?.allowExtraBed === false;
+                              return (
+                                <label
+                                  title={bedBlocked ? `Room ${selectedRoomNumber} does not allow an extra bed` : undefined}
+                                  className={`inline-flex items-center gap-1.5 text-xs font-bold ${bedBlocked ? 'text-slate-400 cursor-not-allowed' : 'text-[#263449] cursor-pointer'}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    disabled={bedBlocked}
+                                    checked={bedBlocked ? false : hasExtraBed}
+                                    onChange={e => setHasExtraBed(e.target.checked)}
+                                    className={`w-4 h-4 accent-[#B5822D] rounded ${bedBlocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                                  />
+                                  <span>Extra Mattress{bedBlocked ? ' (Not allowed in this room)' : ''}</span>
+                                </label>
+                              );
+                            })()}
+                            <label className="inline-flex items-center gap-1.5 text-xs font-bold text-[#263449] cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={applyExtraPersonCharge}
+                                onChange={e => {
+                                  extraChargeTouchedRef.current = true;
+                                  setApplyExtraPersonCharge(e.target.checked);
+                                }}
+                                className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
+                              />
+                              <span>Extra Person Charge (₹{extraPersonCharge}/nt)</span>
+                            </label>
+                          </div>
+                        </div>
+
+                        {hasExtraBed && activeSelectedRoomObj?.allowExtraBed !== false && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-2.5 rounded-lg bg-white border border-amber-200 text-xs">
+                            <div>
+                              <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">Mattresses</label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={extraBedCount}
+                                onChange={e => setExtraBedCount(Math.max(1, Number(e.target.value) || 1))}
+                                className="w-full mt-0.5 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">Rate / Night (₹)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={extraBedRate}
+                                onChange={e => setExtraBedRate(Math.max(0, Number(e.target.value) || 0))}
+                                className="w-full mt-0.5 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold"
+                              />
+                            </div>
+                            <div className="flex items-end font-mono font-bold text-amber-800 pb-1.5">
+                              Total: ₹{(extraBedCount * extraBedRate * stayNights).toLocaleString('en-IN')}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      /* GROUP / MULTI-ROOM BOX: Shows + Add Room AND + Add Group Rooms + Rooming List */
+                      <div className="p-4 rounded-xl bg-[#F4F6F9]/80 border border-[#DCE3EC] space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-[#263449]">
+                              {groupRooms.length === 0
+                                ? 'No rooms added yet. Click + Add Room or + Add Group Rooms.'
+                                : `Group Rooming List (${groupRooms.length} Room${groupRooms.length > 1 ? 's' : ''})`}
+                            </span>
+                            {bookingCategory === 'group' && (
+                              <input
+                                type="text"
+                                value={groupName}
+                                onChange={e => setGroupName(e.target.value)}
+                                placeholder="Group / Family Name..."
+                                className="px-2.5 py-1 border border-[#DCE3EC] rounded-lg text-xs bg-white font-semibold"
+                              />
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {bookingCategory === 'individual' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const first = groupRooms[0]?.roomNumber || '';
+                                  setCheckInMode('single');
+                                  if (first) setSelectedRoomNumber(first);
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#F4F6F9] border border-[#DCE3EC] text-xs font-bold text-[#263449] cursor-pointer"
+                              >
+                                ← Single Room
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={handleAddGroupRoom}
+                              className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#FDF8ED] border border-[#C2CDD9] text-xs font-bold text-[#263449] cursor-pointer"
+                            >
+                              + Add Room
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowQuickGroupPicker(prev => !prev)}
+                              className="px-3 py-1.5 rounded-lg bg-[#C49A3A] hover:bg-[#A8812B] text-white border border-[#A8812B] text-xs font-bold cursor-pointer"
+                            >
+                              + Add Group Rooms
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Quick Multi-Room Picker Drawer */}
+                        {showQuickGroupPicker && (
+                          <div className="p-3 rounded-xl bg-white border-2 border-[#C49A3A] space-y-2.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-[#263449]">
+                                Select multiple available rooms for {formatDdmmyyyy(checkInDate)} → {formatDdmmyyyy(checkOutDate)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setShowQuickGroupPicker(false)}
+                                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {rooms
+                                .filter(r => isRoomTrulyAvailable(r, checkInDate, checkOutDate) && !groupRooms.some(gr => gr.roomNumber === r.number))
+                                .map(r => {
+                                  const checked = quickGroupSelectedRooms.includes(r.number);
+                                  return (
+                                    <label
+                                      key={r.number}
+                                      className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-bold cursor-pointer inline-flex items-center gap-1.5 ${
+                                        checked
+                                          ? 'bg-[#FDF8ED] border-[#C49A3A] text-[#8B691E]'
+                                          : 'bg-[#F4F6F9] border-[#DCE3EC] text-slate-700 hover:bg-slate-100'
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={e => {
+                                          if (e.target.checked) {
+                                            setQuickGroupSelectedRooms(prev => [...prev, r.number]);
+                                          } else {
+                                            setQuickGroupSelectedRooms(prev => prev.filter(n => n !== r.number));
+                                          }
+                                        }}
+                                        className="accent-[#B5822D]"
+                                      />
+                                      Rm {r.number} ({r.category} • ₹{r.rate})
+                                    </label>
+                                  );
+                                })}
+                            </div>
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleAddMultipleGroupRooms(quickGroupSelectedRooms)}
+                                className="px-3.5 py-1.5 rounded-lg bg-[#C49A3A] hover:bg-[#A8812B] border border-[#C49A3A] text-[#263449] text-xs font-bold cursor-pointer"
+                              >
+                                Add Selected Rooms ({quickGroupSelectedRooms.length})
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Group Rooms Table */}
+                        {groupRooms.length > 0 && (
+                          <div className="overflow-x-auto rounded-xl border border-[#DCE3EC] bg-white">
+                            <table className="w-full text-xs text-left">
+                              <thead className="bg-[#F4F6F9] text-[#263449] font-mono text-[10px] uppercase border-b border-[#DCE3EC]">
+                                <tr>
+                                  <th className="p-2.5">Room #</th>
+                                  <th className="p-2.5">Category</th>
+                                  <th className="p-2.5">Rate / Night</th>
+                                  <th className="p-2.5 text-center">Extra Bed</th>
+                                  <th className="p-2.5">Pax (A / C)</th>
+                                  <th className="p-2.5">Guest Name</th>
+                                  <th className="p-2.5 text-right">Room Total</th>
+                                  <th className="p-2.5 text-center">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-luxury-brown-100">
+                                {groupRooms.map(gr => {
+                                  const rmSubtotal =
+                                    (Number(gr.rate) || 0) * stayNights +
+                                    (gr.hasExtraBed ? (Number(gr.extraBedCount) || 1) * (Number(gr.extraBedRate) || 500) * stayNights : 0);
+                                  return (
+                                    <tr key={gr.id}>
+                                      <td className="p-2">
+                                        <select
+                                          value={gr.roomNumber}
+                                          onChange={e => handleUpdateGroupRoom(gr.id, 'roomNumber', e.target.value)}
+                                          className="px-2 py-1 border border-[#DCE3EC] rounded-lg font-mono font-bold text-xs bg-white"
+                                        >
+                                          {rooms.map(r => {
+                                            const takenByOtherRow = groupRooms.some(o => o.id !== gr.id && o.roomNumber === r.number);
+                                            const avail =
+                                              r.number === gr.roomNumber ||
+                                              (!takenByOtherRow && isRoomTrulyAvailable(r, checkInDate, checkOutDate));
+                                            return (
+                                              <option key={r.number} value={r.number} disabled={!avail}>
+                                                Rm {r.number} ({r.category})
+                                              </option>
+                                            );
+                                          })}
+                                        </select>
+                                      </td>
+                                      <td className="p-2 font-semibold text-slate-700">{gr.category}</td>
+                                      <td className="p-2">
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          value={gr.rate}
+                                          onChange={e => handleUpdateGroupRoom(gr.id, 'rate', Number(e.target.value) || 0)}
+                                          className="w-20 px-2 py-1 border border-[#DCE3EC] rounded-lg font-mono font-bold text-xs"
+                                        />
+                                      </td>
+                                      <td className="p-2 text-center">
+                                        <input
+                                          type="checkbox"
+                                          disabled={!isExtraBedAllowedForRoom(gr.roomNumber)}
+                                          title={!isExtraBedAllowedForRoom(gr.roomNumber) ? `Room ${gr.roomNumber} does not allow an extra bed` : 'Add extra bed'}
+                                          checked={isExtraBedAllowedForRoom(gr.roomNumber) ? gr.hasExtraBed : false}
+                                          onChange={e => handleUpdateGroupRoom(gr.id, 'hasExtraBed', e.target.checked)}
+                                          className={`w-4 h-4 accent-[#B5822D] ${isExtraBedAllowedForRoom(gr.roomNumber) ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}
+                                        />
+                                      </td>
+                                      <td className="p-2">
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="number"
+                                            min={1}
+                                            value={gr.adults}
+                                            onChange={e => {
+                                              userCountTouchedRef.current = true;
+                                              handleUpdateGroupRoom(gr.id, 'adults', Math.max(1, Number(e.target.value) || 1));
+                                            }}
+                                            className="w-11 px-1.5 py-1 border border-[#DCE3EC] rounded font-mono text-center"
+                                            title="Adults"
+                                          />
+                                          <span className="text-slate-400">/</span>
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            value={gr.children}
+                                            onChange={e => {
+                                              userCountTouchedRef.current = true;
+                                              handleUpdateGroupRoom(gr.id, 'children', Math.max(0, Number(e.target.value) || 0));
+                                            }}
+                                            className="w-11 px-1.5 py-1 border border-[#DCE3EC] rounded font-mono text-center"
+                                            title="Children"
+                                          />
+                                        </div>
+                                      </td>
+                                      <td className="p-2">
+                                        <input
+                                          type="text"
+                                          value={gr.assignedGuestName}
+                                          onChange={e => handleUpdateGroupRoom(gr.id, 'assignedGuestName', e.target.value)}
+                                          placeholder="Guest name"
+                                          className="w-full min-w-[110px] px-2 py-1 border border-[#DCE3EC] rounded-lg text-xs"
+                                        />
+                                      </td>
+                                      <td className="p-2 text-right font-mono font-bold text-[#263449]">
+                                        ₹{rmSubtotal.toLocaleString('en-IN')}
+                                      </td>
+                                      <td className="p-2 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveGroupRoom(gr.id)}
+                                          className="text-slate-600 hover:bg-amber-50 p-1 rounded cursor-pointer"
+                                          title="Remove Room"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                            <div className="px-3 py-2 bg-[#FDF8ED] border-t border-[#DCE3EC] flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                              <span className="text-[#263449] font-bold">
+                                Combined Group Charges ({groupRooms.length} Room{groupRooms.length > 1 ? 's' : ''} × {stayNights} Night{stayNights > 1 ? 's' : ''})
+                              </span>
+                              <span className="text-[#8B691E] font-extrabold">
+                                Rooms: ₹{effectiveRoomChargesTotal.toLocaleString('en-IN')}
+                                {effectiveExtraBedTotal > 0 ? ` + Extra Beds: ₹${effectiveExtraBedTotal.toLocaleString('en-IN')}` : ''}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* EXTRA PERSONS, OTHER & CUSTOM CHARGES */}
+                  <section className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowExtraChargesSection(prev => !prev)}
+                      className="w-full px-5 py-3.5 flex items-center justify-between gap-3 hover:bg-[#F4F6F9]/60 transition-colors cursor-pointer text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-[#FDF8ED] border border-[#E6CE9A] text-[#9E6E24] flex items-center justify-center shrink-0">
+                          <Users className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-sm font-serif font-bold text-[#263449] block">Extra persons &amp; custom charges</span>
+                          <span className="text-xs text-slate-500 block">Auto extra-person charge, rate override, other &amp; custom charges (Optional)</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {(effectiveExtraPersonChargesTotal + otherCharges + customExtraRowsTotal) > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-mono font-bold">
+                            ₹{(effectiveExtraPersonChargesTotal + otherCharges + customExtraRowsTotal).toLocaleString('en-IN')} added
+                          </span>
+                        )}
+                        <span className="px-3 py-1 rounded-lg border border-[#DCE3EC] bg-white text-xs font-bold text-[#263449] inline-flex items-center gap-1">
+                          {showExtraChargesSection ? 'Hide' : '+ Add Extra Charges'}
+                          {showExtraChargesSection ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                        </span>
+                      </div>
+                    </button>
+                    {showExtraChargesSection && (
+                      <div className="px-5 pb-5 pt-3 border-t border-[#DCE3EC] space-y-3.5">
+
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end p-3 rounded-xl bg-[#F4F6F9] border border-[#DCE3EC]">
+                      <div className="md:col-span-5 space-y-1">
+                        <label className="inline-flex items-center gap-2 text-xs font-bold text-[#263449] cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={applyExtraPersonCharge}
+                            onChange={e => {
+                              extraChargeTouchedRef.current = true;
+                              setApplyExtraPersonCharge(e.target.checked);
+                            }}
+                            className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
+                          />
+                          <span>Apply extra-person charge</span>
+                        </label>
+                        <span className="text-[11px] text-slate-500 block">
+                          {effectiveExtraGuestsCount} extra person(s) beyond base occupancy ({effectiveBaseOccupancy}) × {stayNights} night{stayNights === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <div className="md:col-span-4 space-y-1">
+                        <label className="text-[11px] font-bold text-[#263449] block">Rate override ₹ / person / night</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={extraPersonRateOverride}
+                          placeholder={`Room rate ₹${extraPersonCharge}`}
+                          onChange={e => setExtraPersonRateOverride(e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0))}
+                          className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                        />
+                      </div>
+                      <div className="md:col-span-3 text-right font-mono text-xs font-extrabold text-[#8B691E]">
+                        Total: ₹{effectiveExtraPersonChargesTotal.toLocaleString('en-IN')}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-[#263449] block">Other / auxiliary charge (₹)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={otherCharges || ''}
+                          placeholder="0"
+                          onChange={e => setOtherCharges(Math.max(0, Number(e.target.value) || 0))}
+                          className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                        />
+                      </div>
+                      <div className="flex items-end justify-between gap-2">
+                        <span className="text-[11px] text-slate-500">Meals, laundry, transport, decoration or any custom item with quantity &amp; price.</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCustomExtraRows(prev => [...prev, { id: String(Date.now()) + prev.length, label: '', qty: 1, rate: '' }])
+                          }
+                          className="px-3 py-1.5 rounded-lg bg-[#C49A3A] hover:bg-[#A8812B] text-white border border-[#A8812B] text-xs font-bold cursor-pointer whitespace-nowrap"
+                        >
+                          + Add Custom Charge
+                        </button>
+                      </div>
+                    </div>
+
+                    {customExtraRows.length > 0 && (
+                      <div className="space-y-2">
+                        {customExtraRows.map(row => (
+                          <div key={row.id} className="grid grid-cols-12 gap-2 items-center">
+                            <input
+                              type="text"
+                              value={row.label}
+                              placeholder="Item (e.g. Dinner, Laundry, Cab)"
+                              onChange={e => setCustomExtraRows(prev => prev.map(r => (r.id === row.id ? { ...r, label: e.target.value } : r)))}
+                              className="col-span-12 sm:col-span-5 px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs bg-white"
+                            />
+                            <input
+                              type="number"
+                              min={1}
+                              value={row.qty}
+                              placeholder="Qty"
+                              onChange={e => setCustomExtraRows(prev => prev.map(r => (r.id === row.id ? { ...r, qty: e.target.value === '' ? '' : Math.max(1, Number(e.target.value) || 1) } : r)))}
+                              className="col-span-3 sm:col-span-2 px-2 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold text-center bg-white"
+                            />
+                            <input
+                              type="number"
+                              min={0}
+                              value={row.rate}
+                              placeholder="Price ₹"
+                              onChange={e => setCustomExtraRows(prev => prev.map(r => (r.id === row.id ? { ...r, rate: e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0) } : r)))}
+                              className="col-span-4 sm:col-span-3 px-2 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                            />
+                            <span className="col-span-3 sm:col-span-1 text-right text-[11px] font-mono font-bold text-[#263449]">
+                              ₹{((Number(row.qty) || 0) * (Number(row.rate) || 0)).toLocaleString('en-IN')}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setCustomExtraRows(prev => prev.filter(r => r.id !== row.id))}
+                              className="col-span-2 sm:col-span-1 p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-amber-50 cursor-pointer inline-flex justify-center"
+                              title="Remove"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                    )}
+                  </section>
+
+                  {/* SECTION 2: GUEST DETAILS */}
+                  <section className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs p-5 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2.5">
+                      <h3 className="text-sm sm:text-base font-serif font-bold text-[#263449]">
+                        Guest details
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="relative w-56 sm:w-64">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <input
+                            type="text"
+                            value={guestSearchTerm}
+                            onChange={e => setGuestSearchTerm(e.target.value)}
+                            placeholder="Search guest by name, email or phone"
+                            className="w-full pl-8 pr-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs bg-[#F4F6F9]/60 focus:bg-white focus:border-[#C49A3A] focus:outline-none"
+                          />
+                          {guestSearchTerm.trim().length >= 2 && (() => {
+                            const q = guestSearchTerm.trim().toLowerCase();
+                            const matches = [
+                              ...checkins.map(c => ({
+                                id: c.id,
+                                name: c.guestName,
+                                mobile: c.mobile,
+                                email: c.emailAddress || '',
+                                address: c.address || '',
+                                city: c.city || '',
+                                state: c.state || '',
+                                country: c.country || 'India',
+                                idType: c.idType || 'Aadhaar',
+                                idNumber: c.idNumber || c.aadhaarNumber || c.passportNumber || '',
+                              })),
+                              ...bookings.map(b => ({
+                                id: b.id,
+                                name: b.guestName,
+                                mobile: b.mobile,
+                                email: b.email || '',
+                                address: b.address || '',
+                                city: '',
+                                state: '',
+                                country: 'India',
+                                idType: b.passportNumber ? 'Passport' : 'Aadhaar',
+                                idNumber: b.aadhaarNumber || b.passportNumber || '',
+                              })),
+                            ]
+                              .filter(
+                                (item, idx, arr) =>
+                                  (item.name.toLowerCase().includes(q) ||
+                                    item.mobile.toLowerCase().includes(q) ||
+                                    item.email.toLowerCase().includes(q)) &&
+                                  arr.findIndex(x => x.mobile === item.mobile && x.name === item.name) === idx
+                              )
+                              .slice(0, 5);
+                            if (matches.length === 0) return null;
+                            return (
+                              <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#C2CDD9] rounded-xl shadow-lg z-30 divide-y divide-slate-100 overflow-hidden">
+                                {matches.map(m => (
+                                  <button
+                                    key={`${m.id}-${m.mobile}`}
+                                    type="button"
+                                    onClick={() => {
+                                      setGuestName(m.name);
+                                      setMobile(m.mobile);
+                                      if (m.email) setEmailAddress(m.email);
+                                      if (m.address) setAddress(m.address);
+                                      if (m.city) setCity(m.city);
+                                      if (m.state) setState(m.state);
+                                      if (m.country) setCountry(m.country);
+                                      if (m.idNumber) {
+                                        setIdType(m.idType);
+                                        setIdNumber(m.idNumber);
+                                      }
+                                      setGuestSearchTerm('');
+                                      showToast(`Auto-filled returning guest profile: ${m.name}`, 'success');
+                                    }}
+                                    className="w-full text-left px-3 py-2 hover:bg-[#FDF8ED] text-xs cursor-pointer"
+                                  >
+                                    <div className="font-bold text-[#263449]">{m.name}</div>
+                                    <div className="text-[10px] font-mono text-slate-500">
+                                      {m.mobile} {m.email ? `• ${m.email}` : ''}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        <input
+                          id="redesign-id-proof-input"
+                          type="file"
+                          className="hidden"
+                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                          onChange={e => {
+                            if (e.target.files && e.target.files.length > 0) {
+                              const file = e.target.files[0];
+                              setIdProofFileName(file.name);
+                              const reader = new FileReader();
+                              reader.onload = () => setIdProofFileData(reader.result as string);
+                              reader.readAsDataURL(file);
+                              showToast(`ID proof attached: ${file.name}`, 'success');
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => document.getElementById('redesign-id-proof-input')?.click()}
+                          className={`px-3 py-1.5 rounded-lg border text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer ${
+                            idProofFileName
+                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                              : 'bg-white hover:bg-[#F4F6F9] border-[#DCE3EC] text-[#263449]'
+                          }`}
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          {idProofFileName ? 'ID Attached ✓' : 'Attach ID'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleBlankGrcPrint}
+                          className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#F4F6F9] border border-[#DCE3EC] text-xs font-bold text-[#263449] inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Printer className="w-3.5 h-3.5" /> Blank GRC
+                        </button>
                         <button
                           type="button"
                           onClick={() => {
@@ -5967,2233 +7918,1114 @@ export default function CheckInFormView({
                               setNationality('Foreign');
                             }
                           }}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                          className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold inline-flex items-center gap-1 cursor-pointer ${
                             isCFormRequired
-                              ? 'bg-[#9E2A2B] text-white border-[#9E2A2B]'
-                              : 'bg-white text-[#9E2A2B] border-rose-200 hover:bg-rose-50'
+                              ? 'bg-[#C49A3A] text-white border-[#C49A3A]'
+                              : 'bg-white text-[#8B691E] border-[#C49A3A]/50 hover:bg-[#FDF8ED]'
                           }`}
                         >
-                          <Globe className="w-3.5 h-3.5" /> C-Form (Foreign Tourist)
+                          <Globe className="w-3.5 h-3.5" /> C-Form
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Row 1: Full Name | Phone | Email */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">
+                          Full name / First name <span className="text-[#A8812B]">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={guestName}
+                          onChange={e => setGuestName(e.target.value)}
+                          placeholder="e.g. Rajesh Sharma"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs bg-white font-semibold focus:border-[#C49A3A] focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">
+                          Phone / Contact number <span className="text-[#A8812B]">*</span>
+                        </label>
+                        <input
+                          type="tel"
+                          required
+                          value={mobile}
+                          onChange={e => setMobile(e.target.value)}
+                          placeholder="+91 98XXXXXXXX"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">Email</label>
+                        <input
+                          type="email"
+                          value={emailAddress}
+                          onChange={e => setEmailAddress(e.target.value)}
+                          placeholder="guest@email.com"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs bg-white focus:border-[#C49A3A] focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Row 2: Address Line 1 | Address Line 2 */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">Address Line 1</label>
+                        <input
+                          type="text"
+                          value={address}
+                          onChange={e => setAddress(e.target.value)}
+                          placeholder="Flat / House No, Street name, Area"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs bg-white focus:border-[#C49A3A] focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">Address Line 2</label>
+                        <input
+                          type="text"
+                          value={addressLine2}
+                          onChange={e => setAddressLine2(e.target.value)}
+                          placeholder="Landmark, Suite, Apartment (Optional)"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs bg-white focus:border-[#C49A3A] focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Row 3: Country | State | City | Pincode */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">Country *</label>
+                        <input
+                          type="text"
+                          value={country}
+                          onChange={e => setCountry(e.target.value)}
+                          placeholder="India"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs bg-white font-semibold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">State</label>
+                        <input
+                          type="text"
+                          value={state}
+                          onChange={e => setState(e.target.value)}
+                          placeholder="e.g. Maharashtra"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">City</label>
+                        <input
+                          type="text"
+                          value={city}
+                          onChange={e => setCity(e.target.value)}
+                          placeholder="e.g. Mumbai"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">Pincode / Postal Code</label>
+                        <input
+                          type="text"
+                          value={pincode}
+                          onChange={e => setPincode(e.target.value)}
+                          placeholder="e.g. 400001"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Row 4: ID Proof Type | ID Number | Nationality | DOB */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">ID Proof Type</label>
+                        <select
+                          value={idType}
+                          onChange={e => setIdType(e.target.value)}
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-bold bg-white"
+                        >
+                          <option value="Aadhaar">Aadhaar Card</option>
+                          <option value="Passport">Passport</option>
+                          <option value="Driving License">Driving Licence</option>
+                          <option value="Voter ID">Voter ID</option>
+                          <option value="Other">Other Gov ID</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">ID Number / Ref</label>
+                        <input
+                          type="text"
+                          value={idNumber}
+                          onChange={e => setIdNumber(e.target.value.toUpperCase())}
+                          placeholder="Enter ID number"
+                          className="w-full px-3 py-2 border border-[#C5A059] rounded-xl text-xs font-mono font-bold bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">Nationality</label>
+                        <input
+                          type="text"
+                          value={nationality}
+                          onChange={e => setNationality(e.target.value)}
+                          placeholder="Indian"
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-[#263449] block">Date of Birth</label>
+                        <QuickDateInput
+                          value={dob}
+                          onChange={setDob}
+                          maxYear={new Date().getFullYear()}
+                          className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {idProofFileName && (
+                      <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
+                        <span className="font-mono font-bold text-emerald-900">✓ Attached ID Scan: {idProofFileName}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIdProofFileName('');
+                            setIdProofFileData('');
+                          }}
+                          className="text-slate-600 hover:underline font-bold cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Foreign Guest C-Form / FRRO Details */}
+                    {(isCFormRequired || (nationality && nationality.toLowerCase() !== 'indian' && nationality.toLowerCase() !== 'india')) && (
+                      <div className="p-3.5 rounded-xl bg-blue-50/50 border border-blue-200 space-y-2.5">
+                        <span className="text-[11px] font-mono font-bold uppercase text-blue-900 flex items-center gap-1.5">
+                          <Globe className="w-3.5 h-3.5" /> Bureau of Immigration (BoI) Form C / FRRO Details
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                          <input
+                            type="text"
+                            value={cFormPassportCountry}
+                            onChange={e => setCFormPassportCountry(e.target.value)}
+                            placeholder="Passport Country *"
+                            className="px-2.5 py-1.5 border border-blue-300 rounded-lg bg-white font-semibold"
+                          />
+                          <input
+                            type="text"
+                            value={cFormPassportNumber}
+                            onChange={e => setCFormPassportNumber(e.target.value.toUpperCase())}
+                            placeholder="Passport Number *"
+                            className="px-2.5 py-1.5 border border-blue-300 rounded-lg bg-white font-mono font-bold"
+                          />
+                          <input
+                            type="text"
+                            value={cFormVisaNumber}
+                            onChange={e => setCFormVisaNumber(e.target.value.toUpperCase())}
+                            placeholder="Visa Number *"
+                            className="px-2.5 py-1.5 border border-blue-300 rounded-lg bg-white font-mono font-bold"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ADDITIONAL GUEST DETAILS HEADER & CARDS */}
+                    <div className="pt-3 border-t border-[#DCE3EC] space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-mono font-extrabold uppercase tracking-wider text-[#263449]">
+                          ADDITIONAL GUEST DETAILS ({secondaryGuests.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleAddSecondaryGuest}
+                          className="px-3 py-1.5 rounded-lg bg-[#C49A3A] hover:bg-[#A8812B] text-white border border-[#A8812B] text-xs font-bold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          Add Guest <Plus className="w-3.5 h-3.5" />
                         </button>
                       </div>
 
-                      {/* Booking Type Radio Pills */}
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-luxury-brown-800 block">
-                          Booking type <span className="text-[#9E2A2B]">*</span>
-                        </label>
-                        <div className="flex flex-wrap gap-2.5">
-                          <label
-                            onClick={() => {
-                              setCheckInBookingKind('walkin');
-                              setCheckInMode('single');
-                              setSelectedBooking(null);
-                            }}
-                            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                              checkInBookingKind === 'walkin' && checkInMode === 'single' && !selectedBooking
-                                ? 'border-[#C49A3A] bg-[#FFF6DF] text-luxury-brown-950 shadow-2xs'
-                                : 'border-luxury-brown-200 bg-white text-slate-700 hover:bg-slate-50'
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="v3BookingType"
-                              checked={checkInBookingKind === 'walkin' && checkInMode === 'single' && !selectedBooking}
-                              onChange={() => {}}
-                              className="accent-[#B5822D]"
-                            />
-                            <span>Walk-in</span>
-                          </label>
-
-                          <label
-                            onClick={() => {
-                              setCheckInBookingKind('reservation');
-                              if (!selectedBooking || !(selectedBooking.bookedRooms && selectedBooking.bookedRooms.length > 1)) {
-                                setCheckInMode('single');
-                              }
-                            }}
-                            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                              checkInBookingKind === 'reservation' && checkInMode === 'single'
-                                ? 'border-[#C49A3A] bg-[#FFF6DF] text-luxury-brown-950 shadow-2xs'
-                                : 'border-luxury-brown-200 bg-white text-slate-700 hover:bg-slate-50'
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="v3BookingType"
-                              checked={checkInBookingKind === 'reservation' && checkInMode === 'single'}
-                              onChange={() => {}}
-                              className="accent-[#B5822D]"
-                            />
-                            <span>Existing Reservation</span>
-                          </label>
-
-                          <label
-                            onClick={() => {
-                              setCheckInBookingKind('group');
-                              setCheckInMode('group');
-                              if (groupRooms.length === 0) handleAddGroupRoom();
-                            }}
-                            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                              checkInBookingKind === 'group' || checkInMode === 'group'
-                                ? 'border-[#C49A3A] bg-[#FFF6DF] text-luxury-brown-950 shadow-2xs'
-                                : 'border-luxury-brown-200 bg-white text-slate-700 hover:bg-slate-50'
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="v3BookingType"
-                              checked={checkInBookingKind === 'group' || checkInMode === 'group'}
-                              onChange={() => {}}
-                              className="accent-[#B5822D]"
-                            />
-                            <span>Group Booking (Multi-Room)</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* Existing Reservation Queue & Summary Box */}
-                      {(checkInBookingKind !== 'walkin' || Boolean(selectedBooking)) && !editingCheckIn && (
-                        <div className="space-y-3 bg-[#FAF6EE] p-3.5 rounded-xl border border-[#D4AD50]">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <label className="text-xs font-mono text-[#8B691E] uppercase font-bold flex items-center gap-1.5">
-                              <UserCheck className="w-4 h-4 text-[#8B691E]" />
-                              <span>
-                                {arrivalQueueFilter === 'today'
-                                  ? `Today's Advance Arrivals (${todayEligibleReservations.length})`
-                                  : arrivalQueueFilter === 'date'
-                                  ? `Advance Arrivals for ${filterArrivalDate} (${dateEligibleReservations.length})`
-                                  : `All Advance Bookings (${eligibleReservations.length})`}
-                              </span>
-                            </label>
-                            <div className="flex flex-wrap items-center gap-2">
-                              {selectedBooking && (
-                                <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
-                                  ✓ Loaded: {selectedBooking.guestName} ({selectedBooking.id})
-                                </span>
-                              )}
-                              <div className="inline-flex items-center gap-1 rounded-lg border border-[#C49A3A]/50 bg-white p-1 text-[10px] font-mono">
-                                <button
-                                  type="button"
-                                  onClick={() => setArrivalQueueFilter('all')}
-                                  className={`px-2.5 py-1 rounded font-bold cursor-pointer transition-all ${
-                                    arrivalQueueFilter === 'all' ? 'bg-[#8B691E] text-white' : 'text-slate-700 hover:bg-amber-50'
-                                  }`}
-                                >
-                                  All ({eligibleReservations.length})
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setArrivalQueueFilter('today')}
-                                  className={`px-2.5 py-1 rounded font-bold cursor-pointer transition-all ${
-                                    arrivalQueueFilter === 'today' ? 'bg-[#8B691E] text-white' : 'text-slate-700 hover:bg-amber-50'
-                                  }`}
-                                >
-                                  Today ({todayEligibleReservations.length})
-                                </button>
-                                <div className="flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200">
-                                  <span className="text-[10px] font-bold uppercase text-slate-600">Date:</span>
-                                  <input
-                                    type="date"
-                                    value={filterArrivalDate}
-                                    onChange={(e) => {
-                                      setFilterArrivalDate(e.target.value);
-                                      setArrivalQueueFilter('date');
-                                    }}
-                                    className="bg-transparent border-none text-[11px] font-mono font-bold text-slate-900 focus:outline-none cursor-pointer"
-                                  />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            <div className="relative">
-                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                              <input
-                                type="text"
-                                value={resSearchQuery}
-                                onChange={(e) => setResSearchQuery(e.target.value)}
-                                placeholder="Booking reference, Name or Mobile..."
-                                className="w-full pl-8 pr-3 py-2 border border-luxury-brown-200 rounded-lg text-xs bg-white text-luxury-brown-950 font-mono"
-                              />
-                            </div>
-                            <div className="md:col-span-2">
-                              <select
-                                value={selectedBooking?.id || ''}
-                                onChange={(e) => {
-                                  const found = bookings.find((b) => b.id === e.target.value);
-                                  if (found) handleSelectAdvanceBooking(found);
-                                  else setSelectedBooking(null);
-                                }}
-                                className="w-full px-3 py-2 border border-luxury-brown-300 rounded-lg text-xs sm:text-sm bg-white text-luxury-brown-950 font-bold"
-                              >
-                                <option value="">
-                                  {filteredEligibleReservations.length === 0
-                                    ? arrivalQueueFilter === 'today'
-                                      ? "-- No Advance Bookings Arriving Today (Click 'All' to view others) --"
-                                      : '-- No Matching Pending Advance Bookings Found --'
-                                    : '-- Choose Advance Booked Guest to Auto-fill Check-In Form --'}
-                                </option>
-                                {filteredEligibleReservations.map((b) => (
-                                  <option key={b.id} value={b.id}>
-                                    {b.id} — {b.guestName} • Rm {b.roomNumber || 'TBD'} ({b.checkInDate} → {b.checkOutDate || 'Open'}) • 📞 {b.mobile} (Adv: ₹{Number(b.advanceAmount || 0).toLocaleString('en-IN')})
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Walk-In Auto Booking Ref & Lookup (NO manual Booking Status dropdown!) */}
-                      {effectiveMode === 'walkin' && !selectedBooking && !editingCheckIn && (
-                        <div className="bg-[#FAF6F0] border border-[#E6DCCF] rounded-xl p-3.5 space-y-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-xs font-mono text-[#8B691E] uppercase font-bold flex items-center gap-1.5">
-                              <FileText className="w-3.5 h-3.5 text-[#9E2A2B]" /> Walk-In Reference (Auto Status — Confirmed on Check-In)
-                            </span>
-                            <div className="relative w-full sm:w-72">
-                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                              <input
-                                type="text"
-                                value={walkInReservationLookup}
-                                onChange={(e) => setWalkInReservationLookup(e.target.value)}
-                                placeholder="Check Existing Reservation (Mobile / ID)..."
-                                className="w-full pl-8 pr-2.5 py-1 border border-luxury-brown-200 rounded-lg text-[11px] font-mono bg-white"
-                              />
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">
-                                Booking ID (Auto-Generated)
-                              </label>
-                              <input
-                                type="text"
-                                readOnly
-                                value={checkInMode === 'group' ? groupBookingId : walkInPreviewBookingId}
-                                className="w-full px-3 py-2 border border-luxury-brown-200 bg-white/80 rounded-lg text-xs font-mono font-bold text-[#8B691E]"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">
-                                Booking Date *
-                              </label>
-                              <input
-                                type="date"
-                                value={walkInBookingDate}
-                                onChange={(e) => setWalkInBookingDate(e.target.value)}
-                                className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-950 font-semibold"
-                              />
-                            </div>
-                          </div>
-
-                          {matchingExistingReservation && (
-                            <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                              <span className="text-xs text-amber-950">
-                                Existing Advance Reservation found: <strong>{matchingExistingReservation.id}</strong> ({matchingExistingReservation.guestName}, Rm {matchingExistingReservation.roomNumber || 'TBD'})
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  switchWorkflowTab('checkin');
-                                  handleSelectAdvanceBooking(matchingExistingReservation);
-                                  setWalkInReservationLookup('');
-                                }}
-                                className="px-3 py-1.5 bg-[#8B691E] hover:bg-[#725517] text-white rounded-lg text-xs font-bold shrink-0 cursor-pointer"
-                              >
-                                Load Reservation →
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Stay & Room Core 2-Column Grid (directstay-checkin-v3 format) */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {checkInMode === 'single' ? (
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">
-                              Room / Category <span className="text-[#9E2A2B]">*</span>
-                            </label>
-                            <select
-                              required={checkInMode === 'single'}
-                              value={selectedRoomNumber}
-                              onChange={(e) => setSelectedRoomNumber(e.target.value)}
-                              className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white text-luxury-brown-950 font-bold"
-                            >
-                              <option value="">-- Select Available Room --</option>
-                              {rooms
-                                .filter(r => isRoomTrulyAvailable(r) || (selectedBooking && selectedBooking.roomNumber === r.number))
-                                .map(r => (
-                                  <option key={r.id} value={r.number}>
-                                    {r.number} — {r.category} (₹{r.rate}/night)
-                                  </option>
-                                ))}
-                            </select>
-                            <p className="text-[11px] text-emerald-700 font-medium">
-                              {selectedRoomNumber
-                                ? `● Room ${selectedRoomNumber} (${roomType}) • Capacity: ${baseOccupancy} Base / ${selectedRoomMaxOccupancy} Max`
-                                : '● Live available room inventory'}
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">
-                              Group / Organization Name <span className="text-[#9E2A2B]">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              required={checkInMode === 'group'}
-                              value={groupName}
-                              onChange={(e) => setGroupName(e.target.value)}
-                              placeholder="e.g. Corporate Team / Family Group"
-                              className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-semibold"
-                            />
-                          </div>
-                        )}
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Booking source</label>
-                          <select
-                            value={walkInBookingSource}
-                            onChange={(e) => setWalkInBookingSource(e.target.value as BookingSource)}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white text-luxury-brown-950 font-semibold"
-                          >
-                            <option value="Walk-in">Direct / Walk-in</option>
-                            <option value="Phone">Phone</option>
-                            <option value="Corporate">Corporate</option>
-                            <option value="Booking.com">Booking.com</option>
-                            <option value="MakeMyTrip">MakeMyTrip</option>
-                            <option value="Goibibo">Goibibo</option>
-                            <option value="Agoda">Agoda</option>
-                            <option value="Other">Other OTA</option>
-                            <option value="Travel Agent">Travel Agent</option>
-                          </select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">
-                            Check-in date <span className="text-[#9E2A2B]">*</span>
-                          </label>
-                          <input
-                            type="date"
-                            required
-                            value={checkInDate}
-                            onChange={(e) => setCheckInDate(e.target.value)}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">
-                              Check-out date <span className="text-[#9E2A2B]">*</span>
-                            </label>
-                            {checkOutDate ? (
-                              <button
-                                type="button"
-                                onClick={() => setCheckOutDate('')}
-                                className="text-[10px] font-mono text-amber-700 hover:underline cursor-pointer"
-                              >
-                                Open Stay
-                              </button>
-                            ) : (
-                              <span className="text-[10px] font-mono text-amber-700 font-bold">Open Stay</span>
-                            )}
-                          </div>
-                          <input
-                            type="date"
-                            value={checkOutDate}
-                            onChange={(e) => setCheckOutDate(e.target.value)}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Check-in time</label>
-                          <input
-                            type="text"
-                            value={arrivalTime}
-                            onChange={(e) => setArrivalTime(e.target.value)}
-                            placeholder="e.g. 02:00 PM"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Check-out time</label>
-                          <input
-                            type="text"
-                            value={departureTime}
-                            onChange={(e) => setDepartureTime(e.target.value)}
-                            placeholder="e.g. 11:00 AM"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">
-                            Adults <span className="text-[#9E2A2B]">*</span>
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={20}
-                            required
-                            value={adults}
-                            onFocus={(e) => e.target.select()}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              if (raw === '') {
-                                setAdults('');
-                                return;
-                              }
-                              const ad = Math.max(1, parseInt(raw, 10) || 1);
-                              setAdults(ad);
-                              setMaleCount(Math.ceil(ad / 2));
-                              setFemaleCount(Math.floor(ad / 2));
-                            }}
-                            onBlur={() => {
-                              if (adults === '' || Number(adults) < 1) setAdults(1);
-                            }}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono font-bold"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Children</label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={20}
-                            value={children}
-                            onFocus={(e) => e.target.select()}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              if (raw === '') {
-                                setChildren('');
-                                return;
-                              }
-                              const ch = Math.max(0, parseInt(raw, 10) || 0);
-                              setChildren(ch);
-                              setChildCount(ch);
-                            }}
-                            onBlur={() => {
-                              if (children === '' || Number(children) < 0) setChildren(0);
-                            }}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono font-bold"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">
-                            Extra guests / persons <span className="text-[#9E2A2B]">*</span>
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={20}
-                            step={1}
-                            value={extraGuestExplicitCount}
-                            onChange={(e) => handleSyncExtraGuestRows(parseInt(e.target.value, 10) || 0)}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono font-bold"
-                          />
-                          <p className="text-[11px] text-slate-500">
-                            Works for Walk-in, Existing Reservation and Group Booking. Guest detail cards appear in Step 2.
-                          </p>
-                        </div>
-
-                        {checkInMode === 'single' ? (
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">
-                                Room price / night (₹) <span className="text-[#9E2A2B]">*</span>
-                              </label>
-                              <button
-                                type="button"
-                                onClick={handleRenewPrice}
-                                className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100/70 hover:bg-amber-200/80 px-2 py-0.5 rounded cursor-pointer"
-                              >
-                                ↺ Standard ₹{standardRate}
-                              </button>
-                            </div>
-                            <input
-                              type="number"
-                              min={0}
-                              step="any"
-                              value={roomRate}
-                              onChange={(e) => setRoomRate(Math.max(0, Number(e.target.value) || 0))}
-                              className="w-full px-3 py-2.5 border-2 border-[#C49A3A] rounded-xl text-sm bg-white font-mono font-bold text-luxury-brown-950"
-                            />
-                            <p className="text-[11px] text-slate-500">
-                              Edit to apply an agreed room rate before extras, discount and tax.
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">Combined group rate / night (₹)</label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={`₹${groupRoomChargesPerNight.toLocaleString('en-IN')} (${groupRooms.length} Rooms)`}
-                              className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-slate-50 font-mono font-bold text-luxury-brown-900"
-                            />
-                          </div>
-                        )}
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Total nights</label>
-                          <input
-                            type="number"
-                            readOnly
-                            value={stayNights}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-slate-50 font-mono font-bold text-slate-700"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Meal plan</label>
-                          <select
-                            value={mealPlan}
-                            onChange={(e) => setMealPlan(e.target.value as MealPlanType)}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-bold text-luxury-brown-950"
-                          >
-                            <option value="EP">EP (Room Only)</option>
-                            <option value="CP">CP (With Breakfast)</option>
-                            <option value="MAP">MAP (Breakfast + Dinner)</option>
-                            <option value="AP">AP (All Meals)</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Extra Guest Charge Box (directstay-checkin-v3 exact structure) */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl border border-[#EFDDBD] bg-gradient-to-r from-[#FFFAF0] to-[#FFFEFB]">
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">
-                            Extra guest rate / person / night (₹)
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            step="any"
-                            value={extraPersonCharge}
-                            onChange={(e) => setExtraPersonCharge(Math.max(0, Number(e.target.value) || 0))}
-                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white font-mono font-bold"
-                          />
-                          <p className="text-[11px] text-slate-500">
-                            Applied to the extra guest count above only if the charge checkbox below is turned on.
-                          </p>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Guest details</label>
-                          <div className="p-2.5 rounded-lg border border-dashed border-luxury-brown-200 bg-white text-xs text-slate-600">
-                            <strong className="text-luxury-brown-950 block">
-                              👤{' '}
-                              {extraGuestExplicitCount > 0
-                                ? `${extraGuestExplicitCount} extra guest${extraGuestExplicitCount === 1 ? '' : 's'} • ${
-                                    applyExtraPersonCharge ? 'chargeable' : 'complimentary'
-                                  }`
-                                : 'No extra guests added'}
-                            </strong>
-                            <span>Add names and identity information in Step 2.</span>
-                          </div>
-                        </div>
-
-                        <label className="md:col-span-2 inline-flex items-center gap-2.5 text-xs font-bold text-luxury-brown-900 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={applyExtraPersonCharge}
-                            onChange={(e) => setApplyExtraPersonCharge(e.target.checked)}
-                            className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
-                          />
-                          <span>Apply extra guest charge (turn off for complimentary guests)</span>
-                        </label>
-                      </div>
-
-                      {/* Group Multi-Room Allocation Block (Visible only when Group Booking is active) */}
-                      <div className="pt-2 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-extrabold uppercase tracking-wider text-luxury-brown-900 flex items-center gap-2">
-                            <span className="w-1 h-4 rounded bg-[#C49A3A] inline-block" />
-                            Room selection
-                          </span>
-                          <span className="px-2.5 py-1 rounded-full bg-[#F8ECD2] text-[#886122] text-[11px] font-mono font-extrabold">
-                            {checkInMode === 'group' ? `${groupRooms.length} room${groupRooms.length === 1 ? '' : 's'}` : '1 room'}
-                          </span>
-                        </div>
-
-                        {checkInMode !== 'group' ? (
-                          <p className="text-xs text-slate-500">
-                            Single bookings use one room. Select <strong>Group Booking (Multi-Room)</strong> above to allocate two or more rooms under one reservation.
-                          </p>
-                        ) : (
-                          <div className="space-y-3 bg-amber-50/30 border border-amber-200 p-4 rounded-xl">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div>
-                                <strong className="text-xs text-luxury-brown-950 block">Group booking — multi-room allocation</strong>
-                                <span className="text-[11px] text-slate-500">Each room has its own room number, nightly rate, and extra bed option.</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={handleAddGroupRoom}
-                                className="px-3 py-1.5 bg-luxury-brown-900 hover:bg-luxury-brown-800 text-luxury-gold-300 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
-                              >
-                                <Plus className="w-3.5 h-3.5" /> Add Room
-                              </button>
-                            </div>
-
-                            <div className="overflow-x-auto border border-luxury-brown-200 rounded-xl bg-white">
-                              <table className="w-full text-xs text-left">
-                                <thead className="bg-luxury-beige-100/50 border-b font-mono uppercase text-[10px] text-luxury-brown-800">
-                                  <tr>
-                                    <th className="p-2.5">Room #</th>
-                                    <th className="p-2.5">Category</th>
-                                    <th className="p-2.5">Price / Night (₹)</th>
-                                    <th className="p-2.5">Extra Bed?</th>
-                                    <th className="p-2.5">Total / Stay (₹)</th>
-                                    <th className="p-2.5">Assigned Guest</th>
-                                    <th className="p-2.5 text-center">Action</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-200">
-                                  {groupRooms.map((gr) => {
-                                    const grRoomObj = rooms.find(r => r.number === gr.roomNumber);
-                                    const canExtra = grRoomObj ? grRoomObj.allowExtraBed !== false : true;
-                                    const rowStayTotal =
-                                      (Number(gr.rate || 0) + (gr.hasExtraBed ? (Number(gr.extraBedCount) || 1) * Number(gr.extraBedRate || 0) : 0)) *
-                                      stayNights;
-                                    return (
-                                      <tr key={gr.id} className="hover:bg-amber-50/30">
-                                        <td className="p-2">
-                                          <select
-                                            value={gr.roomNumber}
-                                            onChange={(e) => handleUpdateGroupRoom(gr.id, 'roomNumber', e.target.value)}
-                                            className="px-2 py-1.5 border border-slate-300 rounded-lg font-bold text-xs bg-white"
-                                          >
-                                            {rooms
-                                              .filter(r => isRoomTrulyAvailable(r) || gr.roomNumber === r.number)
-                                              .map(r => (
-                                                <option key={r.number} value={r.number}>
-                                                  Rm {r.number} ({r.category})
-                                                </option>
-                                              ))}
-                                          </select>
-                                        </td>
-                                        <td className="p-2 text-slate-600 font-semibold">{gr.category}</td>
-                                        <td className="p-2 font-mono font-bold">
-                                          <input
-                                            type="number"
-                                            min={0}
-                                            value={gr.rate}
-                                            onChange={(e) => handleUpdateGroupRoom(gr.id, 'rate', Math.max(0, Number(e.target.value) || 0))}
-                                            className="w-24 px-2 py-1 border border-[#C49A3A] rounded-lg text-xs font-bold bg-white"
-                                          />
-                                        </td>
-                                        <td className="p-2 font-mono">
-                                          {!canExtra ? (
-                                            <span className="text-[10px] text-rose-700 font-bold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
-                                              ✕ Not Allowed
-                                            </span>
-                                          ) : (
-                                            <div className="flex items-center gap-1.5">
-                                              <input
-                                                type="checkbox"
-                                                checked={Boolean(gr.hasExtraBed)}
-                                                onChange={(e) => {
-                                                  const isChecked = e.target.checked;
-                                                  setGroupRooms(prev =>
-                                                    prev.map(item => {
-                                                      if (item.id !== gr.id) return item;
-                                                      const fallbackRate =
-                                                        Number(grRoomObj?.extraPersonCharge) > 0
-                                                          ? Number(grRoomObj?.extraPersonCharge)
-                                                          : 500;
-                                                      return {
-                                                        ...item,
-                                                        hasExtraBed: isChecked,
-                                                        extraBedCount: Number(item.extraBedCount) > 0 ? item.extraBedCount : 1,
-                                                        extraBedRate: Number(item.extraBedRate) > 0 ? item.extraBedRate : fallbackRate,
-                                                      };
-                                                    })
-                                                  );
-                                                }}
-                                                className="w-4 h-4 accent-[#9E2A2B] rounded cursor-pointer"
-                                              />
-                                              {gr.hasExtraBed && (
-                                                <input
-                                                  type="number"
-                                                  min={0}
-                                                  value={gr.extraBedRate}
-                                                  onChange={(e) =>
-                                                    handleUpdateGroupRoom(gr.id, 'extraBedRate', Math.max(0, Number(e.target.value) || 0))
-                                                  }
-                                                  className="w-16 px-1.5 py-0.5 border border-amber-300 rounded bg-amber-50/60 text-[11px] font-mono font-bold"
-                                                />
-                                              )}
-                                            </div>
-                                          )}
-                                        </td>
-                                        <td className="p-2 font-mono font-bold text-luxury-brown-950">
-                                          ₹{rowStayTotal.toLocaleString('en-IN')}
-                                        </td>
-                                        <td className="p-2">
-                                          <input
-                                            type="text"
-                                            placeholder="Guest Name"
-                                            value={gr.assignedGuestName}
-                                            onChange={(e) => handleUpdateGroupRoom(gr.id, 'assignedGuestName', e.target.value)}
-                                            className="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs"
-                                          />
-                                        </td>
-                                        <td className="p-2 text-center">
-                                          <button
-                                            type="button"
-                                            onClick={() => handleRemoveGroupRoom(gr.id)}
-                                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Travel Agent Commission (when Travel Agent source or partner selected) */}
-                      {(walkInBookingSource === 'Travel Agent' || Boolean(selectedAgentId)) && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-xl bg-[#FAF6F0] border border-[#E6DCCF]">
-                          <div>
-                            <label className="text-[11px] font-mono text-luxury-brown-700 block uppercase font-bold mb-1">
-                              Travel Agent Partner
-                            </label>
-                            <select
-                              value={selectedAgentId}
-                              onChange={(e) => {
-                                const agId = e.target.value;
-                                setSelectedAgentId(agId);
-                                const ag = travelAgents.find(a => a.id === agId);
-                                if (ag) {
-                                  setCommissionType(ag.commissionType || 'percentage');
-                                  setCommissionValue(Number(ag.commissionValue) || 0);
-                                } else {
-                                  setCommissionValue(0);
-                                }
-                              }}
-                              className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-lg text-xs font-bold bg-white"
-                            >
-                              <option value="">Select Travel Agent</option>
-                              {travelAgents.filter(a => a.status !== 'Inactive').map(ag => (
-                                <option key={ag.id} value={ag.id}>
-                                  {ag.agencyName ? `${ag.agencyName} (${ag.name})` : ag.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          {selectedAgentId && (
-                            <>
-                              <div>
-                                <label className="text-[11px] font-mono text-luxury-brown-700 block uppercase font-bold mb-1">
-                                  Commission Rate
-                                </label>
-                                <div className="flex gap-1.5">
-                                  <select
-                                    value={commissionType}
-                                    onChange={(e) => setCommissionType(e.target.value as 'percentage' | 'fixed')}
-                                    className="px-2 py-2 border border-luxury-brown-200 rounded-lg text-xs font-bold bg-white"
-                                  >
-                                    <option value="percentage">% of Tariff</option>
-                                    <option value="fixed">Fixed ₹</option>
-                                  </select>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    value={commissionValue}
-                                    onChange={(e) => setCommissionValue(Math.max(0, Number(e.target.value) || 0))}
-                                    className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white"
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex items-end">
-                                <div className="w-full px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-mono font-bold text-amber-900 flex justify-between">
-                                  <span>Agent Comm.:</span>
-                                  <span>₹{computedAgentCommission.toLocaleString('en-IN')}</span>
-                                </div>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ========================================================= */}
-                  {/* STEP 2: GUEST PROFILE & VERIFICATION                      */}
-                  {/* ========================================================= */}
-                  {wizardStep === 2 && (
-                    <div className="space-y-5 animate-fade-in">
-                      <div className="flex items-center gap-3 pb-3.5 border-b border-luxury-brown-100">
-                        <div className="w-9 h-9 rounded-xl bg-[#FFF3D7] border border-[#E6CE9A] text-[#9E6E24] flex items-center justify-center shrink-0">
-                          <Contact className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h2 className="text-base font-serif font-bold text-luxury-brown-950">Guest Profile &amp; Verification</h2>
-                          <p className="text-xs text-luxury-brown-600">Collect primary guest contact, KYC identity verification, and extra guest particulars.</p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">
-                            Full name <span className="text-[#9E2A2B]">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            value={guestName}
-                            onChange={(e) => setGuestName(e.target.value)}
-                            placeholder="e.g. Aarav Mehta"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-semibold"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">
-                            Mobile number <span className="text-[#9E2A2B]">*</span>
-                          </label>
-                          <input
-                            type="tel"
-                            required
-                            value={mobile}
-                            onChange={(e) => setMobile(e.target.value.replace(/\D/g, ''))}
-                            placeholder="10 digit mobile number"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono font-bold"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Email (optional)</label>
-                          <input
-                            type="email"
-                            value={emailAddress}
-                            onChange={(e) => setEmailAddress(e.target.value)}
-                            placeholder="guest@example.com"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Gender (optional)</label>
-                          <select
-                            value={primaryGender}
-                            onChange={(e) => setPrimaryGender(e.target.value)}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-medium"
-                          >
-                            <option value="">Not specified</option>
-                            <option value="Male">Male</option>
-                            <option value="Female">Female</option>
-                            <option value="Other">Other</option>
-                          </select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">
-                            Nationality <span className="text-[#9E2A2B]">*</span>
-                          </label>
-                          <select
-                            value={nationality.toLowerCase() === 'indian' ? 'Indian' : 'Foreign'}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === 'Indian') {
-                                setNationality('Indian');
-                                setCountry('India');
-                                setIsCFormRequired(false);
-                              } else {
-                                setNationality('Foreign');
-                                setIsCFormRequired(true);
-                              }
-                            }}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-bold"
-                          >
-                            <option value="Indian">Indian</option>
-                            <option value="Foreign">Foreign national (Form C / FRRO)</option>
-                          </select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">City</label>
-                          <input
-                            type="text"
-                            value={city}
-                            onChange={(e) => setCity(e.target.value)}
-                            placeholder="Guest city"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">State / Region</label>
-                          <input
-                            type="text"
-                            value={state}
-                            onChange={(e) => setState(e.target.value)}
-                            placeholder="State / Region"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Date of Birth (D.O.B)</label>
-                          <QuickDateInput
-                            value={dob}
-                            onChange={setDob}
-                            maxYear={new Date().getFullYear()}
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Company Name (optional)</label>
-                          <input
-                            type="text"
-                            value={companyName}
-                            onChange={(e) => setCompanyName(e.target.value)}
-                            placeholder="e.g. Acme Corp"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Purpose of Visit</label>
-                          <input
-                            type="text"
-                            value={purposeOfVisit}
-                            onChange={(e) => setPurposeOfVisit(e.target.value)}
-                            placeholder="Leisure / Business / Official"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Coming From</label>
-                          <input
-                            type="text"
-                            value={comingFrom}
-                            onChange={(e) => setComingFrom(e.target.value)}
-                            placeholder="Origin city"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Going To (Next Dest.)</label>
-                          <input
-                            type="text"
-                            value={goingTo}
-                            onChange={(e) => setGoingTo(e.target.value)}
-                            placeholder="Next destination"
-                            className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white"
-                          />
-                        </div>
-
-                        <div className="space-y-1 md:col-span-2">
-                          <label className="text-xs font-bold text-luxury-brown-800 block">Address</label>
-                          <textarea
-                            rows={2}
-                            value={address}
-                            onChange={(e) => setAddress(e.target.value)}
-                            placeholder="Address provided by guest"
-                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-sm bg-white"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Identity Check */}
-                      <div className="pt-2 space-y-3">
-                        <span className="text-xs font-extrabold uppercase tracking-wider text-luxury-brown-900 flex items-center gap-2">
-                          <span className="w-1 h-4 rounded bg-[#C49A3A] inline-block" />
-                          Identity check
-                        </span>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">
-                              ID proof type <span className="text-[#9E2A2B]">*</span>
-                            </label>
-                            <select
-                              value={idType}
-                              onChange={(e) => setIdType(e.target.value)}
-                              className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-bold"
-                            >
-                              <option value="Aadhaar">Aadhaar Card</option>
-                              <option value="Passport">Passport</option>
-                              <option value="Driving License">Driving Licence</option>
-                              <option value="Voter ID">Voter ID</option>
-                              <option value="Other">Other accepted ID</option>
-                            </select>
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">ID Number / Reference</label>
-                            <input
-                              type="text"
-                              value={idNumber}
-                              onChange={(e) => setIdNumber(e.target.value.toUpperCase())}
-                              placeholder="Enter ID reference / number"
-                              className="w-full px-3 py-2.5 border border-[#C5A059] rounded-xl text-sm bg-white font-mono font-bold"
-                            />
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <label className="text-xs font-bold text-luxury-brown-800 block mb-1.5">Optional ID scan upload</label>
+                      {secondaryGuests.length > 0 && (
+                        <div className="space-y-2.5">
+                          {secondaryGuests.map((sg, idx) => (
                             <div
-                              onDragOver={(e) => { e.preventDefault(); setIsDraggingFile(true); }}
-                              onDragLeave={() => setIsDraggingFile(false)}
-                              onDrop={(e) => {
-                                e.preventDefault();
-                                setIsDraggingFile(false);
-                                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                                  const file = e.dataTransfer.files[0];
-                                  setIdProofFileName(file.name);
-                                  const reader = new FileReader();
-                                  reader.onload = () => setIdProofFileData(reader.result as string);
-                                  reader.readAsDataURL(file);
-                                }
-                              }}
-                              onClick={() => document.getElementById('id-proof-file-input')?.click()}
-                              className={`border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all ${
-                                isDraggingFile ? 'border-[#C5A059] bg-[#C5A059]/10' : 'border-luxury-brown-200 hover:border-[#C5A059] bg-[#FAF7F2]/50'
-                              }`}
+                              key={idx}
+                              className="p-3 rounded-xl bg-[#F4F6F9] border border-[#DCE3EC] grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end"
                             >
-                              <input
-                                id="id-proof-file-input"
-                                type="file"
-                                className="hidden"
-                                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                                onChange={(e) => {
-                                  if (e.target.files && e.target.files.length > 0) {
-                                    const file = e.target.files[0];
-                                    setIdProofFileName(file.name);
-                                    const reader = new FileReader();
-                                    reader.onload = () => setIdProofFileData(reader.result as string);
-                                    reader.readAsDataURL(file);
-                                  }
-                                }}
-                              />
-                              <p className="text-xs font-bold text-luxury-brown-950">
-                                {idProofFileName ? `✓ Attached: ${idProofFileName}` : 'Click or Drag & Drop Guest ID Proof (PDF, JPG, PNG)'}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Foreign Guest Form C / FRRO Section */}
-                      {(isCFormRequired || (nationality && nationality.toLowerCase() !== 'indian')) && (
-                        <div className="p-4 border border-blue-200 bg-blue-50/40 rounded-xl space-y-3">
-                          <div className="flex items-center justify-between border-b border-blue-200 pb-2">
-                            <span className="text-xs font-mono font-bold text-blue-900 uppercase flex items-center gap-1.5">
-                              <Globe className="w-4 h-4 text-blue-700" /> Bureau of Immigration (BoI) Form C / FRRO Details
-                            </span>
-                            <span className="text-[10px] font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold">Foreign National</span>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-mono text-blue-950 font-bold uppercase block">Country / Nationality *</label>
-                              <input
-                                type="text"
-                                value={cFormPassportCountry}
-                                onChange={(e) => {
-                                  setCFormPassportCountry(e.target.value);
-                                  setNationality(e.target.value || 'Foreign');
-                                }}
-                                placeholder="e.g. USA / UK / France"
-                                className="w-full px-2.5 py-1.5 border border-blue-300 rounded-lg bg-white font-bold"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-mono text-blue-950 font-bold uppercase block">Passport Number *</label>
-                              <input
-                                type="text"
-                                value={cFormPassportNumber}
-                                onChange={(e) => setCFormPassportNumber(e.target.value.toUpperCase())}
-                                placeholder="Passport No."
-                                className="w-full px-2.5 py-1.5 border border-blue-300 rounded-lg bg-white font-mono font-bold"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-mono text-blue-950 font-bold uppercase block">Passport Expiry *</label>
-                              <input
-                                type="date"
-                                value={cFormPassportExpiryDate}
-                                onChange={(e) => setCFormPassportExpiryDate(e.target.value)}
-                                className="w-full px-2.5 py-1.5 border border-blue-300 rounded-lg bg-white font-mono"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-mono text-blue-950 font-bold uppercase block">Visa Number *</label>
-                              <input
-                                type="text"
-                                value={cFormVisaNumber}
-                                onChange={(e) => setCFormVisaNumber(e.target.value.toUpperCase())}
-                                placeholder="Visa No."
-                                className="w-full px-2.5 py-1.5 border border-blue-300 rounded-lg bg-white font-mono font-bold"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-mono text-blue-950 font-bold uppercase block">Visa Type</label>
-                              <select
-                                value={cFormVisaType}
-                                onChange={(e) => setCFormVisaType(e.target.value)}
-                                className="w-full px-2.5 py-1.5 border border-blue-300 rounded-lg bg-white font-semibold"
-                              >
-                                <option value="Tourist">Tourist</option>
-                                <option value="Business">Business</option>
-                                <option value="Medical">Medical</option>
-                                <option value="Employment">Employment</option>
-                                <option value="Student">Student</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-mono text-blue-950 font-bold uppercase block">Port of Arrival in India</label>
-                              <input
-                                type="text"
-                                value={cFormPortOfArrival}
-                                onChange={(e) => setCFormPortOfArrival(e.target.value)}
-                                placeholder="e.g. IGI Airport New Delhi"
-                                className="w-full px-2.5 py-1.5 border border-blue-300 rounded-lg bg-white"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Extra Guest Personal Details (Bi-directionally synced with Step 1 count) */}
-                      <div className="pt-4 border-t border-luxury-brown-100 space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <h3 className="text-sm font-serif font-bold text-luxury-brown-950 flex items-center gap-2">
-                              👥 Extra Guest Personal Details
-                              <span className="px-2.5 py-0.5 rounded-full bg-[#F8ECD2] text-[#886122] text-[11px] font-mono font-bold">
-                                {secondaryGuests.length} guest{secondaryGuests.length === 1 ? '' : 's'}
-                              </span>
-                            </h3>
-                            <p className="text-xs text-slate-500">
-                              Provide a separate name and contact/ID record for each extra person. Synced with Step 1 count.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={handleAddSecondaryGuest}
-                            className="px-3.5 py-1.5 bg-luxury-brown-900 hover:bg-luxury-brown-800 text-luxury-gold-300 font-bold rounded-xl text-xs flex items-center gap-1 cursor-pointer"
-                          >
-                            <Plus className="w-3.5 h-3.5" /> Add Extra Guest
-                          </button>
-                        </div>
-
-                        {secondaryGuests.length === 0 ? (
-                          <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-300 text-xs text-slate-500">
-                            No extra guest selected. Click <strong>+ Add Extra Guest</strong> here or adjust the count in Step 1 (Stay &amp; Room).
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {secondaryGuests.map((sg, idx) => (
-                              <div key={idx} className="p-3.5 rounded-xl bg-[#FAF7F2] border border-luxury-brown-200 space-y-2.5">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-mono font-extrabold text-[#986B2B]">Extra Guest #{idx + 1}</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveSecondaryGuest(idx)}
-                                    className="px-2 py-1 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100 cursor-pointer"
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2.5">
-                                  <div className="md:col-span-2 space-y-0.5">
-                                    <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">Full name *</label>
-                                    <input
-                                      type="text"
-                                      required
-                                      value={sg.fullName}
-                                      onChange={(e) => handleSecondaryGuestChange(idx, 'fullName', e.target.value)}
-                                      placeholder="Full name"
-                                      className="w-full px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs bg-white font-semibold"
-                                    />
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">Mobile (opt)</label>
-                                    <input
-                                      type="tel"
-                                      value={sg.mobile || ''}
-                                      onChange={(e) => handleSecondaryGuestChange(idx, 'mobile', e.target.value.replace(/\D/g, ''))}
-                                      placeholder="10-digit"
-                                      className="w-full px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs bg-white font-mono"
-                                    />
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">Age / Gender</label>
-                                    <div className="flex gap-1">
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        max={120}
-                                        value={sg.age ?? ''}
-                                        onChange={(e) => handleSecondaryGuestChange(idx, 'age', e.target.value)}
-                                        placeholder="Age"
-                                        className="w-14 px-2 py-1.5 border border-luxury-brown-200 rounded-lg text-xs bg-white font-mono"
-                                      />
-                                      <select
-                                        value={sg.gender || ''}
-                                        onChange={(e) => handleSecondaryGuestChange(idx, 'gender', e.target.value)}
-                                        className="w-full px-1.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs bg-white"
-                                      >
-                                        <option value="">Gender</option>
-                                        <option value="Male">M</option>
-                                        <option value="Female">F</option>
-                                        <option value="Other">O</option>
-                                      </select>
-                                    </div>
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">ID Type</label>
-                                    <select
-                                      value={sg.idType || 'Aadhaar'}
-                                      onChange={(e) => handleSecondaryGuestChange(idx, 'idType', e.target.value)}
-                                      className="w-full px-2 py-1.5 border border-luxury-brown-200 rounded-lg text-xs bg-white font-semibold"
-                                    >
-                                      <option value="Aadhaar">Aadhaar</option>
-                                      <option value="Passport">Passport</option>
-                                      <option value="Driving License">Driving Licence</option>
-                                      <option value="Voter ID">Voter ID</option>
-                                    </select>
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">ID Ref / No.</label>
-                                    <input
-                                      type="text"
-                                      value={sg.idNumber || ''}
-                                      onChange={(e) => handleSecondaryGuestChange(idx, 'idNumber', e.target.value.toUpperCase())}
-                                      placeholder="ID Number"
-                                      className="w-full px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs bg-white font-mono font-bold"
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ========================================================= */}
-                  {/* STEP 3: EXTRA SERVICES & ADD-ONS                          */}
-                  {/* ========================================================= */}
-                  {wizardStep === 3 && (
-                    <div className="space-y-5 animate-fade-in">
-                      <div className="flex items-center gap-3 pb-3.5 border-b border-luxury-brown-100">
-                        <div className="w-9 h-9 rounded-xl bg-[#FFF3D7] border border-[#E6CE9A] text-[#9E6E24] flex items-center justify-center shrink-0">
-                          <Sparkles className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h2 className="text-base font-serif font-bold text-luxury-brown-950">Extra Services &amp; Add-ons</h2>
-                          <p className="text-xs text-luxury-brown-600">Choose extra mattress, complimentary water bottles, hotel services, and custom add-ons.</p>
-                        </div>
-                      </div>
-
-                      <div className="p-3 rounded-xl bg-sky-50/70 border border-sky-200 text-xs text-sky-950">
-                        Extra guest count, rate and complimentary/chargeable status are managed in <strong>Step 1</strong>. Every extra guest&apos;s personal details appear in <strong>Step 2</strong>, so charges are never added twice.
-                      </div>
-
-                      {/* Single-Room Extra Mattress / Bed Option */}
-                      {checkInMode === 'single' && (() => {
-                        const curRoomObj = rooms.find(r => r.number === selectedRoomNumber);
-                        const canProvideExtraBed = curRoomObj ? curRoomObj.allowExtraBed !== false : true;
-                        if (!canProvideExtraBed) {
-                          return (
-                            <div className="bg-rose-50/70 border border-rose-200 px-3.5 py-2.5 rounded-xl flex items-center justify-between">
-                              <span className="text-xs font-mono font-bold text-rose-900">Extra Bed / Mattress: NOT ALLOWED</span>
-                              <span className="text-[11px] text-rose-700 italic">Room {selectedRoomNumber} is configured without extra bed space.</span>
-                            </div>
-                          );
-                        }
-                        return (
-                          <div className="p-3.5 rounded-xl bg-[#FFFAF0] border border-[#E6BF75] space-y-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <label className="inline-flex items-center gap-2.5 text-xs font-bold text-luxury-brown-950 cursor-pointer">
+                              <div className="sm:col-span-3 space-y-1">
+                                <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">
+                                  Guest #{idx + 1} Full Name *
+                                </label>
                                 <input
-                                  type="checkbox"
-                                  checked={hasExtraBed}
-                                  onChange={(e) => setHasExtraBed(e.target.checked)}
-                                  className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
+                                  type="text"
+                                  value={sg.fullName}
+                                  onChange={e => handleUpdateSecondaryGuest(idx, 'fullName', e.target.value)}
+                                  placeholder="Accompanying guest name"
+                                  className="w-full px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs bg-white font-semibold"
                                 />
-                                <span>Extra Mattress / Bed (per night)</span>
-                              </label>
-                              {hasExtraBed && (
-                                <span className="text-xs font-mono font-bold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded">
-                                  + ₹{extraBedTotal.toLocaleString('en-IN')} ({stayNights} Night{stayNights === 1 ? '' : 's'})
-                                </span>
-                              )}
-                            </div>
-                            {hasExtraBed && (
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-amber-200/70">
-                                <div className="space-y-1">
-                                  <label className="text-[10px] font-mono uppercase font-bold text-amber-900 block">Mattress Quantity</label>
+                              </div>
+                              <div className="sm:col-span-2 space-y-1">
+                                <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">Mobile</label>
+                                <input
+                                  type="tel"
+                                  value={sg.mobile || ''}
+                                  onChange={e => handleUpdateSecondaryGuest(idx, 'mobile', e.target.value)}
+                                  placeholder="Phone"
+                                  className="w-full px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono bg-white"
+                                />
+                              </div>
+                              <div className="sm:col-span-2 space-y-1">
+                                <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">Age / Gender</label>
+                                <div className="grid grid-cols-2 gap-1">
                                   <input
                                     type="number"
                                     min={1}
-                                    max={4}
-                                    value={extraBedCount}
-                                    onChange={(e) => setExtraBedCount(Math.max(1, Number(e.target.value) || 1))}
-                                    className="w-full px-3 py-1.5 border border-amber-300 rounded-lg text-xs bg-white font-mono font-bold"
+                                    value={sg.age ?? ''}
+                                    onChange={e => handleUpdateSecondaryGuest(idx, 'age', e.target.value)}
+                                    placeholder="Age"
+                                    className="w-full px-2 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono bg-white"
                                   />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[10px] font-mono uppercase font-bold text-amber-900 block">Rate / Night (₹)</label>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    value={extraBedRate}
-                                    onChange={(e) => setExtraBedRate(Math.max(0, Number(e.target.value) || 0))}
-                                    className="w-full px-3 py-1.5 border border-amber-300 rounded-lg text-xs bg-white font-mono font-bold"
-                                  />
+                                  <select
+                                    value={sg.gender || 'Male'}
+                                    onChange={e => handleUpdateSecondaryGuest(idx, 'gender', e.target.value)}
+                                    className="w-full px-1 py-1.5 border border-[#DCE3EC] rounded-lg text-[11px] bg-white"
+                                  >
+                                    <option value="Male">M</option>
+                                    <option value="Female">F</option>
+                                    <option value="Other">O</option>
+                                  </select>
                                 </div>
                               </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-
-                      {/* Complimentary Water Bottles (Inventory Synced) */}
-                      <div className="p-3.5 rounded-xl bg-sky-50/70 border border-sky-200 flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <span className="text-xs font-bold text-sky-950 block">💧 Complimentary Water Bottles (Free ₹0)</span>
-                          <span className="text-[11px] text-slate-600">
-                            Inventory Stock:{' '}
-                            <strong className={(waterBottleInventoryProduct?.currentStock ?? 0) === 0 ? 'text-rose-600' : 'text-emerald-700'}>
-                              {waterBottleInventoryProduct?.currentStock ?? 0} Bottles Available
-                            </strong>
-                          </span>
-                        </div>
-                        <div className="flex items-center border border-sky-300 rounded-lg bg-white overflow-hidden">
-                          <button
-                            type="button"
-                            onClick={() => setComplimentaryWaterBottles(prev => Math.max(0, prev - 1))}
-                            className="px-3 py-1.5 text-slate-700 hover:bg-sky-100 font-bold cursor-pointer"
-                          >
-                            −
-                          </button>
-                          <span className="px-3.5 py-1.5 font-mono font-bold text-sm text-sky-950">{complimentaryWaterBottles}</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const avail = Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0));
-                              if (complimentaryWaterBottles >= avail) {
-                                showToast(
-                                  avail <= 0
-                                    ? 'Water Bottle stock in Inventory is 0. Please add stock in Inventory before allocating bottles.'
-                                    : `Only ${avail} water bottle(s) available in Inventory.`,
-                                  'error'
-                                );
-                                return;
-                              }
-                              setComplimentaryWaterBottles(prev => prev + 1);
-                            }}
-                            className="px-3 py-1.5 text-slate-700 hover:bg-sky-100 font-bold cursor-pointer"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Early Check-In Surcharge Option */}
-                      {earlyCheckInInfo.isEarly && (
-                        <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <strong className="text-xs text-amber-950 block">
-                              ⚡ Early Check-In ({earlyCheckInInfo.earlyHours}h before {hotelSettings?.checkInTime || '12:00 PM'})
-                            </strong>
-                            <span className="text-[11px] text-slate-600">Default is waived (₹0) so agreed room tariff stays exact unless ticked.</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <label className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-amber-300 rounded-lg cursor-pointer text-xs font-bold">
-                              <input
-                                type="checkbox"
-                                checked={applyEarlyCheckInCharge}
-                                onChange={(e) => setApplyEarlyCheckInCharge(e.target.checked)}
-                                className="w-4 h-4 accent-amber-600 cursor-pointer"
-                              />
-                              <span>Apply Early Check-In</span>
-                            </label>
-                            {applyEarlyCheckInCharge && (
-                              <input
-                                type="number"
-                                min={0}
-                                value={earlyCheckInCustomRate !== '' ? earlyCheckInCustomRate : earlyCheckInInfo.chargeAmount}
-                                onChange={(e) => setEarlyCheckInCustomRate(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))}
-                                className="w-24 px-2 py-1.5 border border-amber-300 rounded-lg text-xs font-mono font-bold bg-white"
-                              />
-                            )}
-                          </div>
+                              <div className="sm:col-span-2 space-y-1">
+                                <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">ID Type</label>
+                                <select
+                                  value={sg.idType || 'Aadhaar'}
+                                  onChange={e => handleUpdateSecondaryGuest(idx, 'idType', e.target.value)}
+                                  className="w-full px-2 py-1.5 border border-[#DCE3EC] rounded-lg text-xs bg-white font-semibold"
+                                >
+                                  <option value="Aadhaar">Aadhaar</option>
+                                  <option value="Passport">Passport</option>
+                                  <option value="Driving License">DL</option>
+                                  <option value="Voter ID">Voter ID</option>
+                                </select>
+                              </div>
+                              <div className="sm:col-span-2 space-y-1">
+                                <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">ID Number</label>
+                                <input
+                                  type="text"
+                                  value={sg.idNumber || ''}
+                                  onChange={e => handleUpdateSecondaryGuest(idx, 'idNumber', e.target.value.toUpperCase())}
+                                  placeholder="ID No."
+                                  className="w-full px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono bg-white"
+                                />
+                              </div>
+                              <div className="sm:col-span-1 flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveSecondaryGuest(idx)}
+                                  className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-amber-50 cursor-pointer"
+                                  title="Remove Extra Guest"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
+                    </div>
+                  </section>
 
-                      {/* Hotel Configured Extra Services Grid */}
-                      <div className="space-y-2.5">
-                        <span className="text-xs font-extrabold uppercase tracking-wider text-luxury-brown-900 flex items-center gap-2">
-                          <span className="w-1 h-4 rounded bg-[#C49A3A] inline-block" />
-                          Extra services
+                  {/* SECTION 3: COLLAPSIBLE PACKAGES & ADD-ONS */}
+                  <section className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowPackagesSection(prev => !prev)}
+                      className="w-full px-5 py-3.5 flex items-center justify-between gap-3 hover:bg-[#F4F6F9]/60 transition-colors cursor-pointer text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-[#FDF8ED] border border-[#E6CE9A] text-[#9E6E24] flex items-center justify-center shrink-0">
+                          <Sparkles className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-sm font-serif font-bold text-[#263449] block">
+                            Packages &amp; add-ons
+                          </span>
+                          <span className="text-xs text-slate-500 block">
+                            Attach hotel services, complimentary water bottles, early check-in &amp; custom add-ons (Optional)
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {(selectedServiceIds.length > 0 || customAddonTotal > 0 || earlyCheckInCharge > 0) && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-mono font-bold">
+                            ₹{(servicesTotal + customAddonTotal + earlyCheckInCharge).toLocaleString('en-IN')} added
+                          </span>
+                        )}
+                        <span className="px-3 py-1 rounded-lg border border-[#DCE3EC] bg-white text-xs font-bold text-[#263449] inline-flex items-center gap-1">
+                          {showPackagesSection ? 'Hide' : '+ Add Packages & Add-ons'}
+                          {showPackagesSection ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                         </span>
-                        {serviceCatalog.length === 0 ? (
-                          <p className="text-xs italic text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                            No catalog services configured yet under Guest Services. You can add any Custom Add-On right below.
-                          </p>
-                        ) : (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                            {serviceCatalog.map((s) => {
+                      </div>
+                    </button>
+
+                    {showPackagesSection && (
+                      <div className="px-5 pb-5 pt-2 border-t border-[#DCE3EC] space-y-4">
+                        {/* Configured Hotel Services */}
+                        {serviceCatalog.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            {serviceCatalog.map(s => {
                               const sid = String(s.id);
-                              const checked = selectedServiceIds.includes(sid);
+                              const isSelected = selectedServiceIds.includes(sid);
+                              const unitAmt = serviceUnitOf(s);
                               const qty = Math.max(1, Number(serviceQtyMap[sid] ?? 1) || 1);
                               return (
                                 <div
                                   key={sid}
-                                  className={`grid grid-cols-[auto_minmax(0,1fr)_72px] items-center gap-2.5 p-3 rounded-xl border transition-all ${
-                                    checked ? 'bg-[#FFFAF0] border-[#E6BF75]' : 'bg-white border-luxury-brown-200'
+                                  className={`p-3 rounded-xl border flex items-center justify-between gap-2 ${
+                                    isSelected ? 'bg-[#FDF8ED] border-[#C49A3A]' : 'bg-[#F4F6F9]/50 border-[#DCE3EC]'
                                   }`}
                                 >
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={(e) =>
-                                      setSelectedServiceIds(prev =>
-                                        e.target.checked ? [...prev, sid] : prev.filter(x => x !== sid)
-                                      )
-                                    }
-                                    className="w-4 h-4 accent-[#B5822D] cursor-pointer"
-                                  />
-                                  <div>
-                                    <strong className="text-xs text-luxury-brown-950 block">{s.serviceName}</strong>
-                                    <span className="text-[11px] font-mono text-slate-500">₹{serviceAmountOf(s).toLocaleString('en-IN')} / unit</span>
-                                  </div>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={100}
-                                    disabled={!checked}
-                                    value={qty}
-                                    onChange={(e) =>
-                                      setServiceQtyMap(prev => ({
-                                        ...prev,
-                                        [sid]: Math.max(1, parseInt(e.target.value, 10) || 1),
-                                      }))
-                                    }
-                                    className="w-full px-2 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold text-center bg-white disabled:bg-slate-100 disabled:text-slate-400"
-                                  />
+                                  <label className="flex items-center gap-2 cursor-pointer flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={e => {
+                                        if (e.target.checked) setSelectedServiceIds(prev => [...prev, sid]);
+                                        else setSelectedServiceIds(prev => prev.filter(id => id !== sid));
+                                      }}
+                                      className="w-4 h-4 accent-[#B5822D] cursor-pointer"
+                                    />
+                                    <div>
+                                      <span className="text-xs font-bold text-[#263449] block">{s.serviceName}</span>
+                                      <span className="text-[10px] font-mono text-slate-600">
+                                        {unitAmt > 0 ? `₹${unitAmt.toLocaleString('en-IN')} / unit` : 'Complimentary'}
+                                      </span>
+                                    </div>
+                                  </label>
+                                  {isSelected && (
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={qty}
+                                        title="Quantity"
+                                        onChange={e =>
+                                          setServiceQtyMap(prev => ({ ...prev, [sid]: Math.max(1, Number(e.target.value) || 1) }))
+                                        }
+                                        className="w-12 px-1.5 py-1 border border-[#C49A3A] rounded-lg text-xs font-mono font-bold text-center bg-white"
+                                      />
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={servicePriceMap[sid] ?? ''}
+                                        placeholder={String(serviceAmountOf(s))}
+                                        title="Unit price override (₹)"
+                                        onChange={e =>
+                                          setServicePriceMap(prev => ({
+                                            ...prev,
+                                            [sid]: e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0),
+                                          }))
+                                        }
+                                        className="w-16 px-1.5 py-1 border border-[#C49A3A] rounded-lg text-xs font-mono font-bold text-center bg-white"
+                                      />
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
                           </div>
                         )}
-                      </div>
 
-                      {/* Custom Add-On (directstay-checkin-v3 exact fields) */}
-                      <div className="space-y-3 pt-2">
-                        <span className="text-xs font-extrabold uppercase tracking-wider text-luxury-brown-900 flex items-center gap-2">
-                          <span className="w-1 h-4 rounded bg-[#C49A3A] inline-block" />
-                          Custom add-on
-                        </span>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 p-4 rounded-xl bg-[#FAF7F2] border border-luxury-brown-200">
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">Service description</label>
-                            <input
-                              type="text"
-                              value={customAddonLabel}
-                              onChange={(e) => setCustomAddonLabel(e.target.value)}
-                              placeholder="e.g. Room decoration / Airport pickup"
-                              className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">Quantity</label>
-                            <input
-                              type="number"
-                              min={1}
-                              step={1}
-                              value={customAddonQty}
-                              onChange={(e) => setCustomAddonQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                              className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white font-mono font-bold"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">Price per unit (₹)</label>
+                        {/* Water Bottles & Custom Add-On */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 p-3.5 rounded-xl bg-[#F4F6F9] border border-[#DCE3EC] items-end">
+                          <div className="md:col-span-3 space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">
+                              Complimentary Water (Stock: {Number(waterBottleInventoryProduct?.currentStock ?? 0)})
+                            </label>
                             <input
                               type="number"
                               min={0}
-                              step="any"
-                              value={customAddonRate || ''}
-                              placeholder="0"
-                              onChange={(e) => setCustomAddonRate(Math.max(0, parseFloat(e.target.value) || 0))}
-                              className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white font-mono font-bold"
+                              max={Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0))}
+                              value={complimentaryWaterBottles}
+                              onChange={e => setComplimentaryWaterBottles(Math.max(0, Number(e.target.value) || 0))}
+                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
                             />
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">Notes (optional)</label>
+                          <div className="md:col-span-4 space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Custom Add-on Label</label>
                             <input
                               type="text"
-                              value={customAddonNotes}
-                              onChange={(e) => setCustomAddonNotes(e.target.value)}
-                              placeholder="Special requirements"
-                              className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white"
+                              value={customAddonLabel}
+                              onChange={e => setCustomAddonLabel(e.target.value)}
+                              placeholder="e.g. Airport Pickup / Cake / Bouquet"
+                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs bg-white"
+                            />
+                          </div>
+                          <div className="md:col-span-2 space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Qty</label>
+                            <input
+                              type="number"
+                              min={1}
+                              value={customAddonQty}
+                              onChange={e => setCustomAddonQty(Math.max(1, Number(e.target.value) || 1))}
+                              className="w-full px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                            />
+                          </div>
+                          <div className="md:col-span-3 space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Rate (₹)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={customAddonRate || ''}
+                              onChange={e => setCustomAddonRate(Math.max(0, Number(e.target.value) || 0))}
+                              placeholder="0"
+                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
                             />
                           </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </section>
 
-                  {/* ========================================================= */}
-                  {/* STEP 4: BILLING & SETTLEMENT (WITH HYBRID / SPLIT)        */}
-                  {/* ========================================================= */}
-                  {wizardStep === 4 && (
-                    <div className="space-y-5 animate-fade-in">
-                      <div className="flex items-center gap-3 pb-3.5 border-b border-luxury-brown-100">
-                        <div className="w-9 h-9 rounded-xl bg-[#FFF3D7] border border-[#E6CE9A] text-[#9E6E24] flex items-center justify-center shrink-0">
-                          <Receipt className="w-5 h-5" />
+                  {/* SECTION 4: COLLAPSIBLE SPECIAL REQUESTS & PREFERENCES */}
+                  <section className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowSpecialReqSection(prev => !prev)}
+                      className="w-full px-5 py-3.5 flex items-center justify-between gap-3 hover:bg-[#F4F6F9]/60 transition-colors cursor-pointer text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-slate-100 border border-[#DCE3EC] text-slate-700 flex items-center justify-center shrink-0">
+                          <ClipboardList className="w-4 h-4" />
                         </div>
                         <div>
-                          <h2 className="text-base font-serif font-bold text-luxury-brown-950">Billing &amp; Settlement</h2>
-                          <p className="text-xs text-luxury-brown-600">Configure discounts, negotiated settlement, GST invoice, and single or Hybrid / Split payment.</p>
+                          <span className="text-sm font-serif font-bold text-[#263449] block">
+                            Special requests &amp; preferences
+                          </span>
+                          <span className="text-xs text-slate-500 block">
+                            Guest room preferences, travel agent, purpose of visit &amp; front office notes (Optional)
+                          </span>
                         </div>
                       </div>
+                      <span className="px-3 py-1 rounded-lg border border-[#DCE3EC] bg-white text-xs font-bold text-[#263449] inline-flex items-center gap-1 shrink-0">
+                        {showSpecialReqSection ? 'Hide' : '+ Add Requests & Preferences'}
+                        {showSpecialReqSection ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </span>
+                    </button>
 
-                      {/* 1. Discount On / Off Toggle */}
-                      <div className="p-3.5 rounded-xl border border-luxury-brown-200 bg-white space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <strong className="text-xs font-bold text-luxury-brown-950 block">
-                              Discount <span className="text-[#B17A20]">(On / Off)</span>
-                            </strong>
-                            <span className="text-[11px] text-slate-500">Apply a percentage or fixed deduction before GST.</span>
-                          </div>
-                          <input
-                            type="checkbox"
-                            checked={discountEnabled}
-                            onChange={(e) => {
-                              setDiscountEnabled(e.target.checked);
-                              if (!e.target.checked) setManualDiscount(0);
-                            }}
-                            className="w-5 h-5 accent-[#C18C36] cursor-pointer"
-                          />
-                        </div>
-
-                        {discountEnabled && (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
-                            <div className="space-y-1">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">Discount type</label>
-                              <select
-                                value={discountMode}
-                                onChange={(e) => setDiscountMode(e.target.value as 'percent' | 'fixed')}
-                                className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white font-semibold"
-                              >
-                                <option value="percent">Percentage (%)</option>
-                                <option value="fixed">Fixed amount (₹)</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">Discount value</label>
-                              <input
-                                type="number"
-                                min={0}
-                                step="any"
-                                value={discountInputValue || ''}
-                                placeholder="0"
-                                onChange={(e) => setDiscountInputValue(Math.max(0, parseFloat(e.target.value) || 0))}
-                                className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white font-mono font-bold"
-                              />
-                            </div>
-                            <div className="md:col-span-2 space-y-1">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">Reason / promotion</label>
-                              <input
-                                type="text"
-                                value={discountReason}
-                                onChange={(e) => setDiscountReason(e.target.value)}
-                                placeholder="e.g. Returning guest / Corporate deal"
-                                className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white"
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 2. Negotiated Settlement Adjustment On / Off Toggle */}
-                      <div className="p-3.5 rounded-xl border border-luxury-brown-200 bg-white space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <strong className="text-xs font-bold text-luxury-brown-950 block">Negotiated settlement adjustment</strong>
-                            <span className="text-[11px] text-slate-500">Optional extra reduction or exact final target amount (preserved in audit trail).</span>
-                          </div>
-                          <input
-                            type="checkbox"
-                            checked={settlementEnabled}
-                            onChange={(e) => setSettlementEnabled(e.target.checked)}
-                            className="w-5 h-5 accent-[#C18C36] cursor-pointer"
-                          />
-                        </div>
-
-                        {settlementEnabled && (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
-                            <div className="md:col-span-2 space-y-1">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">Settlement option</label>
-                              <select
-                                value={settlementMode}
-                                onChange={(e) => setSettlementMode(e.target.value as 'adjustment' | 'exact')}
-                                className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white font-semibold"
-                              >
-                                <option value="adjustment">Subtract an additional amount before GST (₹)</option>
-                                <option value="exact">Set exact final settlement amount (GST included)</option>
-                              </select>
-                            </div>
-                            {settlementMode === 'adjustment' ? (
-                              <div className="space-y-1">
-                                <label className="text-xs font-bold text-luxury-brown-800 block">Additional adjustment before GST (₹)</label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step="any"
-                                  value={settlementAdjustmentInput || ''}
-                                  placeholder="0"
-                                  onChange={(e) => setSettlementAdjustmentInput(Math.max(0, parseFloat(e.target.value) || 0))}
-                                  className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white font-mono font-bold"
-                                />
-                              </div>
-                            ) : (
-                              <div className="space-y-1">
-                                <label className="text-xs font-bold text-luxury-brown-800 block">
-                                  Set settlement amount — guest pays (₹) <span className="text-[#9E2A2B]">*</span>
-                                </label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step="any"
-                                  value={settlementTargetInput}
-                                  placeholder="Enter final price incl. GST"
-                                  onChange={(e) => setSettlementTargetInput(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
-                                  className="w-full px-3 py-2 border border-[#C49A3A] rounded-lg text-sm bg-white font-mono font-bold"
-                                />
-                              </div>
-                            )}
-                            <div className="space-y-1">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">
-                                Manager approval / reason <span className="text-[#9E2A2B]">*</span>
-                              </label>
-                              <input
-                                type="text"
-                                value={settlementReason}
-                                onChange={(e) => setSettlementReason(e.target.value)}
-                                placeholder="e.g. Manager-approved negotiated settlement"
-                                className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white"
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 3. GST Billing On / Off Toggle */}
-                      <div className="p-3.5 rounded-xl border border-luxury-brown-200 bg-white space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <strong className="text-xs font-bold text-luxury-brown-950 block">GST billing</strong>
-                            <span className="text-[11px] text-slate-500">Choose Individual (B2C) or Business (B2B) and applicable GST rate.</span>
-                          </div>
-                          {isCheckInGstLockedByExistingInvoice && existingStayPrimaryInvoice ? (
-                            <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded">
-                              🔒 Locked by #{existingStayPrimaryInvoice.invoiceNumber}
-                            </span>
-                          ) : (
-                            <input
-                              type="checkbox"
-                              checked={gstPercent > 0}
-                              onChange={(e) =>
-                                setGstPercent(e.target.checked ? (configuredDefaultGst > 0 ? configuredDefaultGst : 5) : 0)
-                              }
-                              className="w-5 h-5 accent-[#C18C36] cursor-pointer"
-                            />
-                          )}
-                        </div>
-
-                        {gstPercent > 0 && (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
-                            <div className="md:col-span-2 flex flex-wrap gap-2">
-                              {(['B2C', 'B2B'] as const).map((cat) => (
-                                <label
-                                  key={cat}
-                                  onClick={() => setGstInvoiceCategory(cat)}
-                                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-bold cursor-pointer ${
-                                    gstInvoiceCategory === cat
-                                      ? 'border-[#C49A3A] bg-[#FFF5DE] text-luxury-brown-950'
-                                      : 'border-slate-200 bg-white text-slate-700'
-                                  }`}
-                                >
-                                  <input type="radio" checked={gstInvoiceCategory === cat} onChange={() => {}} className="accent-[#B5822D]" />
-                                  <span>{cat === 'B2C' ? 'Individual (B2C)' : 'Business (B2B)'}</span>
-                                </label>
-                              ))}
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">GST rate</label>
-                              <select
-                                disabled={isCheckInGstLockedByExistingInvoice}
-                                value={gstPercent}
-                                onChange={(e) => setGstPercent(Number(e.target.value))}
-                                className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white font-mono font-bold"
-                              >
-                                <option value={5}>5%</option>
-                                <option value={12}>12%</option>
-                                <option value={18}>18%</option>
-                              </select>
-                            </div>
-                            {gstInvoiceCategory === 'B2B' && (
-                              <div className="space-y-1">
-                                <label className="text-xs font-bold text-luxury-brown-800 block">Company GSTIN</label>
-                                <input
-                                  type="text"
-                                  maxLength={15}
-                                  value={gstNumber}
-                                  onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
-                                  placeholder="15-character GSTIN"
-                                  className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white font-mono font-bold"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Existing POS / Folio Charges & Carried-Forward Advance */}
-                      {existingStayFolioCharges.length > 0 && (
-                        <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-1.5 text-xs font-mono">
-                          <div className="flex items-center justify-between text-[10px] uppercase font-bold text-amber-900">
-                            <span>Existing Booking / POS Room Folio Charges (Carried Forward)</span>
-                            <span>+ ₹{existingStayFolioSubtotal.toLocaleString('en-IN')}</span>
-                          </div>
-                          {existingStayFolioCharges.map((fc, idx) => (
-                            <div key={`${fc.id}-${idx}`} className="flex items-center justify-between text-[11px] text-slate-700">
-                              <span>• {fc.description}</span>
-                              <span className="font-bold text-slate-900">₹{Number(fc.amount || 0).toLocaleString('en-IN')}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {selectedBooking && advanceAmount > 0 && (
-                        <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between text-xs font-mono">
-                          <span className="font-bold text-emerald-900">Advance Already Paid on Reservation ({selectedBooking.id})</span>
-                          <strong className="text-emerald-800 text-sm">₹{advanceAmount.toLocaleString('en-IN')}</strong>
-                        </div>
-                      )}
-
-                      {/* 4. Payment Collection (Single or Hybrid / Split!) */}
-                      <div className="space-y-3 pt-1">
-                        <span className="text-xs font-extrabold uppercase tracking-wider text-luxury-brown-900 flex items-center gap-2">
-                          <span className="w-1 h-4 rounded bg-[#C49A3A] inline-block" />
-                          Payment collection
-                        </span>
-
-                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                          {(
-                            [
-                              { id: 'Cash', icon: '💵', label: 'Cash' },
-                              { id: 'UPI', icon: '◈', label: 'UPI' },
-                              { id: 'Card', icon: '▣', label: 'Card' },
-                              { id: 'Bank Transfer', icon: '🏦', label: 'Bank' },
-                            ] as const
-                          ).map((pm) => {
-                            const selected = !isHybridCheckInPay && paymentMethod === pm.id;
+                    {showSpecialReqSection && (
+                      <div className="px-5 pb-5 pt-2 border-t border-[#DCE3EC] space-y-3.5">
+                        <div className="flex flex-wrap gap-2">
+                          {['Early Check-In', 'Late Check-Out', 'High Floor', 'Quiet Room', 'King Bed', 'Airport Pickup', 'Extra Pillows'].map(tag => {
+                            const active = specialRequestTags.includes(tag);
                             return (
                               <button
-                                key={pm.id}
+                                key={tag}
                                 type="button"
-                                onClick={() => {
-                                  setIsHybridCheckInPay(false);
-                                  setPaymentMethod(pm.id);
-                                }}
-                                className={`p-3 rounded-xl border text-xs font-bold text-center cursor-pointer transition-all ${
-                                  selected
-                                    ? 'border-[#C18B32] bg-[#FFF3DA] text-[#80551A] shadow-2xs'
-                                    : 'border-luxury-brown-200 bg-white text-slate-700 hover:bg-slate-50'
+                                onClick={() =>
+                                  setSpecialRequestTags(prev =>
+                                    prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+                                  )
+                                }
+                                className={`px-3 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer ${
+                                  active
+                                    ? 'bg-[#FDF8ED] border-[#C49A3A] text-[#8B691E]'
+                                    : 'bg-white border-[#DCE3EC] text-slate-600 hover:bg-[#F4F6F9]'
                                 }`}
                               >
-                                <span className="block text-base mb-1">{pm.icon}</span>
-                                {pm.label}
+                                {active ? '✓ ' : '+ '}
+                                {tag}
                               </button>
                             );
                           })}
-                          <button
-                            type="button"
-                            onClick={() => setIsHybridCheckInPay(true)}
-                            className={`p-3 rounded-xl border text-xs font-bold text-center cursor-pointer transition-all ${
-                              isHybridCheckInPay
-                                ? 'border-[#C18B32] bg-[#FFF3DA] text-[#80551A] shadow-2xs'
-                                : 'border-luxury-brown-200 bg-white text-slate-700 hover:bg-slate-50'
-                            }`}
-                          >
-                            <span className="block text-base mb-1">⇄</span>
-                            Hybrid / Split
-                          </button>
                         </div>
 
-                        {isHybridCheckInPay ? (
-                          <div className="p-4 rounded-xl bg-[#FFFCF5] border border-[#E7E0D2] space-y-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div>
-                                <strong className="text-xs font-bold text-luxury-brown-950 block">
-                                  Hybrid payment — collect by multiple methods
-                                </strong>
-                                <span className="text-[11px] text-slate-500">
-                                  Example: Cash ₹2,000 + UPI ₹3,000. Include only amounts actually received.
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setCheckInSplitRows(prev => [
-                                    ...prev,
-                                    { id: `ci-sp-${Date.now()}`, method: 'UPI', amount: '', ref: '' },
-                                  ])
-                                }
-                                className="px-3 py-1.5 rounded-lg border border-luxury-brown-300 bg-white hover:bg-amber-50 text-xs font-bold text-luxury-brown-900 cursor-pointer"
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Purpose of Visit</label>
+                            <input
+                              type="text"
+                              value={purposeOfVisit}
+                              onChange={e => setPurposeOfVisit(e.target.value)}
+                              placeholder="Leisure / Business"
+                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg bg-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Coming From</label>
+                            <input
+                              type="text"
+                              value={comingFrom}
+                              onChange={e => setComingFrom(e.target.value)}
+                              placeholder="Origin city"
+                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg bg-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Going To</label>
+                            <input
+                              type="text"
+                              value={goingTo}
+                              onChange={e => setGoingTo(e.target.value)}
+                              placeholder="Next destination"
+                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg bg-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-[#263449] block">Voucher / Tour Ref No.</label>
+                            <input
+                              type="text"
+                              value={voucherNumber}
+                              onChange={e => setVoucherNumber(e.target.value)}
+                              placeholder="e.g. VCH-2026-109"
+                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg font-mono bg-white"
+                            />
+                          </div>
+                        </div>
+
+                        {false && travelAgents.length > 0 && (
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-bold text-[#263449] block">Travel Agent / Partner</label>
+                              <select
+                                value={selectedAgentId}
+                                onChange={e => handleSelectTravelAgent(e.target.value)}
+                                className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg bg-white font-semibold"
                               >
-                                + Add Method
-                              </button>
-                            </div>
-
-                            <div className="space-y-2.5">
-                              {checkInSplitRows.map((row) => (
-                                <div
-                                  key={row.id}
-                                  className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end p-3 rounded-xl bg-white border border-luxury-brown-200/80"
-                                >
-                                  <div className="sm:col-span-4 space-y-1">
-                                    <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">Method</label>
-                                    <select
-                                      value={row.method}
-                                      onChange={(e) =>
-                                        setCheckInSplitRows(prev =>
-                                          prev.map(r => (r.id === row.id ? { ...r, method: e.target.value as PaymentMethod } : r))
-                                        )
-                                      }
-                                      className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-lg text-xs font-bold bg-white"
-                                    >
-                                      <option value="Cash">Cash</option>
-                                      <option value="UPI">UPI</option>
-                                      <option value="Card">Card</option>
-                                      <option value="Bank Transfer">Bank Transfer</option>
-                                      <option value="Online">Online</option>
-                                    </select>
-                                  </div>
-                                  <div className="sm:col-span-3 space-y-1">
-                                    <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">Received (₹)</label>
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      step="any"
-                                      value={row.amount}
-                                      placeholder="0"
-                                      onChange={(e) => {
-                                        const val = e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0);
-                                        setCheckInSplitRows(prev =>
-                                          prev.map(r => (r.id === row.id ? { ...r, amount: val } : r))
-                                        );
-                                      }}
-                                      className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white"
-                                    />
-                                  </div>
-                                  <div className="sm:col-span-4 space-y-1">
-                                    <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">Reference (optional)</label>
-                                    <input
-                                      type="text"
-                                      value={row.ref}
-                                      placeholder="Receipt / UTR"
-                                      onChange={(e) =>
-                                        setCheckInSplitRows(prev =>
-                                          prev.map(r => (r.id === row.id ? { ...r, ref: e.target.value } : r))
-                                        )
-                                      }
-                                      className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white"
-                                    />
-                                  </div>
-                                  <div className="sm:col-span-1 flex justify-end">
-                                    {checkInSplitRows.length > 2 && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setCheckInSplitRows(prev => prev.filter(r => r.id !== row.id))
-                                        }
-                                        className="px-2.5 py-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100 cursor-pointer"
-                                      >
-                                        ✕
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-
-                            <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-mono">
-                              <span className="font-bold text-slate-700">Combined amount received now</span>
-                              <strong className="text-emerald-800 text-sm">₹{hybridCheckInReceivedSum.toLocaleString('en-IN')}</strong>
+                                <option value="">Direct / No Agent</option>
+                                {travelAgents.map(a => (
+                                  <option key={a.id} value={a.id}>
+                                    {a.agencyName || a.name}
+                                  </option>
+                                ))}
+                              </select>
                             </div>
                           </div>
-                        ) : (
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                        )}
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-[#263449] block">Front Office Notes</label>
+                          <textarea
+                            rows={2}
+                            value={specialRequestNotes}
+                            onChange={e => setSpecialRequestNotes(e.target.value)}
+                            placeholder="Any special dietary, room, or arrival instructions..."
+                            className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs bg-white"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
+                  {/* SECTION 5: PRICING REVIEW, PAYMENT & CONFIRMATION */}
+                  <section className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs p-5 space-y-4">
+                    <div>
+                      <h3 className="text-sm sm:text-base font-serif font-bold text-[#263449]">
+                        Pricing review, payment &amp; confirmation
+                      </h3>
+                      <p className="text-xs text-slate-500">Live pricing summary, discount, GST, negotiated settlement &amp; payment collection</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+                      {/* LEFT HALF: PRICE BREAKDOWN + DISCOUNT + SETTLEMENT + COMMUNICATION */}
+                      <div className="space-y-3.5">
+                        <div className="p-4 rounded-xl bg-[#F4F6F9] border border-[#DCE3EC] space-y-3">
+                          <span className="text-[11px] font-mono font-extrabold uppercase tracking-wider text-[#263449] flex items-center gap-1.5">
+                            <Receipt className="w-3.5 h-3.5 text-[#C49A3A]" /> PRICE BREAKDOWN
+                          </span>
+
+                          <div className="space-y-1.5 text-xs font-mono">
+                            {liveCheckInCharges.map((ch, idx) => (
+                              <div key={`${ch.id}-${idx}`} className="flex justify-between gap-2 text-slate-700">
+                                <span className="truncate">
+                                  {ch.description}
+                                  {ch.roomNumber ? ` (${ch.roomNumber})` : ''}
+                                </span>
+                                <strong className="text-[#263449] shrink-0">
+                                  ₹{Number(ch.amount || 0).toLocaleString('en-IN')}
+                                </strong>
+                              </div>
+                            ))}
+
+                            {totalEffectiveDiscount > 0 && (
+                              <div className="flex justify-between gap-2 text-amber-700">
+                                <span>Discount &amp; Adjustment</span>
+                                <strong>− ₹{totalEffectiveDiscount.toLocaleString('en-IN')}</strong>
+                              </div>
+                            )}
+
+                            <div className="flex justify-between gap-2 text-slate-700">
+                              <span>GST ({gstPercent}%)</span>
+                              <strong className="text-[#263449]">₹{gstTax.toLocaleString('en-IN')}</strong>
+                            </div>
+
+                            <div className="flex justify-between gap-2 pt-2 border-t border-[#DCE3EC] text-sm">
+                              <span className="font-sans font-bold text-[#263449]">
+                                Total Amount <span className="text-[11px] font-normal text-slate-500">({gstPercent > 0 ? 'Inclusive of taxes' : 'No GST'})</span>
+                              </span>
+                              <strong className="text-[#8B691E] font-extrabold">
+                                ₹{finalAmount.toLocaleString('en-IN')}
+                              </strong>
+                            </div>
+                          </div>
+
+                          {/* Discount ON/OFF Toggle */}
+                          <div className="pt-2.5 border-t border-[#DCE3EC]/80 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="inline-flex items-center gap-2 text-xs font-bold text-[#263449] cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={discountEnabled}
+                                  onChange={e => setDiscountEnabled(e.target.checked)}
+                                  className="w-4 h-4 accent-[#B5822D] cursor-pointer"
+                                />
+                                <span>Apply Discount</span>
+                              </label>
+                              {discountEnabled && (
+                                <div className="inline-flex rounded-lg border border-[#DCE3EC] bg-white overflow-hidden text-[11px] font-mono font-bold">
+                                  <button
+                                    type="button"
+                                    onClick={() => setDiscountMode('fixed')}
+                                    className={`px-2 py-0.5 cursor-pointer ${discountMode === 'fixed' ? 'bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50' : 'text-slate-600'}`}
+                                  >
+                                    ₹ Flat
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDiscountMode('percent')}
+                                    className={`px-2 py-0.5 cursor-pointer ${discountMode === 'percent' ? 'bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50' : 'text-slate-600'}`}
+                                  >
+                                    % Pct
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            {discountEnabled && (
+                              <div className="grid grid-cols-2 gap-2">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={discountInputValue || ''}
+                                  onChange={e => setDiscountInputValue(Math.max(0, Number(e.target.value) || 0))}
+                                  placeholder={discountMode === 'percent' ? 'Discount %' : 'Discount ₹'}
+                                  className="px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                                />
+                                <input
+                                  type="text"
+                                  value={discountReason}
+                                  onChange={e => setDiscountReason(e.target.value)}
+                                  placeholder="Discount reason (optional)"
+                                  className="px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs bg-white"
+                                />
+                              </div>
+                            )}
+
+                            {/* Negotiated Settlement ON/OFF Toggle */}
+                            <div className="flex items-center justify-between pt-1">
+                              <label className="inline-flex items-center gap-2 text-xs font-bold text-[#263449] cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={settlementEnabled}
+                                  onChange={e => setSettlementEnabled(e.target.checked)}
+                                  className="w-4 h-4 accent-[#B5822D] cursor-pointer"
+                                />
+                                <span>Negotiated Final Settlement</span>
+                              </label>
+                              {settlementEnabled && (
+                                <div className="inline-flex rounded-lg border border-[#DCE3EC] bg-white overflow-hidden text-[11px] font-mono font-bold">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSettlementMode('exact')}
+                                    className={`px-2 py-0.5 cursor-pointer ${settlementMode === 'exact' ? 'bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50' : 'text-slate-600'}`}
+                                  >
+                                    Exact Total ₹
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSettlementMode('adjustment')}
+                                    className={`px-2 py-0.5 cursor-pointer ${settlementMode === 'adjustment' ? 'bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50' : 'text-slate-600'}`}
+                                  >
+                                    Subtract ₹
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            {settlementEnabled && (
+                              <div className="grid grid-cols-2 gap-2">
+                                {settlementMode === 'exact' ? (
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={settlementTargetInput}
+                                    onChange={e =>
+                                      setSettlementTargetInput(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))
+                                    }
+                                    placeholder="Target final ₹"
+                                    className="px-2.5 py-1.5 border border-[#C49A3A] rounded-lg text-xs font-mono font-bold bg-white"
+                                  />
+                                ) : (
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={settlementAdjustmentInput || ''}
+                                    onChange={e => setSettlementAdjustmentInput(Math.max(0, Number(e.target.value) || 0))}
+                                    placeholder="Subtract ₹"
+                                    className="px-2.5 py-1.5 border border-[#C49A3A] rounded-lg text-xs font-mono font-bold bg-white"
+                                  />
+                                )}
+                                <input
+                                  type="text"
+                                  value={settlementReason}
+                                  onChange={e => setSettlementReason(e.target.value)}
+                                  placeholder="Manager approval reason *"
+                                  className="px-2.5 py-1.5 border border-[#C49A3A] rounded-lg text-xs bg-white"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Communication Preferences */}
+                        <div className="p-4 rounded-xl bg-white border border-[#DCE3EC] space-y-2.5">
+                          <span className="text-[11px] font-mono font-extrabold uppercase tracking-wider text-[#263449] block">
+                            COMMUNICATION PREFERENCES
+                          </span>
+                          <label className="flex items-start gap-2.5 p-2.5 rounded-xl border border-[#DCE3EC] hover:bg-[#F4F6F9]/60 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={commEmail}
+                              onChange={e => setCommEmail(e.target.checked)}
+                              className="w-4 h-4 mt-0.5 accent-[#B5822D] cursor-pointer"
+                            />
+                            <div>
+                              <span className="text-xs font-bold text-[#263449] block">Email confirmation</span>
+                              <span className="text-[11px] text-slate-500">Send booking &amp; GRC details to guest email</span>
+                            </div>
+                          </label>
+                          <label className="flex items-start gap-2.5 p-2.5 rounded-xl border border-[#DCE3EC] hover:bg-[#F4F6F9]/60 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={commSms}
+                              onChange={e => setCommSms(e.target.checked)}
+                              className="w-4 h-4 mt-0.5 accent-[#B5822D] cursor-pointer"
+                            />
+                            <div>
+                              <span className="text-xs font-bold text-[#263449] block">SMS / WhatsApp confirmation</span>
+                              <span className="text-[11px] text-slate-500">Send booking summary to guest mobile</span>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* RIGHT HALF: PAYMENT SUMMARY & 4 BOOKING ACTIONS */}
+                      <div className="p-4 rounded-xl bg-[#F4F6F9] border border-[#C49A3A]/50 space-y-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-mono font-extrabold uppercase tracking-wider text-[#263449] flex items-center gap-1.5">
+                            <DollarSign className="w-3.5 h-3.5 text-[#C49A3A]" /> PAYMENT SUMMARY
+                          </span>
+                          <label className="inline-flex items-center gap-1.5 text-xs font-bold text-[#263449] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              disabled={Boolean(isCheckInGstLockedByExistingInvoice)}
+                              checked={gstPercent > 0}
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
+                                } else {
+                                  setGstPercent(0);
+                                }
+                              }}
+                              className="w-4 h-4 accent-[#B5822D] cursor-pointer"
+                            />
+                            <span>Include tax (GST {gstPercent}%)</span>
+                          </label>
+                        </div>
+
+                        <div className="flex flex-wrap items-end justify-between gap-3 bg-white p-3.5 rounded-xl border border-[#DCE3EC]">
+                          <div>
+                            <span className="text-[10px] font-mono uppercase text-slate-500 font-bold block">
+                              ESTIMATED TOTAL
+                            </span>
+                            <strong className="text-2xl font-mono font-black text-[#263449]">
+                              ₹{finalAmount.toLocaleString('en-IN')}
+                            </strong>
+                            <span className="text-[10px] text-slate-500 block">
+                              {gstPercent > 0 ? `Inclusive of ${gstPercent}% GST` : 'Without GST (0%)'}
+                            </span>
+                          </div>
+                          <div className="text-right font-mono text-xs space-y-0.5">
+                            {advanceAmount > 0 && (
+                              <div className="text-emerald-700 font-bold">
+                                Pre-Paid Adv: ₹{advanceAmount.toLocaleString('en-IN')}
+                              </div>
+                            )}
+                            <div className={balanceAmount > 0 ? 'text-amber-700 font-extrabold' : 'text-emerald-700 font-extrabold'}>
+                              Balance Due: ₹{balanceAmount.toLocaleString('en-IN')}
+                            </div>
+                          </div>
+                        </div>
+
+                        {gstPercent > 0 && (
+                          <div className="p-3 rounded-xl bg-white border border-[#DCE3EC] space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-mono uppercase font-bold text-slate-600">GST INVOICE TYPE</span>
+                              <div className="inline-flex rounded-lg border border-[#DCE3EC] overflow-hidden text-[11px] font-mono font-bold">
+                                <button type="button" onClick={() => setGstInvoiceCategory('B2C')} className={`px-3 py-1 cursor-pointer ${gstInvoiceCategory === 'B2C' ? 'bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50' : 'text-slate-600'}`}>B2C</button>
+                                <button type="button" onClick={() => setGstInvoiceCategory('B2B')} className={`px-3 py-1 cursor-pointer ${gstInvoiceCategory === 'B2B' ? 'bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50' : 'text-slate-600'}`}>B2B</button>
+                              </div>
+                            </div>
+                            {gstInvoiceCategory === 'B2B' && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <input type="text" value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Company name" className="px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs bg-white" />
+                                <input type="text" value={gstNumber} onChange={e => setGstNumber(e.target.value.toUpperCase())} placeholder="Company GSTIN" className="px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono bg-white" />
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Payment Method + Paid Amount (or Hybrid Split Rows) */}
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="space-y-1">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">Amount received now (₹)</label>
+                              <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">
+                                PAYMENT METHOD
+                              </label>
+                              <select
+                                value={isHybridCheckInPay ? 'Hybrid' : paymentMethod}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  if (v === 'Hybrid') {
+                                    setIsHybridCheckInPay(true);
+                                    const rem = Math.max(0, finalAmount - advanceAmount);
+                                    const seed = Number(paidAmount) > 0 ? Number(paidAmount) : rem;
+                                    const half = Math.floor(seed / 2);
+                                    setCheckInSplitRows([
+                                      { id: 'ci-sp-1', method: 'Cash', amount: half, ref: '' },
+                                      {
+                                        id: 'ci-sp-2',
+                                        method: 'UPI',
+                                        amount: Math.max(0, Math.round((seed - half) * 100) / 100),
+                                        ref: '',
+                                      },
+                                    ]);
+                                  } else {
+                                    setIsHybridCheckInPay(false);
+                                    setPaymentMethod(v as PaymentMethod);
+                                  }
+                                }}
+                                className="w-full px-3 py-2 border border-[#C2CDD9] rounded-xl text-xs font-bold bg-white"
+                              >
+                                <option value="Cash">Cash</option>
+                                <option value="UPI">UPI</option>
+                                <option value="Card">Card</option>
+                                <option value="Bank Transfer">Bank Transfer</option>
+                                <option value="Online">Virtual Payment / Online</option>
+                                <option value="Hybrid">⇄ Hybrid / Split Payment</option>
+                              </select>
+                            </div>
+
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-mono uppercase font-bold text-slate-600">
+                                  PAID AMOUNT (₹)
+                                </label>
+                                {!isHybridCheckInPay && balanceAmount > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setPaidAmount(Math.max(0, Math.round((finalAmount - advanceAmount) * 100) / 100))}
+                                    className="text-[10px] font-mono font-bold text-[#8B691E] hover:underline cursor-pointer"
+                                  >
+                                    Fill Full (₹{Math.max(0, finalAmount - advanceAmount).toLocaleString('en-IN')})
+                                  </button>
+                                )}
+                              </div>
                               <input
                                 type="number"
                                 min={0}
                                 step="any"
-                                value={paidAmount || ''}
-                                placeholder="0"
-                                onChange={(e) => setPaidAmount(Math.max(0, parseFloat(e.target.value) || 0))}
-                                className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono font-bold"
+                                readOnly={isHybridCheckInPay}
+                                value={isHybridCheckInPay ? effectiveDeskReceivedNow : paidAmount || ''}
+                                onChange={e => setPaidAmount(Math.max(0, Number(e.target.value) || 0))}
+                                placeholder="₹0.00"
+                                className={`w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold ${
+                                  isHybridCheckInPay ? 'bg-emerald-50 text-emerald-900 cursor-not-allowed' : 'bg-white'
+                                }`}
                               />
                             </div>
+                          </div>
+
+                          {/* Hybrid / Split Payment Rows */}
+                          {isHybridCheckInPay ? (
+                            <div className="p-3 rounded-xl bg-white border border-[#C49A3A]/60 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-[#263449]">⇄ Hybrid / Split Payment Rows</span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCheckInSplitRows(prev => [
+                                      ...prev,
+                                      { id: `ci-sp-${Date.now()}`, method: 'Card', amount: '', ref: '' },
+                                    ])
+                                  }
+                                  className="px-2.5 py-1 rounded-lg bg-[#F4F6F9] hover:bg-[#FDF8ED] border border-[#C49A3A] text-[11px] font-bold text-[#8B691E] cursor-pointer"
+                                >
+                                  + Add Method
+                                </button>
+                              </div>
+                              {checkInSplitRows.map((sp, idx) => (
+                                <div key={sp.id} className="grid grid-cols-12 gap-1.5 items-center">
+                                  <select
+                                    value={sp.method}
+                                    onChange={e =>
+                                      setCheckInSplitRows(prev =>
+                                        prev.map(r => (r.id === sp.id ? { ...r, method: e.target.value as PaymentMethod } : r))
+                                      )
+                                    }
+                                    className="col-span-4 px-2 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-bold bg-white"
+                                  >
+                                    <option value="Cash">Cash</option>
+                                    <option value="UPI">UPI</option>
+                                    <option value="Card">Card</option>
+                                    <option value="Bank Transfer">Bank</option>
+                                    <option value="Online">Virtual</option>
+                                  </select>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="any"
+                                    value={sp.amount}
+                                    onChange={e =>
+                                      setCheckInSplitRows(prev =>
+                                        prev.map(r =>
+                                          r.id === sp.id
+                                            ? { ...r, amount: e.target.value === '' ? '' : Number(e.target.value) }
+                                            : r
+                                        )
+                                      )
+                                    }
+                                    placeholder={`Amt #${idx + 1}`}
+                                    className="col-span-3 px-2 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={sp.ref ?? (sp as any).reference ?? ''}
+                                    onChange={e =>
+                                      setCheckInSplitRows(prev =>
+                                        prev.map(r => (r.id === sp.id ? { ...r, ref: e.target.value } : r))
+                                      )
+                                    }
+                                    placeholder="UTR / Ref"
+                                    className="col-span-4 px-2 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono bg-white"
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={checkInSplitRows.length <= 2}
+                                    onClick={() => setCheckInSplitRows(prev => prev.filter(r => r.id !== sp.id))}
+                                    className="col-span-1 py-1.5 rounded-lg text-slate-600 hover:bg-amber-50 disabled:opacity-30 font-bold text-xs cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                              <div className="flex justify-between text-[11px] font-mono pt-1 border-t border-[#DCE3EC]">
+                                <span className="text-emerald-700 font-bold">
+                                  Combined: ₹{effectiveDeskReceivedNow.toLocaleString('en-IN')}
+                                </span>
+                                <span className={balanceAmount > 0 ? 'text-amber-700 font-bold' : 'text-emerald-700 font-bold'}>
+                                  Due: ₹{balanceAmount.toLocaleString('en-IN')}
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
                             <div className="space-y-1">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">Reference / transaction ID</label>
+                              <label className="text-[10px] font-mono uppercase font-bold text-slate-600 block">
+                                PAYMENT REMARK / UTR (OPTIONAL)
+                              </label>
                               <input
                                 type="text"
                                 value={singlePaymentRef}
-                                onChange={(e) => setSinglePaymentRef(e.target.value)}
-                                placeholder="Optional receipt or UTR reference"
-                                className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono"
+                                onChange={e => setSinglePaymentRef(e.target.value)}
+                                placeholder="Transaction ID / UTR / Notes"
+                                className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono bg-white"
                               />
                             </div>
-                            <div className="space-y-1">
-                              <label className="text-xs font-bold text-luxury-brown-800 block">Payment date</label>
-                              <input
-                                type="date"
-                                value={paymentDate}
-                                onChange={(e) => setPaymentDate(e.target.value)}
-                                className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white font-mono"
-                              />
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">Invoice notes / Voucher Ref</label>
-                            <input
-                              type="text"
-                              value={paymentNotes}
-                              onChange={(e) => setPaymentNotes(e.target.value)}
-                              placeholder="Optional billing instructions or voucher reference"
-                              className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-white"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-luxury-brown-800 block">Final settlement amount (₹)</label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={`₹${finalAmount.toLocaleString('en-IN')}`}
-                              className="w-full px-3 py-2.5 border border-luxury-brown-200 rounded-xl text-sm bg-slate-50 font-mono font-extrabold text-luxury-brown-950"
-                            />
-                          </div>
+                          )}
                         </div>
 
-                        <div className="p-3 rounded-xl bg-[#FFFAEE] border border-[#F1DFB9] text-xs text-[#79633D]">
-                          Payment status is calculated automatically: <strong>Unpaid</strong>, <strong>Partially Paid</strong>, or <strong>Paid</strong>.
+                        {/* 4 BOOKING ACTION BUTTONS */}
+                        <div className="space-y-2 pt-1">
+                          <button
+                            type="submit"
+                            disabled={isSubmittingAction}
+                            className="w-full py-3 rounded-xl bg-[#C49A3A] hover:bg-[#A8812B] text-white border border-[#A8812B] text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-50"
+                          >
+                            <FileCheck className="w-4 h-4 text-white" />
+                            {editingCheckIn
+                              ? `Update Stay Details (${editingCheckIn.id})`
+                              : isFutureAdvanceArrival
+                              ? 'Confirm Advance Booking'
+                              : selectedBooking
+                              ? `Reserve & Check-In Now (${selectedBooking.id})`
+                              : 'Reserve & Check-In Now'}
+                          </button>
+
+                          {!editingCheckIn && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={isSubmittingAction}
+                                onClick={() => handleCreateReservationAction('Confirmed', 'Reservation Confirmed')}
+                                className="w-full py-2.5 rounded-xl bg-white hover:bg-[#FDF8ED] border border-[#C2CDD9] text-[#263449] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                              >
+                                <Check className="w-4 h-4 text-emerald-700" /> Confirm Reservation Only
+                              </button>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  disabled={isSubmittingAction}
+                                  onClick={() => handleCreateReservationAction('Draft', 'Draft Saved')}
+                                  className="py-2 rounded-xl bg-white hover:bg-[#F4F6F9] border border-[#DCE3EC] text-[#263449] text-xs font-bold cursor-pointer disabled:opacity-50"
+                                >
+                                  Save as Draft
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isSubmittingAction}
+                                  onClick={() => handleCreateReservationAction('Waiting', 'Added to Waitlist')}
+                                  className="py-2 rounded-xl bg-white hover:bg-amber-50 border border-[#DCE3EC] text-[#263449] text-xs font-bold cursor-pointer disabled:opacity-50"
+                                >
+                                  Add to Waitlist
+                                </button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
-                  )}
-
-                  {/* ========================================================= */}
-                  {/* STEP 5: REVIEW & CONFIRM                                  */}
-                  {/* ========================================================= */}
-                  {wizardStep === 5 && (
-                    <div className="space-y-5 animate-fade-in">
-                      <div className="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-luxury-brown-100">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-emerald-100 border border-emerald-200 text-emerald-800 flex items-center justify-center shrink-0">
-                            <Check className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <h2 className="text-base font-serif font-bold text-luxury-brown-950">Review &amp; Confirm</h2>
-                            <p className="text-xs text-luxury-brown-600">Verify all amounts, rooms, and guest details before completing check-in.</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="p-4 rounded-xl border border-luxury-brown-200 bg-[#FAF7F2]/60 space-y-2 text-xs">
-                          <h3 className="font-serif font-bold text-sm text-luxury-brown-950 border-b border-luxury-brown-100 pb-1.5">Stay &amp; Room</h3>
-                          <div className="flex justify-between"><span className="text-slate-500">Booking Type</span><strong>{checkInMode === 'group' ? 'Group Booking' : selectedBooking ? `Reservation (${selectedBooking.id})` : 'Walk-in'}</strong></div>
-                          <div className="flex justify-between"><span className="text-slate-500">Room(s)</span><strong>{checkInMode === 'group' ? groupRooms.map(g => `Rm ${g.roomNumber}`).join(', ') : selectedRoomNumber ? `Room ${selectedRoomNumber} (${roomType})` : 'Not selected'}</strong></div>
-                          <div className="flex justify-between"><span className="text-slate-500">Dates</span><strong className="font-mono">{checkInDate} → {checkOutDate || 'Open'} ({stayNights}N)</strong></div>
-                          <div className="flex justify-between"><span className="text-slate-500">Occupancy</span><strong>{adults} Adult(s), {children} Child(ren), {extraGuestExplicitCount} Extra Guest(s)</strong></div>
-                          <div className="flex justify-between"><span className="text-slate-500">Meal Plan</span><strong>{mealPlan}</strong></div>
-                        </div>
-
-                        <div className="p-4 rounded-xl border border-luxury-brown-200 bg-[#FAF7F2]/60 space-y-2 text-xs">
-                          <h3 className="font-serif font-bold text-sm text-luxury-brown-950 border-b border-luxury-brown-100 pb-1.5">Primary &amp; Extra Guests</h3>
-                          <div className="flex justify-between"><span className="text-slate-500">Primary Guest</span><strong>{guestName || '—'}</strong></div>
-                          <div className="flex justify-between"><span className="text-slate-500">Mobile</span><strong className="font-mono">{mobile || '—'}</strong></div>
-                          <div className="flex justify-between"><span className="text-slate-500">Nationality</span><strong>{nationality}</strong></div>
-                          <div className="flex justify-between"><span className="text-slate-500">ID Verification</span><strong>{idType}{idNumber ? ` • ${idNumber}` : ''}</strong></div>
-                          <div className="flex justify-between"><span className="text-slate-500">Extra Guests</span><strong>{secondaryGuests.filter(g => g.fullName).map(g => g.fullName).join(', ') || 'None'}</strong></div>
-                        </div>
-                      </div>
-
-                      <div className="p-4 rounded-xl border border-luxury-brown-200 bg-white space-y-2 text-xs font-mono">
-                        <h3 className="font-serif font-sans font-bold text-sm text-luxury-brown-950 border-b border-luxury-brown-100 pb-1.5">Charges &amp; Settlement Breakdown</h3>
-                        {liveCheckInCharges.map((ch, idx) => (
-                          <div key={`${ch.id}-${idx}`} className="flex justify-between text-slate-700">
-                            <span>{ch.description}{ch.roomNumber ? ` (Rm ${ch.roomNumber})` : ''}</span>
-                            <strong className="text-slate-900">₹{Number(ch.amount || 0).toLocaleString('en-IN')}</strong>
-                          </div>
-                        ))}
-                        {computedBaseDiscount > 0 && (
-                          <div className="flex justify-between text-rose-700"><span>Discount</span><strong>− ₹{computedBaseDiscount.toLocaleString('en-IN')}</strong></div>
-                        )}
-                        {computedNegotiatedAdjustment > 0 && (
-                          <div className="flex justify-between text-rose-700"><span>Settlement Adjustment</span><strong>− ₹{computedNegotiatedAdjustment.toLocaleString('en-IN')}</strong></div>
-                        )}
-                        <div className="flex justify-between text-emerald-800"><span>GST ({gstPercent}%)</span><strong>₹{gstTax.toLocaleString('en-IN')}</strong></div>
-                        <div className="flex justify-between text-sm font-extrabold text-luxury-brown-950 pt-1.5 border-t border-slate-200">
-                          <span>FINAL PAYABLE</span>
-                          <span>₹{finalAmount.toLocaleString('en-IN')}</span>
-                        </div>
-                        {advanceAmount > 0 && (
-                          <div className="flex justify-between text-emerald-700"><span>Advance Carried Forward</span><strong>₹{advanceAmount.toLocaleString('en-IN')}</strong></div>
-                        )}
-                        {isHybridCheckInPay ? (
-                          activeCheckInSplits.map((sp, i) => (
-                            <div key={i} className="flex justify-between text-emerald-700">
-                              <span>Received via {sp.method}{sp.ref ? ` (${sp.ref})` : ''}</span>
-                              <strong>₹{Number(sp.amount || 0).toLocaleString('en-IN')}</strong>
-                            </div>
-                          ))
-                        ) : effectiveDeskReceivedNow > 0 ? (
-                          <div className="flex justify-between text-emerald-700">
-                            <span>Received via {paymentMethod}{singlePaymentRef ? ` (${singlePaymentRef})` : ''}</span>
-                            <strong>₹{effectiveDeskReceivedNow.toLocaleString('en-IN')}</strong>
-                          </div>
-                        ) : null}
-                        <div className="flex justify-between text-sm font-extrabold pt-1 border-t border-slate-100">
-                          <span className="text-[#8B691E]">BALANCE DUE</span>
-                          <span className={balanceAmount > 0 ? 'text-rose-700' : 'text-emerald-700'}>₹{balanceAmount.toLocaleString('en-IN')}</span>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2 pt-1">
-                        <label className="flex items-center gap-2.5 text-xs font-medium text-slate-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={confirmGuestChecked}
-                            onChange={(e) => setConfirmGuestChecked(e.target.checked)}
-                            className="w-4 h-4 accent-[#B5822D] rounded"
-                          />
-                          <span>I have reviewed the guest details and ID verification status.</span>
-                        </label>
-                        <label className="flex items-center gap-2.5 text-xs font-medium text-slate-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={confirmRoomChecked}
-                            onChange={(e) => setConfirmRoomChecked(e.target.checked)}
-                            className="w-4 h-4 accent-[#B5822D] rounded"
-                          />
-                          <span>I have confirmed the room(s), stay dates, charges, and payment amounts.</span>
-                        </label>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* WIZARD FOOTER NAVIGATION BAR */}
-                <div className="px-5 py-4 bg-[#FAF7F2] border-t border-luxury-brown-200 flex flex-wrap items-center justify-between gap-3 no-print">
-                  <div className="flex items-center gap-2">
-                    {wizardStep > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => setWizardStep(prev => Math.max(1, prev - 1) as 1 | 2 | 3 | 4 | 5)}
-                        className="px-4 py-2.5 rounded-xl border border-luxury-brown-300 bg-white hover:bg-slate-50 text-xs font-bold text-luxury-brown-900 cursor-pointer"
-                      >
-                        ← Back
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    {wizardStep < 5 ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (wizardStep === 1) {
-                            if (checkInMode === 'single' && !selectedRoomNumber) {
-                              showToast('Please select an available room before continuing.', 'warning');
-                              return;
-                            }
-                            if (checkInMode === 'group' && groupRooms.length === 0) {
-                              showToast('Please add at least one room to the Group Booking.', 'warning');
-                              return;
-                            }
-                          }
-                          if (wizardStep === 2) {
-                            if (!guestName.trim() || !mobile.trim()) {
-                              showToast('Please enter Guest Full Name and Mobile Number.', 'warning');
-                              return;
-                            }
-                          }
-                          setWizardStep(prev => Math.min(5, prev + 1) as 1 | 2 | 3 | 4 | 5);
-                        }}
-                        className="px-5 py-2.5 rounded-xl bg-[#F6DE98] hover:bg-[#E8CE84] border border-[#C49A3A] text-[#17120F] text-xs font-extrabold shadow-2xs cursor-pointer"
-                      >
-                        Continue →
-                      </button>
-                    ) : null}
-
-                    {(wizardStep === 4 || wizardStep === 5 || Boolean(selectedBooking) || Boolean(editingCheckIn)) && (
-                      <button
-                        type="submit"
-                        disabled={wizardStep === 5 && (!confirmGuestChecked || !confirmRoomChecked)}
-                        className="px-5 py-2.5 rounded-xl bg-luxury-brown-950 hover:bg-luxury-brown-900 disabled:opacity-40 text-luxury-gold-300 border border-[#C49A3A] text-xs font-extrabold flex items-center gap-1.5 shadow-sm cursor-pointer"
-                      >
-                        <FileCheck className="w-4 h-4" />
-                        {editingCheckIn
-                          ? `Update Stay (${editingCheckIn.id})`
-                          : selectedBooking
-                          ? `Complete Reservation Check-In (${selectedBooking.id})`
-                          : '✓ Complete Check-In & Generate GRC'}
-                      </button>
-                    )}
-                  </div>
+                  </section>
                 </div>
               </div>
-
-              {/* RIGHT COLUMN: STICKY LIVE BOOKING SUMMARY CARD (directstay-checkin-v3 format in DirectStay Luxury UI) */}
-              <aside className="bg-white border border-luxury-brown-200 rounded-2xl shadow-xs overflow-hidden xl:sticky xl:top-4 no-print">
-                <div className="bg-gradient-to-br from-[#1F1712] to-[#33261E] text-white p-5">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-[#E8BD6F] font-extrabold block">
-                    LIVE BOOKING SUMMARY
+              {/* MOBILE STICKY TOTAL & ACTION BAR */}
+              <div className="lg:hidden sticky bottom-0 z-20 -mx-1 px-3 py-2.5 bg-white/95 backdrop-blur border-t-2 border-[#C49A3A] rounded-t-2xl shadow-lg flex items-center justify-between gap-3 no-print">
+                <div className="font-mono leading-tight">
+                  <span className="text-[10px] uppercase text-slate-500 block">Total / Due</span>
+                  <strong className="text-sm text-[#263449]">₹{finalAmount.toLocaleString('en-IN')}</strong>
+                  <span className={`text-[11px] ml-2 font-bold ${balanceAmount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    {balanceAmount > 0 ? `Due ₹${balanceAmount.toLocaleString('en-IN')}` : 'PAID'}
                   </span>
-                  <h3 className="text-base font-serif font-bold mt-1 text-white" style={{ color: '#FFFFFF' }}>
-                    {checkInMode === 'group'
-                      ? `${groupRooms.length} Room(s) • ${groupRooms.map(g => g.roomNumber).join(', ') || 'Group'}`
-                      : selectedRoomNumber
-                      ? `Room ${selectedRoomNumber} • ${roomType || 'Standard'}`
-                      : 'Select Room'}
-                  </h3>
-                  <p className="text-xs text-[#D6C7B2] mt-1 font-mono">
-                    {stayNights} night{stayNights === 1 ? '' : 's'} &nbsp;•&nbsp; {adults || 1} adult{Number(adults) === 1 ? '' : 's'}
-                    {Number(children) > 0 ? ` + ${children} child` : ''}
-                    {extraGuestExplicitCount > 0 ? ` + ${extraGuestExplicitCount} extra` : ''}
-                  </p>
                 </div>
-
-                <div className="p-5 space-y-3 text-xs">
-                  <span className="text-[10px] font-mono uppercase tracking-wider font-extrabold text-slate-400 block">
-                    Itemized charges
-                  </span>
-
-                  <div className="space-y-2 font-mono">
-                    {liveCheckInCharges.map((ch, idx) => (
-                      <div key={`sum-${ch.id}-${idx}`} className="flex justify-between gap-2 text-slate-600">
-                        <span className="truncate">
-                          {ch.description}
-                          {ch.roomNumber ? ` (${ch.roomNumber})` : ''}
-                        </span>
-                        <strong className="text-slate-900 shrink-0">₹{Number(ch.amount || 0).toLocaleString('en-IN')}</strong>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="border-t border-slate-200 pt-3 space-y-2 font-mono">
-                    <div className="flex justify-between text-slate-600">
-                      <span>Subtotal</span>
-                      <strong className="text-slate-900">₹{rawChargesSubtotal.toLocaleString('en-IN')}</strong>
-                    </div>
-                    <div className="flex justify-between text-slate-600">
-                      <span>Discount</span>
-                      <strong className="text-rose-700">− ₹{computedBaseDiscount.toLocaleString('en-IN')}</strong>
-                    </div>
-                    {computedNegotiatedAdjustment > 0 && (
-                      <div className="flex justify-between text-slate-600">
-                        <span>Settlement adjustment</span>
-                        <strong className="text-rose-700">− ₹{computedNegotiatedAdjustment.toLocaleString('en-IN')}</strong>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-slate-600">
-                      <span>GST ({gstPercent}%)</span>
-                      <strong className="text-slate-900">₹{gstTax.toLocaleString('en-IN')}</strong>
-                    </div>
-                  </div>
-
-                  <div className="p-3.5 rounded-xl bg-[#FFF3D8] border border-[#E6CE9A] flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] font-bold text-[#936C2B] uppercase block">Final settlement price</span>
-                      <strong className="text-xl font-mono font-extrabold text-[#51350C]">
-                        ₹{finalAmount.toLocaleString('en-IN')}
-                      </strong>
-                    </div>
-                    <span className="text-xl font-serif font-bold text-[#A97628]">₹</span>
-                  </div>
-
-                  <div className="space-y-1.5 font-mono pt-1">
-                    {advanceAmount > 0 && (
-                      <div className="flex justify-between text-[11px] text-emerald-700 pl-2 border-l-2 border-emerald-300">
-                        <span>Advance paid</span>
-                        <strong>₹{advanceAmount.toLocaleString('en-IN')}</strong>
-                      </div>
-                    )}
-                    {isHybridCheckInPay &&
-                      activeCheckInSplits.map((sp, i) => (
-                        <div key={`sp-sum-${i}`} className="flex justify-between text-[11px] text-emerald-700 pl-2 border-l-2 border-emerald-300">
-                          <span>{sp.method} received</span>
-                          <strong>₹{Number(sp.amount || 0).toLocaleString('en-IN')}</strong>
-                        </div>
-                      ))}
-                    <div className="flex justify-between text-slate-600 pt-1">
-                      <span>Total received</span>
-                      <strong className="text-emerald-700">
-                        ₹{(advanceAmount + effectiveDeskReceivedNow).toLocaleString('en-IN')}
-                      </strong>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Balance due</span>
-                      <strong className={balanceAmount > 0 ? 'text-rose-700' : 'text-emerald-700'}>
-                        ₹{balanceAmount.toLocaleString('en-IN')}
-                      </strong>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end pt-1">
-                    <span
-                      className={`px-3 py-1 rounded-full text-[10px] font-mono font-extrabold uppercase ${
-                        balanceAmount <= 0 && finalAmount > 0
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : advanceAmount + effectiveDeskReceivedNow > 0
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-rose-100 text-rose-800'
-                      }`}
-                    >
-                      {balanceAmount <= 0 && finalAmount > 0
-                        ? 'Paid'
-                        : advanceAmount + effectiveDeskReceivedNow > 0
-                        ? 'Partially Paid'
-                        : 'Unpaid'}
-                    </span>
-                  </div>
-                </div>
-              </aside>
+                <button
+                  type="submit"
+                  disabled={isSubmittingAction}
+                  className="px-4 py-2 rounded-xl bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50 border border-[#C49A3A] text-xs font-extrabold cursor-pointer disabled:opacity-50"
+                >
+                  {editingCheckIn ? 'Update Stay' : isFutureAdvanceArrival ? 'Confirm Advance Booking' : 'Reserve & Check-In'}
+                </button>
+              </div>
             </form>
               </>
             )}
