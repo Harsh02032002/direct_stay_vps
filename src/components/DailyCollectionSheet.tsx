@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Room, Booking, GuestCheckIn, Invoice, Expense, HotelSettings, PosOrder, CashHandover, Staff } from '../types';
 import DirtyRoomsPanel from './DirtyRoomsPanel';
+import { showToast } from '../utils/toast';
 import { 
   Printer, Download, Calendar, ChevronLeft, ChevronRight, 
   Search, RefreshCw, FileSpreadsheet, DollarSign, ArrowDown, Edit3, Check,
@@ -22,6 +23,17 @@ interface DailyCollectionSheetProps {
 const localTodayStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const toLocalYmd = (raw?: string): string => {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dt = new Date(s);
+  if (!Number.isNaN(dt.getTime())) {
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  }
+  return s.substring(0, 10);
 };
 
 export default function DailyCollectionSheet({
@@ -94,15 +106,21 @@ export default function DailyCollectionSheet({
   const reportRows = useMemo(() => {
     const rowsMap = new Map<string, any>();
 
-    // 1. Check-ins active on the selected date
+    // 1. Check-ins active or settled on the selected date
     checkins.forEach((c) => {
-      const inDate = (c.checkInDate || '').substring(0, 10);
-      const outDate = (c.checkOutDate || '').substring(0, 10);
-      
+      const inDate = toLocalYmd(c.checkInDate);
+      const outDate = toLocalYmd(c.checkOutDate);
+      const checkedOutLocal = toLocalYmd(c.checkedOutDateTime);
+      const hasPaymentOnDate = Array.isArray(c.payments)
+        ? c.payments.some((p: any) => toLocalYmd(p?.dateTime || p?.date) === selectedDate)
+        : false;
+
       const isActiveOnDate =
         inDate === selectedDate ||
         outDate === selectedDate ||
-        (inDate <= selectedDate && outDate >= selectedDate) ||
+        checkedOutLocal === selectedDate ||
+        hasPaymentOnDate ||
+        (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate) ||
         (!!inDate && !outDate && inDate <= selectedDate);
 
       if (isActiveOnDate) {
@@ -118,22 +136,30 @@ export default function DailyCollectionSheet({
           nights: Math.max(1, Math.round(Math.abs(new Date(outDate || selectedDate).getTime() - new Date(inDate || selectedDate).getTime()) / (1000 * 60 * 60 * 24)) || 1),
           advancePayment: Number(c.advanceAmount ?? (c as any).advancePayment ?? 0),
           paymentMethod: c.paymentMethod || 'Cash',
-          extraCharges: c.extraCharges || []
+          extraCharges: c.extraCharges || [],
+          separateInvoices: []
         });
       }
     });
 
-    // 2. Invoices generated or settled on selected date
+    // 2. Invoices generated or settled on selected date (skip superseded/cancelled; never overwrite primary stay invoice with INV-SEP)
     invoices.forEach((inv) => {
-      const invDate = (inv.dateCreated || (inv as any).createdAt || (inv as any).invoiceDate || '').substring(0, 10);
-      const inDate = (inv.checkInDate || '').substring(0, 10);
-      const outDate = (inv.checkOutDate || '').substring(0, 10);
+      if (inv.isSuperseded || inv.invoiceStatus === 'Superseded' || inv.invoiceStatus === 'Cancelled') {
+        return;
+      }
+      const invDate = toLocalYmd(inv.dateCreated || (inv as any).createdAt || (inv as any).invoiceDate || '');
+      const inDate = toLocalYmd(inv.checkInDate);
+      const outDate = toLocalYmd(inv.checkOutDate);
+      const hasPayOnDate = Array.isArray(inv.paymentHistory)
+        ? inv.paymentHistory.some((p: any) => toLocalYmd(p?.date || p?.dateTime) === selectedDate)
+        : false;
 
       const isMatch =
         invDate === selectedDate ||
         inDate === selectedDate ||
         outDate === selectedDate ||
-        (inDate <= selectedDate && outDate >= selectedDate);
+        hasPayOnDate ||
+        (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate);
 
       if (isMatch) {
         const key = `${inv.roomNumber}_${inv.guestName}`;
@@ -145,29 +171,38 @@ export default function DailyCollectionSheet({
           checkOutDate: outDate,
           roomRate: inv.roomCharges || 0,
           nights: inv.nights || 1,
-          extraCharges: []
+          extraCharges: [],
+          separateInvoices: []
         };
 
-        existing.invoice = inv;
+        const isSep = Boolean(inv.isSeparateInvoice || String(inv.id || '').startsWith('INV-SEP-'));
+        if (isSep) {
+          existing.separateInvoices = [...(existing.separateInvoices || []), inv];
+        } else {
+          existing.invoice = inv;
+        }
         rowsMap.set(key, existing);
       }
     });
 
-    // 3. Bookings on that date if not already in checkins
+    // 3. Bookings on that date if not already in checkins (attach matching booking even if checkin exists so booking payments/metadata are available)
     bookings.forEach((b) => {
-      const inDate = (b.checkInDate || '').substring(0, 10);
-      const outDate = (b.checkOutDate || '').substring(0, 10);
-      const bookedOn = (b.bookingDate || '').substring(0, 10);
+      const inDate = toLocalYmd(b.checkInDate);
+      const outDate = toLocalYmd(b.checkOutDate);
+      const bookedOn = toLocalYmd(b.bookingDate);
       const isActive =
         inDate === selectedDate ||
         outDate === selectedDate ||
-        (inDate <= selectedDate && outDate >= selectedDate) ||
+        (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate) ||
         (!!inDate && !outDate && inDate <= selectedDate) ||
         (bookedOn === selectedDate && Number(b.advanceAmount || 0) > 0);
 
       if (isActive && b.status !== 'Cancelled') {
         const key = `${b.roomNumber}_${b.guestName}`;
-        if (!rowsMap.has(key)) {
+        const existing = rowsMap.get(key);
+        if (existing) {
+          existing.booking = b;
+        } else {
           rowsMap.set(key, {
             source: 'booking',
             booking: b,
@@ -179,7 +214,8 @@ export default function DailyCollectionSheet({
             nights: b.nights || 1,
             advancePayment: Number(b.advanceAmount ?? (b as any).advancePayment ?? 0),
             paymentMethod: b.paymentMethod || 'Cash',
-            extraCharges: []
+            extraCharges: [],
+            separateInvoices: []
           });
         }
       }
@@ -187,7 +223,7 @@ export default function DailyCollectionSheet({
 
     // 4. POS Food Orders on selected date
     const ordersOnDate = posOrders.filter((o) => {
-      const oDate = ((o as any).createdAt || (o as any).orderTime || (o as any).timestamp || '').substring(0, 10);
+      const oDate = toLocalYmd((o as any).date || (o as any).createdAt || (o as any).orderTime || (o as any).timestamp || '');
       return oDate === selectedDate;
     });
 
@@ -201,54 +237,150 @@ export default function DailyCollectionSheet({
       const roomNumber = row.roomNumber || 'N/A';
       const nights = row.nights || 1;
 
-      // Catalog Rack Tariff vs Agreed / Charged Rate
-      const matchedRoom = rooms.find(r => r.number === roomNumber);
-      const rackTariff = matchedRoom ? matchedRoom.rate * nights : (row.roomRate || 2000) * nights;
-      let roomTariff = inv ? inv.roomCharges : (c ? c.roomRate * nights : row.roomRate * nights);
+      // Catalog Rack Tariff vs Agreed / Charged Rate (supports both single and multi-room bookings like "101, 102")
+      const splitRoomNums = String(roomNumber)
+        .split(',')
+        .map((rn: string) => rn.trim())
+        .filter(Boolean);
+      const bookedRoomsArr: any[] =
+        (Array.isArray(c?.bookedRooms) && c.bookedRooms.length > 0
+          ? c.bookedRooms
+          : Array.isArray(b?.bookedRooms) && b.bookedRooms.length > 0
+          ? b.bookedRooms
+          : []) as any[];
+
+      let rackTariff = 0;
+      if (bookedRoomsArr.length > 0) {
+        rackTariff = bookedRoomsArr.reduce((sum, br) => {
+          const rmObj = rooms.find(r => r.number === String(br.roomNumber || '').trim());
+          const origRate = Number(br.originalRate || rmObj?.rate || br.rate || 0);
+          return sum + origRate * nights;
+        }, 0);
+      } else if (splitRoomNums.length > 0) {
+        rackTariff = splitRoomNums.reduce((sum, rn) => {
+          const rmObj = rooms.find(r => r.number === rn);
+          return sum + (rmObj ? Number(rmObj.rate || 0) * nights : 0);
+        }, 0);
+      }
+      if (!rackTariff || rackTariff <= 0) {
+        rackTariff = (row.roomRate || 2000) * nights;
+      }
+
+      let roomTariff = 0;
+      if (inv && Number(inv.roomCharges) > 0) {
+        roomTariff = Number(inv.roomCharges);
+      } else if (bookedRoomsArr.length > 0) {
+        roomTariff = bookedRoomsArr.reduce((sum, br) => sum + Number(br.rate || 0) * nights, 0);
+      } else if (c && Number(c.roomRate) > 0) {
+        roomTariff = Number(c.roomRate) * Math.max(1, splitRoomNums.length) * nights;
+      } else {
+        roomTariff = (row.roomRate || 0) * nights;
+      }
       if (!roomTariff || roomTariff <= 0) roomTariff = rackTariff;
 
-      // GST on room
+      // GST on stay
       let gstAmount: number | string = 0;
       if (inv) {
-        gstAmount = inv.tax || inv.gst || 0;
+        gstAmount = inv.tax ?? inv.gst ?? 0;
+      } else if (c && c.gstAmount !== undefined) {
+        gstAmount = Number(c.gstAmount) || 0;
       } else if (b?.otaName === 'MakeMyTrip' || b?.otaName === 'MMT') {
         gstAmount = 'MMT';
       } else {
-        // GST from booking, else from Settings default rate
         const settingsRate = hotelSettings?.isGstEnabled === false ? 0 : Number(hotelSettings?.defaultGstRate ?? 0);
         gstAmount = b && b.gstAmount !== undefined ? Number(b.gstAmount) : Math.round((roomTariff * settingsRate) / 100);
       }
 
-      // Room Payment Modes
+      // Room Payment Modes (Hybrid / Split Payment Aware across checkin.payments, invoice.paymentHistory, invoice.paymentDetails, booking.payments)
       let cashPay = 0;
       let upiPay = 0;
       let iciciPay = 0; // Card / Bank / Online
 
-      // Payments from Invoice
-      if (inv && Array.isArray(inv.paymentDetails)) {
-        inv.paymentDetails.forEach((p: any) => {
-          const m = (p.mode || p.method || '').toLowerCase();
-          const amt = Number(p.amount) || 0;
-          if (m.includes('cash')) cashPay += amt;
-          else if (m.includes('upi') || m.includes('gpay') || m.includes('phonepe') || m.includes('paytm')) upiPay += amt;
-          else iciciPay += amt;
-        });
+      const addByMode = (modeRaw: string, amtRaw: number) => {
+        const amt = Number(amtRaw) || 0;
+        if (amt <= 0) return;
+        const m = String(modeRaw || 'Cash').toLowerCase();
+        if (m.includes('cash')) cashPay += amt;
+        else if (m.includes('upi') || m.includes('gpay') || m.includes('phonepe') || m.includes('paytm') || m.includes('qr')) upiPay += amt;
+        else if (m.includes('card') || m.includes('bank') || m.includes('icici') || m.includes('online') || m.includes('neft') || m.includes('rtgs') || m.includes('imps')) iciciPay += amt;
+        else cashPay += amt;
+      };
+
+      const structuredPayments: Array<{ id: string; mode: string; amount: number; isAdv: boolean }> = [];
+      const seenPayIds = new Set<string>();
+      let seenAdvanceTotal = 0;
+
+      const pushStructured = (idRaw: any, modeRaw: any, amtRaw: any, notesRaw?: any, typeRaw?: any) => {
+        const amt = Number(amtRaw) || 0;
+        if (amt <= 0) return;
+        const idStr = String(idRaw || '');
+        const isAdv =
+          String(typeRaw || '').toLowerCase().includes('advance') ||
+          String(notesRaw || '').toLowerCase().includes('advance') ||
+          idStr.toLowerCase().includes('adv');
+        if (idStr && seenPayIds.has(idStr)) return;
+        // Collapse duplicate advance records across booking/checkin/invoice (e.g. pay-adv-X, adv-X, PAY-X-adv)
+        if (isAdv && seenAdvanceTotal > 0 && Math.abs(seenAdvanceTotal - amt) < 1) {
+          return;
+        }
+        if (idStr) seenPayIds.add(idStr);
+        if (isAdv) seenAdvanceTotal += amt;
+        structuredPayments.push({ id: idStr, mode: String(modeRaw || 'Cash'), amount: amt, isAdv });
+      };
+
+      if (Array.isArray(c?.payments) && c.payments.length > 0) {
+        c.payments.forEach((p: any, i: number) =>
+          pushStructured(p.id || `cp-${i}`, p.paymentMethod || p.method, p.amount, p.notes, p.paymentType)
+        );
+      }
+      if (inv && Array.isArray(inv.paymentHistory) && inv.paymentHistory.length > 0) {
+        inv.paymentHistory.forEach((p: any, i: number) =>
+          pushStructured(p.id || `iph-${i}`, p.paymentMethod || p.mode || p.method, p.amount, p.notes)
+        );
+      }
+      if (inv && Array.isArray((inv as any).paymentDetails) && (inv as any).paymentDetails.length > 0) {
+        (inv as any).paymentDetails.forEach((p: any, i: number) =>
+          pushStructured(p.id || `ipd-${i}`, p.mode || p.method || p.paymentMethod, p.amount, p.notes)
+        );
+      }
+      if (Array.isArray((b as any)?.payments) && (b as any).payments.length > 0) {
+        (b as any).payments.forEach((p: any, i: number) =>
+          pushStructured(p.id || `bp-${i}`, p.paymentMethod || p.method, p.amount, p.notes, p.paymentType)
+        );
+      }
+
+      if (structuredPayments.length > 0) {
+        structuredPayments.forEach(sp => addByMode(sp.mode, sp.amount));
       } else {
-        // Fallback to check-in or booking payment mode
-        const pMode = (c?.paymentMethod || b?.paymentMethod || 'Cash').toLowerCase();
-        const paid = Number(c?.advanceAmount || b?.advanceAmount || c?.advancePayment || b?.advancePayment || c?.totalPaid || inv?.paidAmount || inv?.advancePaid || 0);
-        if (pMode.includes('cash')) cashPay = paid;
-        else if (pMode.includes('upi')) upiPay = paid;
-        else if (pMode.includes('card') || pMode.includes('bank') || pMode.includes('icici') || pMode.includes('online')) iciciPay = paid;
-        else cashPay = paid;
+        const pMode = String(c?.paymentMethod || b?.paymentMethod || inv?.paymentMethod || 'Cash');
+        // Handle summary strings like "Cash ₹4000 + UPI ₹345" if ever encountered without structured array
+        const splitMatches = Array.from(pMode.matchAll(/(Cash|UPI|Card|Bank(?:\s*Transfer)?|Online)\s*₹?\s*([\d.]+)/gi));
+        if (splitMatches.length > 0) {
+          splitMatches.forEach(m => addByMode(m[1], Number(m[2])));
+        } else {
+          const paid = Number(
+            inv?.paidAmount ??
+              inv?.amountPaid ??
+              ((Number(c?.advanceAmount || 0) + Number(c?.cashAmountPaid || 0) + Number(c?.onlineAmountPaid || 0)) ||
+                Number(b?.advanceAmount || 0))
+          );
+          addByMode(pMode, paid);
+        }
       }
 
       // Balance
       const totalPaidRoom = cashPay + upiPay + iciciPay;
-      const totalRoomPayable = roomTariff + (typeof gstAmount === 'number' ? gstAmount : 0);
-      let balance = Math.max(0, totalRoomPayable - totalPaidRoom);
+      const totalStayPayable =
+        inv && Number(inv.finalAmount) > 0
+          ? Number(inv.finalAmount)
+          : c && Number(c.totalAmount) > 0
+          ? Number(c.totalAmount)
+          : roomTariff + (typeof gstAmount === 'number' ? gstAmount : 0);
+      let balance = Math.max(0, Math.round((totalStayPayable - totalPaidRoom) * 100) / 100);
       if (inv && typeof inv.pendingAmount === 'number') {
         balance = inv.pendingAmount;
+      } else if (c && typeof c.pendingAmount === 'number') {
+        balance = c.pendingAmount;
       }
 
       // Room Amenities & Extra Charges
@@ -430,7 +562,7 @@ export default function DailyCollectionSheet({
         })
       );
       setIsEditingCounter(false);
-      alert('✓ Daily counter reconciliation saved for ' + formattedDisplayDate);
+      showToast(`Daily counter reconciliation saved for ${formattedDisplayDate}.`, 'success');
     } catch {}
   };
 

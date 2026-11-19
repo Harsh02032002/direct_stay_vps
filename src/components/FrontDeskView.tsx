@@ -825,7 +825,16 @@ export default function FrontDeskView({
     onUpdateBookings(
       bookings.map(b =>
         matchesFinalizedBooking(b)
-          ? { ...b, isCheckedIn: false, isCompleted: true, status: 'CheckedOut' as any }
+          ? ({
+              ...b,
+              isCheckedIn: false,
+              isCompleted: true,
+              isCheckedOut: true,
+              status: 'CheckedOut' as any,
+              amountPaid: totalPaidFinal,
+              dueAmount: finalPending,
+              paymentStatus: finalPending <= 0 ? 'Paid' : totalPaidFinal > 0 ? 'Partially Paid' : 'Unpaid',
+            } as any)
           : b
       )
     );
@@ -965,17 +974,31 @@ export default function FrontDeskView({
     const finalInvoice: Invoice = {
       ...rawFinalInvoice,
       paymentMethod: resolvedSummaryMethod as any,
-      ...(nextPayments.length > 1
+      ...(nextPayments.length >= 1
         ? {
             paymentHistory: nextPayments
               .filter(p => p && Number(p.amount) > 0)
-              .map(p => ({
-                id: p.id,
-                amount: Number(p.amount),
-                paymentMethod: String(p.paymentMethod || 'Cash') as any,
-                date: String(p.dateTime || todayStr).slice(0, 10),
-                notes: p.notes,
-              })),
+              .map(p => {
+                const rawDt = String(p.dateTime || '').trim();
+                let localDate = todayStr;
+                if (/^\d{4}-\d{2}-\d{2}$/.test(rawDt)) {
+                  localDate = rawDt;
+                } else if (rawDt) {
+                  const parsed = new Date(rawDt);
+                  if (!Number.isNaN(parsed.getTime())) {
+                    localDate = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+                  } else {
+                    localDate = rawDt.slice(0, 10);
+                  }
+                }
+                return {
+                  id: p.id,
+                  amount: Number(p.amount),
+                  paymentMethod: String(p.paymentMethod || 'Cash') as any,
+                  date: localDate,
+                  notes: p.notes,
+                };
+              }),
           }
         : {}),
     };

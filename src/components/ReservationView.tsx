@@ -144,6 +144,15 @@ export default function ReservationView({
     hotelSettings?.isGstEnabled === false ? 0 : Number(hotelSettings?.defaultGstRate ?? 5)
   );
 
+  // Hybrid / Split Advance Payment State
+  const [isHybridAdvance, setIsHybridAdvance] = useState<boolean>(false);
+  const [advanceSplitRows, setAdvanceSplitRows] = useState<
+    Array<{ id: string; method: PaymentMethod; amount: number | ''; ref: string }>
+  >([
+    { id: 'adv-sp-1', method: 'Cash', amount: '', ref: '' },
+    { id: 'adv-sp-2', method: 'UPI', amount: '', ref: '' },
+  ]);
+
   // Corporate / Multi-Room Selection State (driven by No. of Rooms)
   const [numberOfRooms, setNumberOfRooms] = useState<number>(1);
   const [isMultiRoomMode, setIsMultiRoomMode] = useState<boolean>(false);
@@ -971,6 +980,11 @@ export default function ReservationView({
     setBookingPrice(2000);
     setBookingGstRate(configuredDefaultGst);
     setAdvanceAmount(0);
+    setIsHybridAdvance(false);
+    setAdvanceSplitRows([
+      { id: 'adv-sp-1', method: 'Cash', amount: '', ref: '' },
+      { id: 'adv-sp-2', method: 'UPI', amount: '', ref: '' },
+    ]);
     setSelectedServiceIds([]);
     setPaymentMethod('Cash');
     setTransactionId('');
@@ -1041,7 +1055,26 @@ export default function ReservationView({
     );
     setSelectedServiceIds((bk.bookedServices || []).map(s => String(s.serviceId)));
     setAdvanceAmount(bk.advanceAmount || 0);
-    setPaymentMethod(bk.paymentMethod || 'Cash');
+    const existingAdvPays: any[] = Array.isArray((bk as any).payments) ? (bk as any).payments : [];
+    if (existingAdvPays.length > 1) {
+      setIsHybridAdvance(true);
+      setAdvanceSplitRows(
+        existingAdvPays.map((p, idx) => ({
+          id: String(p.id || `adv-sp-${idx + 1}`),
+          method: (p.paymentMethod || 'Cash') as PaymentMethod,
+          amount: Number(p.amount) || 0,
+          ref: String(p.transactionId || p.reference || ''),
+        }))
+      );
+      setPaymentMethod((existingAdvPays[0]?.paymentMethod || bk.paymentMethod || 'Cash') as PaymentMethod);
+    } else {
+      setIsHybridAdvance(false);
+      setAdvanceSplitRows([
+        { id: 'adv-sp-1', method: 'Cash', amount: '', ref: '' },
+        { id: 'adv-sp-2', method: 'UPI', amount: '', ref: '' },
+      ]);
+      setPaymentMethod(bk.paymentMethod || 'Cash');
+    }
     setTransactionId(bk.transactionId || '');
     setNotes(bk.notes || '');
     setFormError('');
@@ -1112,6 +1145,11 @@ export default function ReservationView({
     setBookingPrice(firstRate);
     setBookingGstRate(configuredDefaultGst);
     setAdvanceAmount(0);
+    setIsHybridAdvance(false);
+    setAdvanceSplitRows([
+      { id: 'adv-sp-1', method: 'Cash', amount: '', ref: '' },
+      { id: 'adv-sp-2', method: 'UPI', amount: '', ref: '' },
+    ]);
     setSelectedServiceIds([]);
     setPaymentMethod('Cash');
     setTransactionId('');
@@ -1357,6 +1395,57 @@ export default function ReservationView({
     let updatedBookings: Booking[];
     let finalBooking: Booking;
 
+    const activeHybridSplits = isHybridAdvance
+      ? advanceSplitRows.filter(r => (Number(r.amount) || 0) > 0)
+      : [];
+    if (isHybridAdvance && advanceAmount > 0 && activeHybridSplits.length < 2) {
+      setFormError('Hybrid payment requires at least two payment methods with amounts greater than ₹0.');
+      return;
+    }
+    if (advanceAmount > totalPayableWithGst + 0.5) {
+      setFormError(`Advance received (₹${advanceAmount}) cannot exceed Total Payable (₹${totalPayableWithGst}).`);
+      return;
+    }
+
+    const effectiveAdvPaymentMethod: PaymentMethod =
+      isHybridAdvance && activeHybridSplits.length > 0
+        ? activeHybridSplits[0].method
+        : paymentMethod;
+    const buildAdvancePaymentItems = (bkgId: string) => {
+      const bDate = bookingDateInput || getTodayDateStr();
+      if (isHybridAdvance && activeHybridSplits.length > 0) {
+        return activeHybridSplits.map((sp, idx) => ({
+          id: `pay-adv-${bkgId}-${idx + 1}`,
+          bookingId: bkgId,
+          amount: Number(sp.amount) || 0,
+          paymentMethod: sp.method,
+          paymentType: 'Advance Deposit',
+          transactionId: sp.ref.trim() || `ADV-${bkgId}-${idx + 1}`,
+          date: bDate,
+          time: getCurrentTimeStr(),
+          recordedBy: 'Front Desk',
+          notes: `Advance Deposit (${sp.method})`,
+        }));
+      }
+      if (advanceAmount > 0) {
+        return [
+          {
+            id: `pay-adv-${bkgId}`,
+            bookingId: bkgId,
+            amount: advanceAmount,
+            paymentMethod: effectiveAdvPaymentMethod,
+            paymentType: 'Advance Deposit',
+            transactionId: transactionId.trim() || `ADV-${bkgId}`,
+            date: bDate,
+            time: getCurrentTimeStr(),
+            recordedBy: 'Front Desk',
+            notes: 'Advance deposit',
+          },
+        ];
+      }
+      return [];
+    };
+
     if (editingBooking) {
       let allocatedRoomNumber = resolvedBookedRooms
         ? resolvedBookedRooms.map(r => r.roomNumber).join(', ')
@@ -1436,7 +1525,8 @@ export default function ReservationView({
         status: autoStatus,
         isCompleted: autoStatus === 'Cancelled' ? editingBooking.isCompleted : false,
         advanceAmount,
-        paymentMethod,
+        paymentMethod: effectiveAdvPaymentMethod,
+        payments: buildAdvancePaymentItems(editingBooking.id),
         voucherNumber: voucherNumber.trim() || undefined,
         transactionId: transactionId.trim() || undefined,
         notes: notes.trim() || editingBooking.notes,
@@ -1607,7 +1697,8 @@ export default function ReservationView({
         bookedRooms: resolvedBookedRooms,
         isGroupCheckIn: Boolean(resolvedBookedRooms && resolvedBookedRooms.length > 1),
         advanceAmount,
-        paymentMethod,
+        paymentMethod: effectiveAdvPaymentMethod,
+        payments: buildAdvancePaymentItems(newBkgId),
         voucherNumber: voucherNumber.trim() || undefined,
         transactionId: transactionId.trim() || undefined,
         bookingSource,
@@ -3562,51 +3653,205 @@ export default function ReservationView({
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                    <div className="sm:col-span-7 space-y-1.5">
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
                       <label className="text-[10px] font-mono text-slate-600 block uppercase font-bold">Payment Mode</label>
                       <div className="flex flex-wrap gap-1.5">
                         {(['Cash', 'UPI', 'Card', 'Bank Transfer', 'Voucher'] as PaymentMethod[]).map((pm) => {
-                          const checked = paymentMethod === pm;
+                          const checked = !isHybridAdvance && paymentMethod === pm;
                           return (
-                            <label
+                            <button
+                              type="button"
                               key={pm}
-                              onClick={() => setPaymentMethod(pm)}
-                              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-bold cursor-pointer ${
-                                checked ? 'bg-[#FBF4E0] !text-[#17120F] border-[#C49A3A] ring-1 ring-[#C49A3A]' : 'bg-white !text-slate-700 border-slate-200'
+                              onClick={() => {
+                                setIsHybridAdvance(false);
+                                setPaymentMethod(pm);
+                              }}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold cursor-pointer transition-all ${
+                                checked ? 'bg-[#FBF4E0] !text-[#17120F] border-[#C49A3A] ring-1 ring-[#C49A3A]' : 'bg-white !text-slate-700 border-slate-200 hover:bg-slate-50'
                               }`}
                             >
-                              <input type="checkbox" checked={checked} onChange={() => {}} className="pointer-events-none" />
-                              {pm === 'Bank Transfer' ? 'Bank' : pm}
-                            </label>
+                              <span>{pm === 'Bank Transfer' ? 'Bank' : pm}</span>
+                            </button>
                           );
                         })}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsHybridAdvance(true);
+                            const sum = advanceSplitRows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+                            setAdvanceAmount(sum);
+                            if (bookingStatus !== 'Cancelled') {
+                              setBookingStatus(sum > 0 ? 'Confirmed' : 'In Process');
+                            }
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold cursor-pointer transition-all ${
+                            isHybridAdvance
+                              ? 'bg-[#FBF4E0] !text-[#17120F] border-[#C49A3A] ring-1 ring-[#C49A3A]'
+                              : 'bg-white !text-slate-700 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span>⇄ Hybrid / Split</span>
+                        </button>
                       </div>
                     </div>
 
-                    <div className="sm:col-span-5 space-y-1">
-                      <label className="text-[10px] font-mono text-slate-600 block uppercase font-bold">Advance Rupees (₹)</label>
-                      <input
-                        type="number"
-                        min={0}
-                        step="any"
-                        value={advanceAmount}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => {
-                          const adv = parseFloat(e.target.value) || 0;
-                          setAdvanceAmount(adv);
-                          if (bookingStatus !== 'Cancelled') {
-                            if (adv > 0) {
-                              setBookingStatus('Confirmed');
-                            } else {
-                              setBookingStatus('In Process');
+                    {isHybridAdvance ? (
+                      <div className="p-3 rounded-xl bg-[#FFFCF5] border border-[#E7E0D2] space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <span className="text-xs font-bold text-luxury-brown-950 block">
+                              Hybrid Advance — Collect by Multiple Methods
+                            </span>
+                            <span className="text-[10.5px] text-slate-500">
+                              Example: Cash ₹2,000 + UPI ₹3,000
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAdvanceSplitRows(prev => [
+                                ...prev,
+                                { id: `adv-sp-${Date.now()}`, method: 'UPI', amount: '', ref: '' },
+                              ])
                             }
-                          }
-                        }}
-                        placeholder="0"
-                        className="w-full px-3 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-900"
-                      />
-                    </div>
+                            className="px-2.5 py-1 rounded-lg border border-luxury-brown-300 bg-white hover:bg-amber-50 text-[11px] font-bold text-luxury-brown-900 cursor-pointer"
+                          >
+                            + Add Method
+                          </button>
+                        </div>
+
+                        <div className="space-y-2">
+                          {advanceSplitRows.map((row) => (
+                            <div
+                              key={row.id}
+                              className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end bg-white p-2 rounded-lg border border-slate-200"
+                            >
+                              <div className="sm:col-span-4 space-y-0.5">
+                                <label className="text-[9.5px] font-mono uppercase font-bold text-slate-600 block">
+                                  Method
+                                </label>
+                                <select
+                                  value={row.method}
+                                  onChange={(e) => {
+                                    const next = advanceSplitRows.map(r =>
+                                      r.id === row.id ? { ...r, method: e.target.value as PaymentMethod } : r
+                                    );
+                                    setAdvanceSplitRows(next);
+                                  }}
+                                  className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs font-bold bg-white text-slate-900"
+                                >
+                                  <option value="Cash">Cash</option>
+                                  <option value="UPI">UPI</option>
+                                  <option value="Card">Card</option>
+                                  <option value="Bank Transfer">Bank Transfer</option>
+                                  <option value="Online">Online</option>
+                                </select>
+                              </div>
+                              <div className="sm:col-span-3 space-y-0.5">
+                                <label className="text-[9.5px] font-mono uppercase font-bold text-slate-600 block">
+                                  Received (₹)
+                                </label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="any"
+                                  value={row.amount}
+                                  placeholder="0"
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0);
+                                    const next = advanceSplitRows.map(r =>
+                                      r.id === row.id ? { ...r, amount: val } : r
+                                    );
+                                    setAdvanceSplitRows(next);
+                                    const sum = Math.round(next.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100;
+                                    setAdvanceAmount(sum);
+                                    if (bookingStatus !== 'Cancelled') {
+                                      setBookingStatus(sum > 0 ? 'Confirmed' : 'In Process');
+                                    }
+                                  }}
+                                  className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs font-mono font-bold bg-white text-slate-900"
+                                />
+                              </div>
+                              <div className="sm:col-span-4 space-y-0.5">
+                                <label className="text-[9.5px] font-mono uppercase font-bold text-slate-600 block">
+                                  Reference / UTR (Optional)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={row.ref}
+                                  placeholder="Receipt / UTR"
+                                  onChange={(e) => {
+                                    const next = advanceSplitRows.map(r =>
+                                      r.id === row.id ? { ...r, ref: e.target.value } : r
+                                    );
+                                    setAdvanceSplitRows(next);
+                                  }}
+                                  className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs font-mono bg-white text-slate-900"
+                                />
+                              </div>
+                              <div className="sm:col-span-1 flex justify-end">
+                                {advanceSplitRows.length > 2 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const next = advanceSplitRows.filter(r => r.id !== row.id);
+                                      setAdvanceSplitRows(next);
+                                      const sum = Math.round(next.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100;
+                                      setAdvanceAmount(sum);
+                                      if (bookingStatus !== 'Cancelled') {
+                                        setBookingStatus(sum > 0 ? 'Confirmed' : 'In Process');
+                                      }
+                                    }}
+                                    className="px-2 py-1.5 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100 cursor-pointer"
+                                    title="Remove payment method"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-emerald-50/70 border border-emerald-200 text-xs font-mono">
+                          <span className="text-slate-700 font-semibold">Combined Advance Received</span>
+                          <strong className="text-emerald-800 text-sm">₹{advanceAmount.toLocaleString('en-IN')}</strong>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-mono text-slate-600 block uppercase font-bold">Advance Rupees (₹)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            step="any"
+                            value={advanceAmount}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const adv = Math.max(0, parseFloat(e.target.value) || 0);
+                              setAdvanceAmount(adv);
+                              if (bookingStatus !== 'Cancelled') {
+                                setBookingStatus(adv > 0 ? 'Confirmed' : 'In Process');
+                              }
+                            }}
+                            placeholder="0"
+                            className="w-full px-3 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-900"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-mono text-slate-600 block uppercase font-bold">Reference / Transaction ID (Optional)</label>
+                          <input
+                            type="text"
+                            value={transactionId}
+                            onChange={(e) => setTransactionId(e.target.value)}
+                            placeholder="Optional receipt or UTR reference"
+                            className="w-full px-3 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {paymentMethod === 'Voucher' && (

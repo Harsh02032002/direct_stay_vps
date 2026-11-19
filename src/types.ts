@@ -232,6 +232,8 @@ export interface Booking {
   gstRate?: number;
   gstAmount?: number;
   isWithoutGst?: boolean;
+  gstInvoice?: boolean;
+  payments?: any[];
   paymentStatus?: 'Unpaid' | 'Partially Paid' | 'Fully Paid' | 'Payment Failed' | 'Refunded';
   transactionId?: string;
   bookingDate?: string;
@@ -420,6 +422,8 @@ export interface GuestCheckIn {
   gstRate?: number;
   gstAmount?: number;
   isWithoutGst?: boolean;
+  gstInvoice?: boolean;
+  payments?: any[];
   advanceAmount: number;
   cashAmountPaid: number;
   onlineAmountPaid: number;
@@ -550,6 +554,8 @@ export interface AllocatedGuestService {
 export interface SecondaryGuest {
   fullName: string;
   mobile?: string;
+  age?: number | string;
+  gender?: string;
   address?: string;
   aadhaarNumber?: string;
   passportNumber?: string;

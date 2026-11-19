@@ -411,51 +411,74 @@ function mapAppBookingToRecord(
 
   const isOpenStay = Boolean(anyB.isOpenStay || (b.notes && b.notes.includes('[OPEN-STAY]')));
 
-  const paymentsList: PaymentRecordItem[] =
-    Array.isArray(anyB.payments) && anyB.payments.length > 0 ? anyB.payments : [];
-  if (paymentsList.length === 0) {
-    if (Number(b.advanceAmount) > 0) {
-      paymentsList.push({
-        id: `pay-adv-${b.id}`,
-        bookingId: b.id,
-        amount: r2(b.advanceAmount),
-        paymentMethod: (b.paymentMethod as any) || 'UPI',
-        transactionId: b.transactionId || `ADV-${b.id}`,
-        date: b.bookingDate || b.checkInDate,
-        time: '12:00 PM',
-        recordedBy: b.createdBy || 'Front Desk',
-        notes: 'Advance deposit',
-      });
+  const toLocalYmd = (raw?: string, fallback = ''): string => {
+    const s = String(raw || '').trim();
+    if (!s) return fallback;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const dt = new Date(s);
+    if (!Number.isNaN(dt.getTime())) {
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
     }
-    if (Number(b.refundAmount) > 0) {
-      paymentsList.push({
-        id: `pay-ref-${b.id}`,
-        bookingId: b.id,
-        amount: -r2(b.refundAmount),
-        paymentMethod: (b.paymentMethod as any) || 'UPI',
-        transactionId: `REF-${b.id}`,
-        date: b.bookingDate || b.checkInDate,
-        time: '12:00 PM',
-        recordedBy: 'Front Desk',
-        notes: b.cancellationReason ? `Refund: ${b.cancellationReason}` : 'Cancellation Refund',
-      });
-    }
-    (linkedCheckin?.payments || []).forEach((p, idx) => {
-      const anyP = p as any;
-      if (p.paymentType === 'Advance Deposit') return;
-      paymentsList.push({
-        id: p.id || `pay-${b.id}-${idx}`,
-        bookingId: b.id,
-        amount: r2(p.amount || 0),
-        paymentMethod: anyP.method || p.paymentMethod || 'UPI',
-        transactionId: anyP.reference || anyP.transactionId || anyP.transactionReference || `TXN-${idx + 1}`,
-        date: (p.dateTime || b.checkOutDate).slice(0, 10),
-        time: '12:00 PM',
-        recordedBy: anyP.recordedBy || anyP.collectedBy || 'Front Desk',
-        notes: p.notes || p.paymentType,
-      });
+    return s.slice(0, 10) || fallback;
+  };
+
+  const paymentsList: PaymentRecordItem[] = Array.isArray(anyB.payments)
+    ? [...anyB.payments]
+    : [];
+  const seenPaymentIds = new Set(paymentsList.map((p) => String(p?.id || '')).filter(Boolean));
+  const hasAdvanceEntry = paymentsList.some(
+    (p) =>
+      String(p?.id || '').toLowerCase().includes('adv') ||
+      String(p?.notes || '').toLowerCase().includes('advance')
+  );
+
+  if (!hasAdvanceEntry && Number(b.advanceAmount) > 0) {
+    const advId = `pay-adv-${b.id}`;
+    seenPaymentIds.add(advId);
+    paymentsList.push({
+      id: advId,
+      bookingId: b.id,
+      amount: r2(b.advanceAmount),
+      paymentMethod: (b.paymentMethod as any) || 'UPI',
+      transactionId: b.transactionId || `ADV-${b.id}`,
+      date: b.bookingDate || b.checkInDate,
+      time: '12:00 PM',
+      recordedBy: b.createdBy || 'Front Desk',
+      notes: 'Advance deposit',
     });
   }
+  if (Number(b.refundAmount) > 0 && !seenPaymentIds.has(`pay-ref-${b.id}`)) {
+    seenPaymentIds.add(`pay-ref-${b.id}`);
+    paymentsList.push({
+      id: `pay-ref-${b.id}`,
+      bookingId: b.id,
+      amount: -r2(b.refundAmount),
+      paymentMethod: (b.paymentMethod as any) || 'UPI',
+      transactionId: `REF-${b.id}`,
+      date: b.bookingDate || b.checkInDate,
+      time: '12:00 PM',
+      recordedBy: 'Front Desk',
+      notes: b.cancellationReason ? `Refund: ${b.cancellationReason}` : 'Cancellation Refund',
+    });
+  }
+  (linkedCheckin?.payments || []).forEach((p, idx) => {
+    const anyP = p as any;
+    const pid = String(p.id || `pay-${b.id}-${idx}`);
+    if (seenPaymentIds.has(pid)) return;
+    if (p.paymentType === 'Advance Deposit' && (hasAdvanceEntry || Number(b.advanceAmount) > 0)) return;
+    seenPaymentIds.add(pid);
+    paymentsList.push({
+      id: pid,
+      bookingId: b.id,
+      amount: r2(p.amount || 0),
+      paymentMethod: anyP.method || p.paymentMethod || 'UPI',
+      transactionId: anyP.reference || anyP.transactionId || anyP.transactionReference || `TXN-${idx + 1}`,
+      date: toLocalYmd(p.dateTime, b.checkOutDate || b.checkInDate),
+      time: '12:00 PM',
+      recordedBy: anyP.recordedBy || anyP.collectedBy || 'Front Desk',
+      notes: p.notes || p.paymentType,
+    });
+  });
 
   const custName = b.guestName || anyB.customerName || anyB.name || linkedCheckin?.guestName || 'Guest';
 
