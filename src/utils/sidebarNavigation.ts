@@ -86,8 +86,8 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
       },
       {
         id: 'fo-rates-inventory',
-        label: 'Rates & Inventory',
-        iconKey: 'ratesInventory',
+        label: 'Inventory Management',
+        iconKey: 'inventory',
         rbacTab: 'frontDesk',
         target: { activeTab: 'inventory', inventorySubTab: 'products' },
       },

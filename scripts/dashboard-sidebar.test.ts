@@ -44,7 +44,7 @@ test('Left Sidebar matches approved structure including Financial Hub & Point of
     [
       'Reservation List',
       'New Reservation',
-      'Rates & Inventory',
+      'Inventory Management',
       'Group Bookings',
       'Event Bookings',
       'Guest Profiles',

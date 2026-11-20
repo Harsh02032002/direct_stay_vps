@@ -114,8 +114,9 @@ function renderSidebarIcon(iconKey: string, isActive: boolean): React.ReactNode 
       return <CalendarRange className={cls} />;
     case 'newReservation':
       return <CalendarPlus className={cls} />;
+    case 'inventory':
     case 'ratesInventory':
-      return <TrendingUp className={cls} />;
+      return <Package className={cls} />;
     case 'groupBookings':
       return <Users className={cls} />;
     case 'eventBookings':
