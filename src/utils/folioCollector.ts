@@ -485,6 +485,13 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
     }
     (Array.isArray(c?.payments) ? c!.payments : []).forEach((p: AnyRec, i: number) => {
       if (p.paymentType === 'Advance Deposit') return;
+      const isCheckInDeskPay = (
+        String(p.id || '').includes('-checkin') ||
+        String(p.notes || '').toLowerCase().includes('check-in')
+      );
+      if (isCheckInDeskPay && advance > 0 && Math.abs(n(p.amount) - advance) < 0.01) {
+        return;
+      }
       addPay({ id: String(p.id || `cp-${i}`), amount: n(p.amount), method: String(p.paymentMethod || p.method || 'Cash'), date: String(p.date || p.dateTime || '').slice(0, 10), reference: p.referenceNo || p.reference, note: p.notes });
     });
     if (n(b?.refundAmount) > 0) {

@@ -506,6 +506,13 @@ function mapAppBookingToRecord(
     const pid = String(p.id || `pay-${b.id}-${idx}`);
     if (seenPaymentIds.has(pid)) return;
     if (p.paymentType === 'Advance Deposit' && (hasAdvanceEntry || Number(b.advanceAmount) > 0)) return;
+    const isCheckInDeskPay = (
+      String(p.id || '').includes('-checkin') ||
+      String(p.notes || '').toLowerCase().includes('check-in')
+    );
+    if (isCheckInDeskPay && paymentsList.some((bp) => Math.abs(bp.amount - p.amount) < 0.01)) {
+      return;
+    }
     seenPaymentIds.add(pid);
     paymentsList.push({
       id: pid,

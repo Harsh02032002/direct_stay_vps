@@ -315,7 +315,9 @@ export default function DailyCollectionSheet({
         const isAdv =
           String(typeRaw || '').toLowerCase().includes('advance') ||
           String(notesRaw || '').toLowerCase().includes('advance') ||
-          idStr.toLowerCase().includes('adv');
+          String(notesRaw || '').toLowerCase().includes('check-in') ||
+          idStr.toLowerCase().includes('adv') ||
+          idStr.toLowerCase().includes('checkin');
         if (idStr && seenPayIds.has(idStr)) return;
         // Collapse duplicate advance records across booking/checkin/invoice (e.g. pay-adv-X, adv-X, PAY-X-adv)
         if (isAdv && seenAdvanceTotal > 0 && Math.abs(seenAdvanceTotal - amt) < 1) {
