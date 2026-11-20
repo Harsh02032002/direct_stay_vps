@@ -23,6 +23,7 @@ import {
 } from '../types';
 import { exportToCsv, formatCurrency, formatDate } from '../utils/formatters';
 import { useHotelTaxSettings } from '../utils/taxSettings';
+import type { GuestCheckIn, PosItem, PosOrder, Room } from '../../types';
 
 interface ReportsModuleProps {
   activeSubTab: string;
@@ -33,6 +34,11 @@ interface ReportsModuleProps {
   waterLogs: WaterBottleLogEntry[];
   tasks?: HousekeepingTask[];
   rooms?: RoomAsset[];
+  /** Raw app records used for Night Audit tariff & food price deviation register */
+  appCheckins?: GuestCheckIn[];
+  appPosOrders?: PosOrder[];
+  appPosItems?: PosItem[];
+  appRooms?: Room[];
   onOpenRecordPayment: (booking: BookingRecord) => void;
 }
 
@@ -111,6 +117,10 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
   waterLogs,
   tasks = [],
   rooms = [],
+  appCheckins = [],
+  appPosOrders = [],
+  appPosItems = [],
+  appRooms = [],
   onOpenRecordPayment,
 }) => {
   const [fromDate, setFromDate] = useState(() => {
@@ -1578,6 +1588,89 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
         const openingCashFloat = 5000;
         const expectedClosingCash = openingCashFloat + pureCashCollected;
 
+        // Night Audit: Room Tariff & Food Price Deviation (fixed catalog vs actually charged)
+        const naStays = appCheckins.filter((c) => {
+          const ci = normalizeDateStr(c.checkInDate);
+          const co = normalizeDateStr(c.checkedOutDateTime || c.checkOutDate) || ci;
+          if (!ci) return false;
+          return (!toDate || ci <= toDate) && (!fromDate || co >= fromDate);
+        });
+        const tariffDeviations = naStays
+          .map((c) => {
+            const rm = appRooms.find((r) => r.number === c.roomNumber);
+            const standardRate =
+              Number((c as any).originalRate) > 0 ? Number((c as any).originalRate) : Number(rm?.rate || 0);
+            const chargedRate = Number(c.roomRate || 0);
+            const ci = normalizeDateStr(c.checkInDate);
+            const co = normalizeDateStr(c.checkOutDate) || ci;
+            const nightsCount = Math.max(
+              1,
+              Number((c as any).nights || (c as any).stayNights) ||
+                (ci && co ? Math.round((new Date(co).getTime() - new Date(ci).getTime()) / 86400000) : 1)
+            );
+            const discountVal = Number((c as any).discount ?? (c as any).discountAmount ?? 0);
+            const perNightDiff = standardRate > 0 ? chargedRate - standardRate : 0;
+            const stayTariffDiff = perNightDiff * nightsCount;
+            return {
+              id: c.id,
+              date: ci,
+              guestName: c.guestName,
+              roomNumber: c.roomNumber,
+              nights: nightsCount,
+              standardRate,
+              chargedRate,
+              perNightDiff,
+              discountAmount: discountVal,
+              stayTariffDiff,
+              netVariance: stayTariffDiff - discountVal,
+            };
+          })
+          .filter((d) => Math.abs(d.perNightDiff) >= 0.5 || d.discountAmount > 0);
+        const totalTariffConcession = tariffDeviations.reduce(
+          (s, d) => s + (d.stayTariffDiff < 0 ? Math.abs(d.stayTariffDiff) : 0) + d.discountAmount,
+          0
+        );
+
+        const naPosOrders = appPosOrders.filter(
+          (o) => o && o.status !== 'Cancelled' && isDateInRange(o.date, fromDate, toDate)
+        );
+        const gstExcludedKots = naPosOrders.filter((o) => (o as any).isWithoutGst === true);
+        const foodDeviations = naPosOrders.flatMap((o) =>
+          (o.items || [])
+            .map((it: any) => {
+              const catItem = appPosItems.find(
+                (p) =>
+                  p.id === it.itemId ||
+                  p.name.trim().toLowerCase() === String(it.itemName || '').trim().toLowerCase()
+              );
+              const menuPrice =
+                it.menuPrice !== undefined ? Number(it.menuPrice) : Number(catItem?.price ?? it.price);
+              const chargedPrice = Number(it.price || 0);
+              const unitDiff = chargedPrice - menuPrice;
+              const qty = Number(it.quantity || 1);
+              return {
+                orderNumber: o.orderNumber,
+                label: o.roomNumber
+                  ? `Room ${o.roomNumber}`
+                  : (o as any).tableNo
+                  ? `Table ${(o as any).tableNo}`
+                  : o.guestName || 'Walk-in',
+                itemName: it.itemName,
+                quantity: qty,
+                menuPrice,
+                chargedPrice,
+                lineDiff: unitDiff * qty,
+                unitDiff,
+                isWithoutGst: Boolean((o as any).isWithoutGst),
+              };
+            })
+            .filter((f) => Math.abs(f.unitDiff) >= 0.5)
+        );
+        const totalFoodConcession = foodDeviations.reduce(
+          (s, f) => s + (f.lineDiff < 0 ? Math.abs(f.lineDiff) : 0),
+          0
+        );
+
         return (
           <div className="space-y-4">
             {/* Night Audit Operational Action Bar */}
@@ -1683,6 +1776,138 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
                   {formatCurrency(rangeBookings.reduce((s, b) => s + b.taxAmount, 0))}
                 </div>
                 <div className="text-[11px] text-slate-300 mt-0.5">2.5% CGST + 2.5% SGST</div>
+              </div>
+            </div>
+
+            {/* Night Audit: Room Tariff & Food Price Deviation Register */}
+            <div className="bg-white border border-amber-300 rounded-2xl p-5 shadow-2xs space-y-4" data-testid="night-audit-deviation">
+              <div className="border-b border-amber-100 pb-3 flex flex-wrap justify-between items-center gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Room Tariff &amp; Food Price Deviation Report (Fixed vs Charged)
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Check-In room tariff / discount changes and KOT food price / GST-excluded changes versus fixed catalog rates.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs font-mono font-bold">
+                  <span className="px-2.5 py-1 bg-amber-50 text-amber-900 border border-amber-200 rounded-lg">
+                    Room Deviations: {tariffDeviations.length} (-{formatCurrency(totalTariffConcession)})
+                  </span>
+                  <span className="px-2.5 py-1 bg-orange-50 text-orange-900 border border-orange-200 rounded-lg">
+                    Food Deviations: {foodDeviations.length} (-{formatCurrency(totalFoodConcession)})
+                  </span>
+                  {gstExcludedKots.length > 0 && (
+                    <span className="px-2.5 py-1 bg-rose-50 text-rose-800 border border-rose-200 rounded-lg">
+                      GST-Excluded KOTs: {gstExcludedKots.length}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold font-mono uppercase text-slate-800">1. Room Tariff &amp; Discount Deviations</h4>
+                  {tariffDeviations.length === 0 ? (
+                    <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-xl text-center text-xs text-emerald-700">
+                      ✓ All stays in this period were billed at the fixed rack tariff with no extra discount.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                      <table className="w-full text-left text-[11px] divide-y divide-slate-200">
+                        <thead className="bg-slate-50 font-mono uppercase text-[9.5px] font-bold text-slate-600">
+                          <tr>
+                            <th className="p-2">Guest &amp; Room</th>
+                            <th className="p-2 text-right">Fixed Rack</th>
+                            <th className="p-2 text-right">Charged</th>
+                            <th className="p-2 text-right">Extra Disc.</th>
+                            <th className="p-2 text-right">Net Deviation</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {tariffDeviations.map((d) => (
+                            <tr key={d.id}>
+                              <td className="p-2">
+                                <div className="font-bold text-slate-900">{d.guestName} (Rm {d.roomNumber})</div>
+                                <div className="text-[9.5px] font-mono text-slate-500">{d.date} • {d.nights}N</div>
+                              </td>
+                              <td className="p-2 text-right font-mono">{formatCurrency(d.standardRate)}/N</td>
+                              <td className="p-2 text-right font-mono font-bold">{formatCurrency(d.chargedRate)}/N</td>
+                              <td className="p-2 text-right font-mono text-amber-800">
+                                {d.discountAmount > 0 ? `-${formatCurrency(d.discountAmount)}` : '₹0'}
+                              </td>
+                              <td className="p-2 text-right font-mono font-bold">
+                                <span className={d.netVariance < 0 ? 'text-rose-600' : 'text-emerald-700'}>
+                                  {d.netVariance < 0 ? '-' : '+'}
+                                  {formatCurrency(Math.abs(d.netVariance))}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold font-mono uppercase text-slate-800">2. Food Item Price &amp; KOT GST Deviations</h4>
+                  {foodDeviations.length === 0 && gstExcludedKots.length === 0 ? (
+                    <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-xl text-center text-xs text-emerald-700">
+                      ✓ All KOT food items in this period were billed at fixed menu prices with standard GST.
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {foodDeviations.length > 0 && (
+                        <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-72 overflow-y-auto">
+                          <table className="w-full text-left text-[11px] divide-y divide-slate-200">
+                            <thead className="bg-slate-50 font-mono uppercase text-[9.5px] font-bold text-slate-600">
+                              <tr>
+                                <th className="p-2">KOT &amp; Food Item</th>
+                                <th className="p-2 text-right">Menu Fixed</th>
+                                <th className="p-2 text-right">KOT Price</th>
+                                <th className="p-2 text-right">Deviation</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {foodDeviations.map((f, idx) => (
+                                <tr key={`${f.orderNumber}-${idx}`}>
+                                  <td className="p-2">
+                                    <div className="font-bold text-slate-900">{f.itemName} × {f.quantity}</div>
+                                    <div className="text-[9.5px] font-mono text-slate-500">
+                                      #{f.orderNumber} • {f.label} {f.isWithoutGst ? '• [GST Excluded]' : ''}
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-right font-mono">{formatCurrency(f.menuPrice)}</td>
+                                  <td className="p-2 text-right font-mono font-bold">{formatCurrency(f.chargedPrice)}</td>
+                                  <td className="p-2 text-right font-mono font-bold">
+                                    <span className={f.lineDiff < 0 ? 'text-rose-600' : 'text-emerald-700'}>
+                                      {f.lineDiff < 0 ? '-' : '+'}
+                                      {formatCurrency(Math.abs(f.lineDiff))}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {gstExcludedKots.length > 0 && (
+                        <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200 text-[11px] space-y-1">
+                          <div className="font-mono font-bold uppercase text-[10px] text-amber-900">
+                            KOT Orders Printed with GST Excluded:
+                          </div>
+                          {gstExcludedKots.map((ko) => (
+                            <div key={ko.id} className="flex justify-between font-mono text-slate-700">
+                              <span>#{ko.orderNumber} • {ko.roomNumber ? `Room ${ko.roomNumber}` : (ko as any).tableNo ? `Table ${(ko as any).tableNo}` : ko.guestName || 'Walk-in'}</span>
+                              <span className="font-bold text-amber-900">{formatCurrency(Number(ko.grandTotal || 0))} (No GST)</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 

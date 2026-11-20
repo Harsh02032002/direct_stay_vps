@@ -46,7 +46,6 @@ interface StaffModuleProps {
 const SUB_TABS = [
   { id: 'directory', label: 'Staff Roster & Shifts' },
   { id: 'roles', label: 'RBAC Module Permissions' },
-  { id: 'attendance', label: 'Biometric Attendance' },
   { id: 'payroll', label: 'Monthly Payroll & KPIs' },
 ];
 
@@ -375,7 +374,7 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
               Staff Workspace, Shifts & RBAC Control
             </h1>
             <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-              Employee Roster, Shift Allocation, Role-Based Access Permissions, Biometric Attendance & Monthly Payroll
+              Employee Roster, Shift Allocation, Role-Based Access Permissions & Monthly Salary Payroll
             </p>
           </div>
           <div className="grid grid-cols-2 sm:flex items-center gap-2 text-[11px] sm:text-xs w-full md:w-auto">

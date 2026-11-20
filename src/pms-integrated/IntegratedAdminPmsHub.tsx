@@ -5582,6 +5582,10 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           waterLogs={waterLogs}
           tasks={tasks}
           rooms={rooms}
+          appCheckins={appCheckins}
+          appPosOrders={appPosOrders}
+          appPosItems={appPosItems}
+          appRooms={appRooms}
           onOpenRecordPayment={(b) => setPaymentBooking(b)}
         />
       )}
