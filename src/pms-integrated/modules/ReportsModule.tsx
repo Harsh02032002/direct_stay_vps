@@ -12,6 +12,8 @@ import {
   Building2,
   Receipt,
   Search,
+  ArrowLeft,
+  Star,
 } from 'lucide-react';
 import {
   BookingRecord,
@@ -24,6 +26,21 @@ import {
 import { exportToCsv, formatCurrency, formatDate } from '../utils/formatters';
 import { useHotelTaxSettings } from '../utils/taxSettings';
 import type { GuestCheckIn, PosItem, PosOrder, Room } from '../../types';
+import { ReportsHub } from './ReportsHub';
+import {
+  REPORTS_CATALOG,
+  REPORT_VIEW_TITLES,
+  ReportCatalogEntry,
+  readFavouriteIds,
+  toggleFavouriteId,
+  writeFavouriteIds,
+} from '../../utils/reportsCatalog';
+import {
+  getTodayIst,
+  getYesterdayIst,
+  formatDdmmyyyy,
+  getPresetDateRange,
+} from '../../utils/reportingDates';
 
 interface ReportsModuleProps {
   activeSubTab: string;
@@ -39,6 +56,11 @@ interface ReportsModuleProps {
   appPosOrders?: PosOrder[];
   appPosItems?: PosItem[];
   appRooms?: Room[];
+  /** Property + user scope for per-user Favourite Reports */
+  hotelId?: string;
+  userKey?: string;
+  /** Opens an existing PMS module / sub-tab (Stay Overview, Room Status, Financial Hub...) */
+  onNavigateModule?: (tab: string, subTab?: string) => void;
   onOpenRecordPayment: (booking: BookingRecord) => void;
 }
 
@@ -111,29 +133,79 @@ const isBookingInStayRange = (b: BookingRecord, from: string, to: string): boole
 export const ReportsModule: React.FC<ReportsModuleProps> = ({
   activeSubTab,
   onSubTabChange,
-  bookings,
+  bookings: allBookings,
   invoices = [],
   otaChannels,
-  waterLogs,
-  tasks = [],
+  waterLogs: allWaterLogs,
+  tasks: allTasks = [],
   rooms = [],
   appCheckins = [],
   appPosOrders = [],
   appPosItems = [],
   appRooms = [],
+  hotelId,
+  userKey,
+  onNavigateModule,
   onOpenRecordPayment,
 }) => {
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date();
-    d.setDate(1);
-    return d.toISOString().slice(0, 10);
-  });
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [fromDate, setFromDate] = useState(() => getTodayIst());
+  const [toDate, setToDate] = useState(() => getTodayIst());
+  const [activeDatePreset, setActiveDatePreset] = useState<'today' | 'yesterday' | 'last7days' | 'thisMonth' | 'allTime' | 'custom'>('today');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Favourite Reports (per property + user)
+  const [favouriteIds, setFavouriteIds] = useState<string[]>(() => readFavouriteIds(hotelId, userKey));
+  React.useEffect(() => {
+    setFavouriteIds(readFavouriteIds(hotelId, userKey));
+  }, [hotelId, userKey]);
+  const handleToggleFavourite = (id: string) => {
+    setFavouriteIds((prev) => {
+      const next = toggleFavouriteId(prev, id);
+      writeFavouriteIds(next, hotelId, userKey);
+      return next;
+    });
+  };
+
+  // Report-level search applies to every report's underlying records
+  const bookings = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return allBookings;
+    return allBookings.filter(
+      (b) =>
+        String(b.customerName || '').toLowerCase().includes(q) ||
+        String(b.bookingNo || '').toLowerCase().includes(q) ||
+        String(b.mobile || '').includes(q) ||
+        (b.roomNumbers || []).some((rn) => String(rn).toLowerCase().includes(q))
+    );
+  }, [allBookings, searchQuery]);
+  const waterLogs = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return allWaterLogs;
+    return allWaterLogs.filter(
+      (w) =>
+        String(w.roomNumber || '').toLowerCase().includes(q) ||
+        String(w.guestName || '').toLowerCase().includes(q)
+    );
+  }, [allWaterLogs, searchQuery]);
+  const tasks = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return allTasks;
+    return allTasks.filter(
+      (t) =>
+        String(t.roomName || '').toLowerCase().includes(q) ||
+        String(t.assignedTo || '').toLowerCase().includes(q) ||
+        String(t.description || '').toLowerCase().includes(q)
+    );
+  }, [allTasks, searchQuery]);
 
   const [taxSettings] = useHotelTaxSettings();
   const configuredRoomGst = +(taxSettings.roomCgst + taxSettings.roomSgst).toFixed(2);
-  const currentTab = activeSubTab === 'dashboard' || !activeSubTab ? 'daily_sales' : activeSubTab;
+  const isReportsLanding =
+    !activeSubTab || activeSubTab === 'dashboard' || !REPORT_VIEW_TITLES[activeSubTab];
+  const currentTab = isReportsLanding ? 'daily_sales' : activeSubTab;
+  const currentReportEntry = REPORTS_CATALOG.find(
+    (r) => r.target.type === 'report' && r.target.reportId === currentTab
+  );
 
   // Dedicated Daily Sales Report State & Computations (as per Raghunath Sir's Video Reference)
   const [gstBillFilter, setGstBillFilter] = useState<'ALL' | 'WITH_GST' | 'WITHOUT_GST'>('ALL');
@@ -226,39 +298,44 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
     return { totalTransactions, totalSales, totalCash, totalOnline, totalOther, totalGst, totalDue, cashPct, onlinePct, otherPct };
   }, [dailySalesRecords]);
 
-  // Quick Preset Handlers
+  // Quick Preset Handlers (IST-based)
   const handleSetToday = () => {
-    const today = new Date().toISOString().slice(0, 10);
-    setFromDate(today);
-    setToDate(today);
+    const range = getPresetDateRange('today');
+    setFromDate(range.from);
+    setToDate(range.to);
+    setActiveDatePreset('today');
   };
   const handleSetYesterday = () => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    const yest = d.toISOString().slice(0, 10);
-    setFromDate(yest);
-    setToDate(yest);
+    const range = getPresetDateRange('yesterday');
+    setFromDate(range.from);
+    setToDate(range.to);
+    setActiveDatePreset('yesterday');
+  };
+  const handleSetLast7Days = () => {
+    const range = getPresetDateRange('last7days');
+    setFromDate(range.from);
+    setToDate(range.to);
+    setActiveDatePreset('last7days');
   };
   const handleSetThisWeek = () => {
-    const d = new Date();
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    const mon = new Date(d.setDate(diff));
-    const sun = new Date(mon);
-    sun.setDate(sun.getDate() + 6);
-    setFromDate(mon.toISOString().slice(0, 10));
-    setToDate(sun.toISOString().slice(0, 10));
+    const range = getPresetDateRange('thisWeek');
+    setFromDate(range.from);
+    setToDate(range.to);
+    setActiveDatePreset('custom');
   };
   const handleSetThisMonth = () => {
-    const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-    setFromDate(firstDay);
-    setToDate(lastDay);
+    const range = getPresetDateRange('thisMonth');
+    setFromDate(range.from);
+    setToDate(range.to);
+    setActiveDatePreset('thisMonth');
   };
   const handleSetAllTime = () => {
     setFromDate('2020-01-01');
     setToDate('2030-12-31');
+    setActiveDatePreset('allTime');
+  };
+  const handleResetToToday = () => {
+    handleSetToday();
   };
 
   // 1. All Payments filtered strictly by receipt date
@@ -655,8 +732,62 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
     );
   };
 
+  if (isReportsLanding) {
+    return (
+      <ReportsHub
+        favouriteIds={favouriteIds}
+        onToggleFavourite={handleToggleFavourite}
+        onOpenReport={(entry: ReportCatalogEntry) => {
+          if (entry.target.type === 'report') {
+            onSubTabChange(entry.target.reportId);
+          } else if (onNavigateModule) {
+            onNavigateModule(entry.target.tab, entry.target.subTab);
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-5">
+      {/* Report breadcrumb: back to Reports & Graphs + favourite toggle */}
+      <div className="flex flex-wrap items-center justify-between gap-2 no-print">
+        <button
+          type="button"
+          onClick={() => onSubTabChange('dashboard')}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:border-amber-400 hover:bg-amber-50 text-xs font-bold text-slate-800 cursor-pointer"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          All Reports
+        </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-bold text-slate-900 truncate">
+            {REPORT_VIEW_TITLES[currentTab] || currentTab}
+          </span>
+          {currentReportEntry && (
+            <button
+              type="button"
+              onClick={() => handleToggleFavourite(currentReportEntry.id)}
+              className="p-1.5 rounded-lg hover:bg-amber-50 cursor-pointer"
+              title={
+                favouriteIds.includes(currentReportEntry.id)
+                  ? 'Remove from favourite reports'
+                  : 'Add to favourite reports'
+              }
+              aria-pressed={favouriteIds.includes(currentReportEntry.id)}
+            >
+              <Star
+                className={`w-4 h-4 ${
+                  favouriteIds.includes(currentReportEntry.id)
+                    ? 'fill-amber-400 text-amber-500'
+                    : 'text-slate-400'
+                }`}
+              />
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Header & Date-to-Date Filter */}
       <div className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3.5 sm:space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 sm:gap-4">
@@ -670,36 +801,57 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
           </div>
 
           <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-2.5 w-full lg:w-auto">
-            {/* Quick Date Presets */}
+            {/* Search within this report */}
+            <div className="relative w-full sm:w-52">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search guest, booking, room..."
+                className="w-full pl-8 pr-2.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-[11px] sm:text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-amber-500"
+                aria-label="Search within report"
+              />
+            </div>
+
+            {/* Quick Date Presets (IST Real-Time) */}
             <div className="flex flex-wrap items-center justify-between sm:justify-start gap-1 bg-slate-100 p-1 rounded-xl text-[11px] sm:text-xs font-bold text-slate-700 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={handleSetToday}
-                className="px-2.5 py-1 rounded-lg hover:bg-white text-slate-700 transition cursor-pointer shrink-0"
-                title="Filter for today only"
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer shrink-0 ${
+                  activeDatePreset === 'today' ? 'bg-amber-500 text-white shadow-2xs font-extrabold' : 'hover:bg-white text-slate-700'
+                }`}
+                title="Filter for today (IST)"
               >
                 Today
               </button>
               <button
                 type="button"
                 onClick={handleSetYesterday}
-                className="px-2.5 py-1 rounded-lg hover:bg-white text-slate-700 transition cursor-pointer shrink-0"
-                title="Filter for yesterday only"
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer shrink-0 ${
+                  activeDatePreset === 'yesterday' ? 'bg-amber-500 text-white shadow-2xs font-extrabold' : 'hover:bg-white text-slate-700'
+                }`}
+                title="Filter for yesterday (IST)"
               >
                 Yesterday
               </button>
               <button
                 type="button"
-                onClick={handleSetThisWeek}
-                className="px-2.5 py-1 rounded-lg hover:bg-white text-slate-700 transition cursor-pointer shrink-0"
-                title="Filter for current week (Mon-Sun)"
+                onClick={handleSetLast7Days}
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer shrink-0 ${
+                  activeDatePreset === 'last7days' ? 'bg-amber-500 text-white shadow-2xs font-extrabold' : 'hover:bg-white text-slate-700'
+                }`}
+                title="Filter for last 7 days"
               >
-                This Week
+                Last 7 Days
               </button>
               <button
                 type="button"
                 onClick={handleSetThisMonth}
-                className="px-2.5 py-1 rounded-lg hover:bg-white text-slate-700 transition cursor-pointer shrink-0"
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer shrink-0 ${
+                  activeDatePreset === 'thisMonth' ? 'bg-amber-500 text-white shadow-2xs font-extrabold' : 'hover:bg-white text-slate-700'
+                }`}
                 title="Filter for entire current month"
               >
                 This Month
@@ -707,29 +859,50 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
               <button
                 type="button"
                 onClick={handleSetAllTime}
-                className="px-2.5 py-1 rounded-lg hover:bg-white text-slate-700 transition cursor-pointer shrink-0"
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer shrink-0 ${
+                  activeDatePreset === 'allTime' ? 'bg-amber-500 text-white shadow-2xs font-extrabold' : 'hover:bg-white text-slate-700'
+                }`}
                 title="Show all records without date bounds"
               >
                 All Time
               </button>
+              <button
+                type="button"
+                onClick={handleResetToToday}
+                className="px-2 py-1 rounded-lg hover:bg-white text-amber-800 text-[10px] font-extrabold transition cursor-pointer shrink-0 border border-amber-200/60"
+                title="Reset date filter back to today"
+              >
+                Reset to Today
+              </button>
             </div>
 
-            {/* Date-to-Date Pickers */}
+            {/* Date-to-Date Pickers (DD-MM-YYYY format aware) */}
             <div className="flex flex-wrap sm:flex-nowrap items-center justify-between sm:justify-start gap-1.5 sm:gap-2 bg-slate-50 border border-slate-200 rounded-xl px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs w-full sm:w-auto">
               <Calendar className="w-3.5 h-3.5 text-amber-600 shrink-0" />
               <input
                 type="date"
                 value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
+                onChange={(e) => {
+                  setFromDate(e.target.value);
+                  setActiveDatePreset('custom');
+                }}
                 className="bg-transparent font-semibold text-slate-800 focus:outline-none min-w-0"
+                title={`From Date: ${formatDdmmyyyy(fromDate)}`}
               />
               <span className="text-slate-400 font-bold">to</span>
               <input
                 type="date"
                 value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
+                onChange={(e) => {
+                  setToDate(e.target.value);
+                  setActiveDatePreset('custom');
+                }}
                 className="bg-transparent font-semibold text-slate-800 focus:outline-none min-w-0"
+                title={`To Date: ${formatDdmmyyyy(toDate)}`}
               />
+              <span className="hidden xl:inline text-[10px] font-mono text-slate-500 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                {formatDdmmyyyy(fromDate)} → {formatDdmmyyyy(toDate)}
+              </span>
             </div>
 
             <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto">

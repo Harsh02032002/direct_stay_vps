@@ -795,14 +795,16 @@ export default function ReservationView({
       : 500;
   const extraOccupancyCount = Math.max(0, (Number(adults) || 1) + (Number(children) || 0) - activeBaseOccupancy);
   const singleModeExtraBedPerNight = hasExtraBed ? Math.max(1, Number(extraBedCount) || 1) * (Number(extraBedRate) || 0) : 0;
+  const singleModeExtraPaxPerNight = extraOccupancyCount * activeExtraPersonRate;
   const multiRoomsNightlySum = multiRoomSelections.reduce((sum, mr) => {
     const rmRate = Number(mr.rate) || 0;
     const exBed = mr.hasExtraBed ? (Math.max(1, Number(mr.extraBedCount) || 1) * (Number(mr.extraBedRate) || 0)) : 0;
-    return sum + rmRate + exBed;
+    const exPax = (Number(mr.extraGuestsCount) || 0) * (Number(mr.extraBedRate) || activeExtraPersonRate);
+    return sum + rmRate + exBed + exPax;
   }, 0);
   const totalRoomPrice = isMultiRoomMode && multiRoomSelections.length > 0
     ? multiRoomsNightlySum * Math.max(1, nights)
-    : (roomPrice + singleModeExtraBedPerNight) * Math.max(1, nights);
+    : (roomPrice + singleModeExtraBedPerNight + singleModeExtraPaxPerNight) * Math.max(1, nights);
   const discount = totalRoomPrice - bookingPrice;
 
   // Travel Agent Commission Calculation (Auto-calculated on Confirmed bookings)
@@ -872,15 +874,21 @@ export default function ReservationView({
   const computeAutoPriceForStay = (
     rate: number,
     nightsCount: number,
-    _adultsVal: number,
-    _childrenVal: number,
-    _rmObj?: Room,
+    adultsVal: number = Number(adults) || 1,
+    childrenVal: number = Number(children) || 0,
+    rmObj?: Room,
     extraBedActive: boolean = hasExtraBed,
     exBedCnt: number = extraBedCount,
     exBedRt: number = extraBedRate
   ) => {
+    const targetRoom = rmObj || activeMatchedRoom;
+    const baseOcc = Number(targetRoom?.baseOccupancy) > 0 ? Number(targetRoom.baseOccupancy) : 2;
+    const extraPaxFee = Number(targetRoom?.extraPersonCharge) > 0 ? Number(targetRoom.extraPersonCharge) : 500;
+    const totalOcc = Math.max(1, (Number(adultsVal) || 1) + (Number(childrenVal) || 0));
+    const extraPaxCount = Math.max(0, totalOcc - baseOcc);
+    const extraPaxTotal = extraPaxCount * extraPaxFee;
     const exBedTotal = extraBedActive ? Math.max(1, Number(exBedCnt) || 1) * (Number(exBedRt) || 0) : 0;
-    return (rate + exBedTotal) * Math.max(1, nightsCount);
+    return (rate + exBedTotal + extraPaxTotal) * Math.max(1, nightsCount);
   };
 
   // Renew Price: restore standard rates from catalog (Point 6)
@@ -1178,6 +1186,23 @@ export default function ReservationView({
   };
 
   const handleNewBookingClick = () => {
+    try {
+      if (typeof window !== 'undefined') {
+        window.history.pushState({}, '', '/admin/frontDesk/checkin');
+        window.dispatchEvent(
+          new CustomEvent('directstay:checkin-nav', {
+            detail: {
+              bookingCategory: 'standard',
+              checkInDate: getTodayDateStr(),
+            },
+          })
+        );
+      }
+    } catch {}
+    if (onCheckIn) {
+      onCheckIn(null as any);
+      return;
+    }
     setEditingBooking(null);
     setCustomBookingId(generateNextReservationId());
     setBookingDateInput(getTodayDateStr());
@@ -1608,6 +1633,7 @@ export default function ReservationView({
         transactionId: transactionId.trim() || undefined,
         notes: notes.trim() || editingBooking.notes,
         bookingAmount: bookingPrice,
+        extraPersonChargeApplied: singleModeExtraPaxPerNight * Math.max(1, nightsCount),
         gstRate: bookingGstRate,
         gstAmount: calculatedBookingGst,
         isWithoutGst: bookingGstRate <= 0,
@@ -1813,6 +1839,7 @@ export default function ReservationView({
         notes: notes.trim() || 'Advance Booking',
         isCheckedIn: false,
         bookingAmount: bookingPrice,
+        extraPersonChargeApplied: singleModeExtraPaxPerNight * Math.max(1, nightsCount),
         gstRate: bookingGstRate,
         gstAmount: calculatedBookingGst,
         isWithoutGst: bookingGstRate <= 0,

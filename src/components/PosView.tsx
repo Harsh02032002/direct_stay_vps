@@ -18,6 +18,7 @@ import {
 } from '../types';
 import { r2 } from '../utils/billCalculator';
 import { useHotelTaxSettings } from '../pms-integrated/utils/taxSettings';
+import { getTodayIst, getYesterdayIst, addDaysIst, formatDdmmyyyy } from '../utils/reportingDates';
 import {
   DEFAULT_POS_TABLES,
   DEFAULT_POS_CATEGORIES,
@@ -221,20 +222,13 @@ export default function PosView({
   // Held Orders drawer toggle
   const [showHeldOrdersDrawer, setShowHeldOrdersDrawer] = useState<boolean>(false);
 
-  // Date-Wise Filter state for POS Order Register (Row 5: Today / All / Yesterday / Date / Range)
-  const getTodayLocalIso = () => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  };
-  const getOffsetLocalIso = (days: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() + days);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  };
+  // Date-Wise Filter state for POS Order Register (Row 5: Today / All / Yesterday / Date / Range) - Defaults to Today IST
+  const getTodayLocalIso = () => getTodayIst();
+  const getOffsetLocalIso = (days: number) => addDaysIst(getTodayIst(), days);
   const [orderSearchQuery, setOrderSearchQuery] = useState<string>('');
   const [orderDateFilterType, setOrderDateFilterType] = useState<
     'All' | 'Today' | 'Yesterday' | 'Date' | 'This Month' | 'Range'
-  >('All');
+  >('Today');
   const [orderFilterSingleDate, setOrderFilterSingleDate] = useState<string>(getTodayLocalIso());
   const [orderFilterStartDate, setOrderFilterStartDate] = useState<string>(getOffsetLocalIso(-7));
   const [orderFilterEndDate, setOrderFilterEndDate] = useState<string>(getTodayLocalIso());

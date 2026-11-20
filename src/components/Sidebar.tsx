@@ -126,6 +126,8 @@ function renderSidebarIcon(iconKey: string, isActive: boolean): React.ReactNode 
       return <Smartphone className={cls} />;
     case 'invoicesBilling':
       return <Receipt className={cls} />;
+    case 'guestServices':
+      return <Sparkles className={cls} />;
     case 'lostFound':
       return <Search className={cls} />;
     case 'availability':
@@ -148,6 +150,8 @@ function renderSidebarIcon(iconKey: string, isActive: boolean): React.ReactNode 
       return <Settings className={cls} />;
     case 'administration':
       return <ShieldCheck className={cls} />;
+    case 'none':
+      return null;
     default:
       return (
         <span
@@ -176,10 +180,14 @@ export default function Sidebar({
   onSelectOtaSubTab,
   reportsSubTab = 'daily_sales',
   onSelectReportsSubTab,
+  financeSubTab = 'dashboard',
+  onSelectFinanceSubTab,
   staffSubTab = 'directory',
   onSelectStaffSubTab,
   invoiceSubTab = 'all',
   onSelectInvoiceSubTab,
+  inventorySubTab = 'products',
+  onSelectInventorySubTab,
   currentRole,
   hotels,
   selectedHotelId,
@@ -200,6 +208,8 @@ export default function Sidebar({
     'front-office': true,
     'fo-availability': false,
     'fo-guest-status': false,
+    'financial-hub': false,
+    'fin-vouchers': false,
     'property-setup': false,
     configuration: false,
     administration: false,
@@ -242,8 +252,10 @@ export default function Sidebar({
       housekeepingSubTab,
       otaSubTab,
       reportsSubTab,
+      financeSubTab,
       staffSubTab,
       invoiceSubTab,
+      inventorySubTab,
       lastSelectedSidebarId,
     }),
     [
@@ -253,8 +265,10 @@ export default function Sidebar({
       housekeepingSubTab,
       otaSubTab,
       reportsSubTab,
+      financeSubTab,
       staffSubTab,
       invoiceSubTab,
+      inventorySubTab,
       lastSelectedSidebarId,
     ]
   );
@@ -275,7 +289,7 @@ export default function Sidebar({
     if (Object.keys(nextExpanded).length > 0) {
       setExpandedIds((prev) => ({ ...prev, ...nextExpanded }));
     }
-  }, [activeTab, frontDeskSubTab, roomSubTab, housekeepingSubTab, otaSubTab, reportsSubTab, staffSubTab, invoiceSubTab]);
+  }, [activeTab, frontDeskSubTab, roomSubTab, housekeepingSubTab, otaSubTab, reportsSubTab, financeSubTab, staffSubTab, invoiceSubTab]);
 
   const activeHotel = hotels.find((h) => h.id === selectedHotelId) || hotels[0];
   const hotelCitySnippet = useMemo(() => {
@@ -375,11 +389,17 @@ export default function Sidebar({
     if (target.reportsSubTab && onSelectReportsSubTab) {
       onSelectReportsSubTab(target.reportsSubTab);
     }
+    if (target.financeSubTab && onSelectFinanceSubTab) {
+      onSelectFinanceSubTab(target.financeSubTab);
+    }
     if (target.staffSubTab && onSelectStaffSubTab) {
       onSelectStaffSubTab(target.staffSubTab);
     }
     if (target.invoiceSubTab && onSelectInvoiceSubTab) {
       onSelectInvoiceSubTab(target.invoiceSubTab);
+    }
+    if (target.inventorySubTab && onSelectInventorySubTab) {
+      onSelectInventorySubTab(target.inventorySubTab);
     }
 
     setActiveTab(target.activeTab);

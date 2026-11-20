@@ -22,7 +22,9 @@ import {
   FileCheck,
   Building2,
   Check,
-  X
+  X,
+  QrCode,
+  FileText
 } from 'lucide-react';
 
 interface HotelPublicBookingPageProps {
@@ -103,17 +105,44 @@ export default function HotelPublicBookingPage({
     return () => clearInterval(timer);
   }, [fetchPublicHotelData]);
 
+  const queryRoom = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      return sp.get('room') || '';
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const [pageViewMode, setPageViewMode] = useState<'form' | 'calendar'>('form');
   const [calendarStartDate, setCalendarStartDate] = useState<Date>(new Date());
   const [checkInDate, setCheckInDate] = useState<string>(getTodayStr());
   const [checkOutDate, setCheckOutDate] = useState<string>(getTomorrowStr());
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [selectedRoomNumber, setSelectedRoomNumber] = useState<string>(rooms[0]?.number || '');
+  const [selectedRoomNumber, setSelectedRoomNumber] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        const r = sp.get('room');
+        if (r) return r;
+      } catch {}
+    }
+    return rooms[0]?.number || '';
+  });
 
   useEffect(() => {
+    if (queryRoom) {
+      const matched = rooms.find(r => String(r.number).trim() === String(queryRoom).trim());
+      if (matched) {
+        setSelectedRoomNumber(matched.number);
+        return;
+      }
+    }
     if (!selectedRoomNumber && rooms.length > 0) {
       setSelectedRoomNumber(rooms[0].number);
     }
-  }, [rooms, selectedRoomNumber]);
+  }, [rooms, selectedRoomNumber, queryRoom]);
 
   // Guest & Check-In Form State
   const [bookingCategoryType, setBookingCategoryType] = useState<'Personal' | 'Corporate'>('Personal');
@@ -248,7 +277,8 @@ export default function HotelPublicBookingPage({
     return 0;
   }, [mealPlan]);
 
-  const nightlyRate = (activeSelectedRoom?.rate || 2000) + mealPlanExtraPerNight;
+  const roomBaseRate = Number(activeSelectedRoom?.rate || (activeSelectedRoom as any)?.price || 2000);
+  const nightlyRate = roomBaseRate + mealPlanExtraPerNight;
   const baseRoomTotal = nightlyRate * nightsCount;
   const gstRate = hotel.isGstEnabled === false ? 0 : Number(hotel.defaultGstRate ?? 5);
   const gstAmount = gstRate > 0 ? parseFloat(((baseRoomTotal * gstRate) / 100).toFixed(2)) : 0;
@@ -282,9 +312,12 @@ export default function HotelPublicBookingPage({
     const nextDay = new Date(dateStr);
     nextDay.setDate(nextDay.getDate() + 1);
     setCheckOutDate(formatDateStr(nextDay));
+    setPageViewMode('form');
     showToast(`Selected Room ${room.number} (${room.category}) for check-in on ${dateStr}`, 'info');
-    const formEl = document.getElementById('guest-direct-booking-form');
-    if (formEl) formEl.scrollIntoView({ behavior: 'smooth' });
+    setTimeout(() => {
+      const formEl = document.getElementById('guest-direct-booking-form');
+      if (formEl) formEl.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
   };
 
   const handleIdDocumentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -353,12 +386,14 @@ export default function HotelPublicBookingPage({
       gstAmount,
       paymentMethod,
       paymentStatus: 'Unpaid',
-      bookingSource: 'Website',
+      bookingSource: 'Guest Self Service',
       status: 'Pending',
       isCheckedIn: false,
       bookingDate: new Date().toLocaleString(),
-      notes: notesParts.join(' • ')
+      notes: notesParts.join(' • '),
+      ...(idProofDataUrl ? { idProofUrl: idProofDataUrl, idProofFileName } : {})
     };
+    (newBooking as any).isSelfService = true;
 
     // Persist uploaded ID document in localStorage so Front Desk Check-In can view it immediately
     if (idProofDataUrl) {
@@ -643,197 +678,68 @@ export default function HotelPublicBookingPage({
             </div>
           </div>
         ) : (
-          <>
-            {/* SECTION 1: LIVE ROOM AVAILABILITY CALENDAR MATRIX FOR THIS HOTEL */}
-            <section className="bg-white border border-[#E6DEC8] rounded-3xl p-6 shadow-sm space-y-5">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#EFE8D5] pb-4">
-                <div>
-                  <div className="flex items-center gap-2 text-[#9E7822] text-xs font-mono uppercase tracking-widest font-bold">
-                    <Calendar className="w-4 h-4" />
-                    <span>Live Room Availability Calendar • {hotel.name}</span>
+          <div className="space-y-6">
+            {/* VIEW MODE SWITCHER & QUICK ROOM BADGE */}
+            <div className="bg-white border border-[#E6DEC8] rounded-2xl p-3 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPageViewMode('form')}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                    pageViewMode === 'form'
+                      ? 'bg-[#17120F] text-[#E5C158] shadow-sm'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>📝 Direct Guest Booking & Check-In Form</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPageViewMode('calendar')}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                    pageViewMode === 'calendar'
+                      ? 'bg-[#17120F] text-[#E5C158] shadow-sm'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4" />
+                  <span>📅 Room Availability Calendar</span>
+                </button>
+              </div>
+
+              {activeSelectedRoom && (
+                <div className="flex items-center gap-2 bg-[#FDF8ED] border border-[#C49A3A]/40 rounded-xl px-3 py-1.5 text-xs text-[#8B691E] font-semibold self-start md:self-auto">
+                  <QrCode className="w-4 h-4 text-[#C49A3A]" />
+                  <span>
+                    Selected: <strong>Room {activeSelectedRoom.number}</strong> ({activeSelectedRoom.category || 'Standard'}) • ₹{Number(activeSelectedRoom.rate || (activeSelectedRoom as any).price || 0).toLocaleString('en-IN')}/night
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {pageViewMode === 'form' ? (
+              <div className="space-y-6">
+                {queryRoom && (
+                  <div className="bg-gradient-to-r from-[#17120F] via-[#2A2018] to-[#17120F] text-white p-4 sm:p-5 rounded-2xl border border-[#C49A3A]/40 shadow-md flex items-center justify-between flex-wrap gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-xl bg-[#C49A3A]/20 border border-[#C49A3A]/40 flex items-center justify-center text-[#E5C158] font-bold text-lg">
+                        <QrCode className="w-6 h-6 text-[#E5C158]" />
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-[#E5C158] font-bold">Smart Room QR Standee Pre-Selection</span>
+                        <h2 className="text-lg font-bold text-white">Direct Self Check-In & Booking: Room {queryRoom}</h2>
+                        <p className="text-xs text-white/70">Fill guest details below to complete your check-in and booking.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold">
+                        ⚡ Pre-selected Room {queryRoom}
+                      </span>
+                    </div>
                   </div>
-                  <h2 className="text-xl font-serif font-bold text-[#17120F] mt-0.5">
-                    Click Any Available Green Date Cell to Select Room & Dates
-                  </h2>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date(calendarStartDate);
-                      d.setDate(d.getDate() - 7);
-                      setCalendarStartDate(d);
-                    }}
-                    className="p-2 rounded-xl border border-[#DCE3EC] hover:bg-[#FDF8ED] text-[#17120F] cursor-pointer"
-                    title="Previous 7 Days"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCalendarStartDate(new Date())}
-                    className="px-3 py-1.5 rounded-xl bg-[#FDF8ED] border border-[#C49A3A]/40 text-xs font-mono font-bold text-[#8B691E] cursor-pointer"
-                  >
-                    Today ({getTodayStr()})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date(calendarStartDate);
-                      d.setDate(d.getDate() + 7);
-                      setCalendarStartDate(d);
-                    }}
-                    className="p-2 rounded-xl border border-[#DCE3EC] hover:bg-[#FDF8ED] text-[#17120F] cursor-pointer"
-                    title="Next 7 Days"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Category Filter Pills */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCategory('All')}
-                    className={`px-3.5 py-1.5 rounded-xl text-xs font-serif font-bold transition-all cursor-pointer ${
-                      selectedCategory === 'All'
-                        ? 'bg-[#17120F] text-[#E5C158] shadow-xs'
-                        : 'bg-[#FDF8ED] text-[#5A4632] border border-[#E6DEC8]'
-                    }`}
-                  >
-                    All Rooms ({rooms.length})
-                  </button>
-                  {categories.map(cat => (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() => setSelectedCategory(cat)}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-serif font-bold transition-all cursor-pointer ${
-                        selectedCategory === cat
-                          ? 'bg-[#17120F] text-[#E5C158] shadow-xs'
-                          : 'bg-[#FDF8ED] text-[#5A4632] border border-[#E6DEC8]'
-                      }`}
-                    >
-                      {cat} ({rooms.filter(r => r.category === cat).length})
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-4 text-[11px] font-mono">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-3 rounded bg-emerald-500 inline-block" /> Available (Click to Book)
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-3 rounded bg-amber-500 inline-block" /> Pending Hotel Approval
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-3 rounded bg-rose-500 inline-block" /> Booked / Occupied
-                  </span>
-                </div>
-              </div>
-
-              {/* Calendar Grid */}
-              <div className="overflow-x-auto rounded-2xl border border-[#E6DEC8]">
-                <table className="w-full min-w-[720px] border-collapse text-left text-xs">
-                  <thead>
-                    <tr className="bg-[#17120F] text-white">
-                      <th className="p-3.5 font-serif font-bold border-r border-white/10 w-48">
-                        Room & Category
-                      </th>
-                      {calendarDays.map(d => {
-                        const dStr = formatDateStr(d);
-                        const availCount = filteredRooms.filter(r => isRoomAvailableOnDate(r, dStr)).length;
-                        return (
-                          <th key={dStr} className="p-3 text-center border-r border-white/10 min-w-[95px]">
-                            <div className="text-[10px] font-mono uppercase text-[#E5C158]">
-                              {d.toLocaleDateString('en-IN', { weekday: 'short' })}
-                            </div>
-                            <div className="text-sm font-serif font-bold">
-                              {d.getDate()} {d.toLocaleDateString('en-IN', { month: 'short' })}
-                            </div>
-                            <div className="text-[9px] font-mono text-emerald-300 mt-0.5">
-                              {availCount} Free
-                            </div>
-                          </th>
-                        );
-                      })}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#EFE8D5]">
-                    {filteredRooms.map(room => {
-                      const isRoomSelected = activeSelectedRoom?.number === room.number;
-                      return (
-                        <tr
-                          key={room.id}
-                          className={isRoomSelected ? 'bg-[#FDF8ED]' : 'hover:bg-[#FDFBF7]'}
-                        >
-                          <td className="p-3 border-r border-[#EFE8D5]">
-                            <div className="flex items-center justify-between">
-                              <span className="font-serif font-bold text-sm text-[#17120F]">
-                                Room {room.number}
-                              </span>
-                              <span className="font-mono font-bold text-xs text-[#9E7822]">
-                                ₹{Number(room.rate || 0).toLocaleString('en-IN')}/N
-                              </span>
-                            </div>
-                            <div className="text-[10px] font-mono uppercase text-slate-500 mt-0.5">
-                              {room.category} • Max {room.maxOccupancy || 3} Guests
-                            </div>
-                          </td>
-                          {calendarDays.map(d => {
-                            const dStr = formatDateStr(d);
-                            const cellState = getRoomDateState(room, dStr);
-                            const available = cellState === 'available';
-                            const inSelectedRange =
-                              isRoomSelected && dStr >= checkInDate && dStr < checkOutDate;
-                            return (
-                              <td
-                                key={dStr}
-                                onClick={() => handleSelectCellOnCalendar(room, dStr)}
-                                className={`p-2 text-center border-r border-[#EFE8D5] transition-all cursor-pointer ${
-                                  inSelectedRange
-                                    ? 'bg-[#C49A3A]/25 ring-2 ring-inset ring-[#C49A3A]'
-                                    : available
-                                    ? 'hover:bg-emerald-50'
-                                    : cellState === 'pending'
-                                    ? 'bg-amber-50/60 cursor-not-allowed'
-                                    : 'bg-rose-50/40 cursor-not-allowed'
-                                }`}
-                              >
-                                {available ? (
-                                  <span
-                                    className={`inline-block px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold ${
-                                      inSelectedRange
-                                        ? 'bg-[#17120F] text-[#E5C158]'
-                                        : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                    }`}
-                                  >
-                                    {inSelectedRange ? '✓ Selected' : 'Available'}
-                                  </span>
-                                ) : cellState === 'pending' ? (
-                                  <span className="inline-block px-2 py-1 rounded-lg text-[10px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                                    Pending Approval
-                                  </span>
-                                ) : (
-                                  <span className="inline-block px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-rose-100 text-rose-700 border border-rose-200">
-                                    Booked
-                                  </span>
-                                )}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            {/* SECTION 2: ROOMS SHOWCASE & DIRECT GUEST CHECK-IN / BOOKING FORM */}
+                )}
+                {/* SECTION 2: ROOMS SHOWCASE & DIRECT GUEST CHECK-IN / BOOKING FORM */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start" id="guest-direct-booking-form">
               {/* Left 5 Columns: Available Rooms of This Hotel */}
               <div className="lg:col-span-5 space-y-4">
@@ -881,7 +787,7 @@ export default function HotelPublicBookingPage({
                             </div>
                             <div className="text-right">
                               <span className="font-mono font-extrabold text-base text-[#17120F]">
-                                ₹{Number(room.rate || 0).toLocaleString('en-IN')}
+                                ₹{Number(room.rate || (room as any).price || 0).toLocaleString('en-IN')}
                               </span>
                               <span className="block text-[10px] font-mono text-slate-500">per night</span>
                             </div>
@@ -1277,7 +1183,214 @@ export default function HotelPublicBookingPage({
                 </form>
               </div>
             </div>
-          </>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* SECTION 1: LIVE ROOM AVAILABILITY CALENDAR MATRIX FOR THIS HOTEL */}
+            <section className="bg-white border border-[#E6DEC8] rounded-3xl p-6 shadow-sm space-y-5">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#EFE8D5] pb-4">
+                <div>
+                  <div className="flex items-center gap-2 text-[#9E7822] text-xs font-mono uppercase tracking-widest font-bold">
+                    <Calendar className="w-4 h-4" />
+                    <span>Live Room Availability Calendar • {hotel.name}</span>
+                  </div>
+                  <h2 className="text-xl font-serif font-bold text-[#17120F] mt-0.5">
+                    Click Any Available Green Date Cell to Select Room & Dates
+                  </h2>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date(calendarStartDate);
+                      d.setDate(d.getDate() - 7);
+                      setCalendarStartDate(d);
+                    }}
+                    className="p-2 rounded-xl border border-[#DCE3EC] hover:bg-[#FDF8ED] text-[#17120F] cursor-pointer"
+                    title="Previous 7 Days"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCalendarStartDate(new Date())}
+                    className="px-3 py-1.5 rounded-xl bg-[#FDF8ED] border border-[#C49A3A]/40 text-xs font-mono font-bold text-[#8B691E] cursor-pointer"
+                  >
+                    Today ({getTodayStr()})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date(calendarStartDate);
+                      d.setDate(d.getDate() + 7);
+                      setCalendarStartDate(d);
+                    }}
+                    className="p-2 rounded-xl border border-[#DCE3EC] hover:bg-[#FDF8ED] text-[#17120F] cursor-pointer"
+                    title="Next 7 Days"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Category Filter Pills */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategory('All')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-serif font-bold transition-all cursor-pointer ${
+                      selectedCategory === 'All'
+                        ? 'bg-[#17120F] text-[#E5C158] shadow-xs'
+                        : 'bg-[#FDF8ED] text-[#5A4632] border border-[#E6DEC8]'
+                    }`}
+                  >
+                    All Rooms ({rooms.length})
+                  </button>
+                  {categories.map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-serif font-bold transition-all cursor-pointer ${
+                        selectedCategory === cat
+                          ? 'bg-[#17120F] text-[#E5C158] shadow-xs'
+                          : 'bg-[#FDF8ED] text-[#5A4632] border border-[#E6DEC8]'
+                      }`}
+                    >
+                      {cat} ({rooms.filter(r => r.category === cat).length})
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-4 text-[11px] font-mono">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded bg-emerald-500 inline-block" /> Available (Click to Book)
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded bg-amber-500 inline-block" /> Pending Hotel Approval
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded bg-rose-500 inline-block" /> Booked / Occupied
+                  </span>
+                </div>
+              </div>
+
+              {/* Calendar Grid */}
+              <div className="overflow-x-auto rounded-2xl border border-[#E6DEC8]">
+                <table className="w-full min-w-[720px] border-collapse text-left text-xs">
+                  <thead>
+                    <tr className="bg-[#17120F] text-white">
+                      <th className="p-3.5 font-serif font-bold border-r border-white/10 w-48">
+                        Room & Category
+                      </th>
+                      {calendarDays.map(d => {
+                        const dStr = formatDateStr(d);
+                        const availCount = filteredRooms.filter(r => isRoomAvailableOnDate(r, dStr)).length;
+                        return (
+                          <th key={dStr} className="p-3 text-center border-r border-white/10 min-w-[95px]">
+                            <div className="text-[10px] font-mono uppercase text-[#E5C158]">
+                              {d.toLocaleDateString('en-IN', { weekday: 'short' })}
+                            </div>
+                            <div className="text-sm font-serif font-bold">
+                              {d.getDate()} {d.toLocaleDateString('en-IN', { month: 'short' })}
+                            </div>
+                            <div className="text-[9px] font-mono text-emerald-300 mt-0.5">
+                              {availCount} Free
+                            </div>
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#EFE8D5]">
+                    {filteredRooms.map(room => {
+                      const isRoomSelected = activeSelectedRoom?.number === room.number;
+                      return (
+                        <tr
+                          key={room.id}
+                          className={isRoomSelected ? 'bg-[#FDF8ED]' : 'hover:bg-[#FDFBF7]'}
+                        >
+                          <td className="p-3 border-r border-[#EFE8D5]">
+                            <div className="flex items-center justify-between">
+                              <span className="font-serif font-bold text-sm text-[#17120F]">
+                                Room {room.number}
+                              </span>
+                              <span className="font-mono font-bold text-xs text-[#9E7822]">
+                                ₹{Number(room.rate || (room as any).price || 0).toLocaleString('en-IN')}/N
+                              </span>
+                            </div>
+                            <div className="text-[10px] font-mono uppercase text-slate-500 mt-0.5">
+                              {room.category} • Max {room.maxOccupancy || 3} Guests
+                            </div>
+                          </td>
+                          {calendarDays.map(d => {
+                            const dStr = formatDateStr(d);
+                            const cellState = getRoomDateState(room, dStr);
+                            const available = cellState === 'available';
+                            const inSelectedRange =
+                              isRoomSelected && dStr >= checkInDate && dStr < checkOutDate;
+                            return (
+                              <td
+                                key={dStr}
+                                onClick={() => handleSelectCellOnCalendar(room, dStr)}
+                                className={`p-2 text-center border-r border-[#EFE8D5] transition-all cursor-pointer ${
+                                  inSelectedRange
+                                    ? 'bg-[#C49A3A]/25 ring-2 ring-inset ring-[#C49A3A]'
+                                    : available
+                                    ? 'hover:bg-emerald-50'
+                                    : cellState === 'pending'
+                                    ? 'bg-amber-50/60 cursor-not-allowed'
+                                    : 'bg-rose-50/40 cursor-not-allowed'
+                                }`}
+                              >
+                                {available ? (
+                                  <span
+                                    className={`inline-block px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold ${
+                                      inSelectedRange
+                                        ? 'bg-[#17120F] text-[#E5C158]'
+                                        : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                    }`}
+                                  >
+                                    {inSelectedRange ? '✓ Selected' : 'Available'}
+                                  </span>
+                                ) : cellState === 'pending' ? (
+                                  <span className="inline-block px-2 py-1 rounded-lg text-[10px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                    Pending Approval
+                                  </span>
+                                ) : (
+                                  <span className="inline-block px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-rose-100 text-rose-700 border border-rose-200">
+                                    Booked
+                                  </span>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-[#EFE8D5]">
+                <div className="text-xs text-slate-600">
+                  Click any green cell to select room & date, or proceed directly to check-in.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPageViewMode('form')}
+                  className="px-4 py-2 rounded-xl bg-[#C49A3A] hover:bg-[#b0862b] text-[#17120F] text-xs font-bold flex items-center gap-2 cursor-pointer shadow-sm"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Proceed to Direct Guest Booking & Check-In Form →</span>
+                </button>
+              </div>
+            </section>
+              </div>
+            )}
+          </div>
         )}
       </main>
     </div>

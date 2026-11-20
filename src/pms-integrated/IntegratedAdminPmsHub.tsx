@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Package } from 'lucide-react';
 import QuickAddBookingModal from './components/QuickAddBookingModal';
 import BookingDetailsDrawer from './components/BookingDetailsDrawer';
 import QuickCheckInModal from './components/QuickCheckInModal';
@@ -16,6 +17,7 @@ import { RoomManagementModule } from './modules/RoomManagementModule';
 import { HousekeepingModule, RoomHousekeepingPatch } from './modules/HousekeepingModule';
 import { PosModule } from './modules/PosModule';
 import { InventoryModule } from './modules/InventoryModule';
+import InventoryView from '../components/InventoryView';
 import { OtaManagerModule } from './modules/OtaManagerModule';
 import { FinanceModule } from './modules/FinanceModule';
 import { ReportsModule } from './modules/ReportsModule';
@@ -109,6 +111,7 @@ import type {
   PosItem,
   PosOrder,
   InventoryProduct,
+  InventoryCategory,
   InventorySupplier,
   InventoryPurchase,
   InventoryStockMovement,
@@ -174,6 +177,7 @@ interface IntegratedAdminPmsHubProps {
   appPosItems?: PosItem[];
   appPosOrders?: PosOrder[];
   appInventoryProducts?: InventoryProduct[];
+  appInventoryCategories?: InventoryCategory[];
   appInventorySuppliers?: InventorySupplier[];
   appInventoryPurchases?: InventoryPurchase[];
   appInventoryStockMovements?: InventoryStockMovement[];
@@ -200,6 +204,7 @@ interface IntegratedAdminPmsHubProps {
   onUpdatePosItems?: (updated: PosItem[]) => void;
   onUpdatePosOrders?: (updated: PosOrder[]) => void;
   onUpdateInventoryProducts?: (updated: InventoryProduct[]) => void;
+  onUpdateInventoryCategories?: (updated: InventoryCategory[]) => void;
   onUpdateInventorySuppliers?: (updated: InventorySupplier[]) => void;
   onUpdateInventoryPurchases?: (updated: InventoryPurchase[]) => void;
   onUpdateInventoryMovements?: (updated: InventoryStockMovement[]) => void;
@@ -1032,6 +1037,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   appPosItems = [],
   appPosOrders = [],
   appInventoryProducts = [],
+  appInventoryCategories = [],
   appInventorySuppliers = [],
   appInventoryPurchases = [],
   appInventoryStockMovements = [],
@@ -1057,6 +1063,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   onUpdatePosItems,
   onUpdatePosOrders,
   onUpdateInventoryProducts,
+  onUpdateInventoryCategories,
   onUpdateInventorySuppliers,
   onUpdateInventoryPurchases,
   onUpdateInventoryMovements,
@@ -1099,8 +1106,9 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   const [localPosSubTab, setLocalPosSubTab] = useState<string>('terminal');
   const [localInventorySubTab, setLocalInventorySubTab] = useState<string>('dashboard');
   const [localOtaSubTab, setLocalOtaSubTab] = useState<string>('channels');
-  const [localReportsSubTab, setLocalReportsSubTab] = useState<string>('daily_cash');
+  const [localReportsSubTab, setLocalReportsSubTab] = useState<string>('dashboard');
   const [localStaffSubTab, setLocalStaffSubTab] = useState<string>('directory');
+  const [inventoryViewMode, setInventoryViewMode] = useState<'modern' | 'catalog'>('modern');
 
   const invoiceSubTab = propInvoiceSubTab ?? localInvoiceSubTab;
   const setInvoiceSubTab = propSetInvoiceSubTab ?? setLocalInvoiceSubTab;
@@ -4463,7 +4471,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           onUpdateRooms={onUpdateRooms}
           onUpdateCheckins={onUpdateCheckins}
           onChangeRoom={handleChangeRoom}
-          onOpenQuickAddBooking={(rm, mode) => {
+          onOpenQuickAddBooking={(rm, mode = 'checkin') => {
             setPreselectedRoom(rm || null);
             if (mode) {
               const today = new Date().toISOString().slice(0, 10);
@@ -4486,14 +4494,22 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
                       mode,
                     })
                   );
-                } else if (mode === 'reservations') {
-                  sessionStorage.setItem('pms_open_advance_modal', '1');
                 }
               } catch {
                 // ignore storage errors
               }
+              if (setSelectedBookingForCheckin) {
+                setSelectedBookingForCheckin(null);
+              }
               setActiveTab('frontDesk');
-              setFrontDeskSubTab(mode);
+              setFrontDeskSubTab('checkin');
+              try {
+                if (window.location.pathname !== '/admin/frontDesk/checkin') {
+                  window.history.pushState({}, '', '/admin/frontDesk/checkin');
+                }
+              } catch {
+                // ignore
+              }
             } else {
               setQuickAddMode('reservations');
               setQuickAddOpen(true);
@@ -4656,6 +4672,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           loggedInUser={loggedInUser}
           autoMarkDirtyOnCheckout={hotelSettings?.autoMarkDirtyOnCheckout !== false}
           setActiveTab={setActiveTab}
+          setFrontDeskSubTab={setFrontDeskSubTab}
           onUpdateBookings={(b) => onUpdateBookings && onUpdateBookings(b)}
           onUpdateRooms={(r) => onUpdateRooms && onUpdateRooms(r)}
           onUpdateCheckins={(c) => onUpdateCheckins && onUpdateCheckins(c)}
@@ -5033,7 +5050,50 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       )}
 
       {activeTab === 'inventory' && (
-        <InventoryModule
+        <div className="space-y-4">
+          {/* Header Switcher: Integrated Store Hub vs Full Products & Stock Catalog */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs no-print">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-700 flex items-center justify-center shrink-0">
+                <Package className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h2 className="font-serif font-bold text-slate-900 text-sm sm:text-base">
+                  Hotel Inventory & Store Stock Control
+                </h2>
+                <p className="text-[11px] text-slate-500 font-sans">
+                  Manage hotel store items, suppliers, water bottles, dynamic SKUs, and stock IN / OUT movements.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setInventoryViewMode('modern')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  inventoryViewMode === 'modern'
+                    ? 'bg-slate-900 text-amber-400 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Store Stock Hub
+              </button>
+              <button
+                type="button"
+                onClick={() => setInventoryViewMode('catalog')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  inventoryViewMode === 'catalog'
+                    ? 'bg-slate-900 text-amber-400 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Products & Stock Catalog
+              </button>
+            </div>
+          </div>
+
+          {inventoryViewMode === 'modern' ? (
+            <InventoryModule
           activeSubTab={inventorySubTab}
           onSubTabChange={setInventorySubTab}
           items={inventoryItems}
@@ -5174,6 +5234,23 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           }}
           onRecordStockMovement={recordWarehouseStockMovement}
         />
+          ) : (
+            <InventoryView
+              products={appInventoryProducts}
+              onUpdateProducts={onUpdateInventoryProducts || (() => {})}
+              categories={appInventoryCategories}
+              onUpdateCategories={onUpdateInventoryCategories || (() => {})}
+              suppliers={appInventorySuppliers}
+              onUpdateSuppliers={onUpdateInventorySuppliers || (() => {})}
+              purchases={appInventoryPurchases}
+              onUpdatePurchases={onUpdateInventoryPurchases || (() => {})}
+              stockMovements={appInventoryStockMovements}
+              onUpdateStockMovements={onUpdateInventoryMovements || (() => {})}
+              selectedHotelId={selectedHotelId}
+              onAddAuditLog={onAddAuditLog}
+            />
+          )}
+        </div>
       )}
 
       {activeTab === 'otaManager' && (
@@ -5586,6 +5663,9 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           appPosOrders={appPosOrders}
           appPosItems={appPosItems}
           appRooms={appRooms}
+          hotelId={selectedHotelId}
+          userKey={loggedInUser || currentRole}
+          onNavigateModule={(tab, sub) => handleNavigate(tab, sub)}
           onOpenRecordPayment={(b) => setPaymentBooking(b)}
         />
       )}

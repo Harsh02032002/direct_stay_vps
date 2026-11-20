@@ -7,6 +7,8 @@ export interface SidebarNavTarget {
   reportsSubTab?: string;
   staffSubTab?: string;
   invoiceSubTab?: string;
+  financeSubTab?: string;
+  inventorySubTab?: string;
   /** When true, the target opens in a separate browser tab (standalone POS) instead of in-page navigation */
   openInNewTab?: boolean;
   /** Optional preset flags dispatched via sessionStorage + CustomEvent */
@@ -79,17 +81,15 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
         rbacTab: 'frontDesk',
         target: {
           activeTab: 'frontDesk',
-          frontDeskSubTab: 'reservations',
-          reservationSegment: 'All',
-          openNewReservationModal: true,
+          frontDeskSubTab: 'checkin',
         },
       },
       {
         id: 'fo-rates-inventory',
         label: 'Rates & Inventory',
         iconKey: 'ratesInventory',
-        rbacTab: 'rooms',
-        target: { activeTab: 'rooms', roomSubTab: 'priceHistory' },
+        rbacTab: 'frontDesk',
+        target: { activeTab: 'inventory', inventorySubTab: 'products' },
       },
       {
         id: 'fo-group-bookings',
@@ -133,6 +133,13 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
         iconKey: 'invoicesBilling',
         rbacTab: 'invoice',
         target: { activeTab: 'invoice', invoiceSubTab: 'all' },
+      },
+      {
+        id: 'fo-guest-services',
+        label: 'Guest Services',
+        iconKey: 'guestServices',
+        rbacTab: 'frontDesk',
+        target: { activeTab: 'frontDesk', frontDeskSubTab: 'services' },
       },
       {
         id: 'fo-lost-found',
@@ -262,7 +269,7 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
     label: 'Reports & Graphs',
     iconKey: 'reportsGraphs',
     rbacTab: 'reports',
-    target: { activeTab: 'reports', reportsSubTab: 'daily_sales' },
+    target: { activeTab: 'reports', reportsSubTab: 'dashboard' },
   },
   {
     id: 'booking-engine',
@@ -283,7 +290,100 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
     label: 'Financial Hub',
     iconKey: 'financialHub',
     rbacTab: 'finance',
-    target: { activeTab: 'finance' },
+    children: [
+      {
+        id: 'fin-overview',
+        label: 'Finance Overview',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'dashboard' },
+      },
+      {
+        id: 'fin-income',
+        label: 'Income Ledger',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'income' },
+      },
+      {
+        id: 'fin-expenses',
+        label: 'Expense Register',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'expenses' },
+      },
+      {
+        id: 'fin-petty-cash',
+        label: 'Petty Cash Drawer',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'petty_cash' },
+      },
+      {
+        id: 'fin-cash-bank',
+        label: 'Cash & Bank A/c',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'cash_bank' },
+      },
+      {
+        id: 'fin-vouchers',
+        label: 'Vouchers',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        children: [
+          {
+            id: 'fin-voucher-payment',
+            label: 'Payment Voucher',
+            iconKey: 'none',
+            rbacTab: 'finance',
+            target: { activeTab: 'finance', financeSubTab: 'vouchers_payment' },
+          },
+          {
+            id: 'fin-voucher-receipt',
+            label: 'Receipt Voucher',
+            iconKey: 'none',
+            rbacTab: 'finance',
+            target: { activeTab: 'finance', financeSubTab: 'vouchers_receipt' },
+          },
+        ],
+      },
+      {
+        id: 'fin-vendors',
+        label: 'Vendor Payments',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'vendors' },
+      },
+      {
+        id: 'fin-owner-payments',
+        label: 'Owner/Director Payments',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'owner_payments' },
+      },
+      {
+        id: 'fin-reimbursements',
+        label: 'Staff Reimbursements',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'reimbursements' },
+      },
+      {
+        id: 'fin-daily-closing',
+        label: 'Daily Shift Closing',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'daily_closing' },
+      },
+      {
+        id: 'fin-pl-gst',
+        label: 'P&L & 5% GST Summary',
+        iconKey: 'none',
+        rbacTab: 'finance',
+        target: { activeTab: 'finance', financeSubTab: 'pl_reports' },
+      },
+    ],
   },
   {
     id: 'point-of-sale',
@@ -478,6 +578,8 @@ export interface ActiveNavigationSnapshot {
   reportsSubTab?: string;
   staffSubTab?: string;
   invoiceSubTab?: string;
+  financeSubTab?: string;
+  inventorySubTab?: string;
   lastSelectedSidebarId?: string | null;
 }
 
@@ -533,7 +635,8 @@ export function isSidebarLeafActive(
       (!exactNode.target.otaSubTab || exactNode.target.otaSubTab === state.otaSubTab) &&
       (!exactNode.target.reportsSubTab || exactNode.target.reportsSubTab === state.reportsSubTab) &&
       (!exactNode.target.staffSubTab || exactNode.target.staffSubTab === state.staffSubTab) &&
-      (!exactNode.target.invoiceSubTab || exactNode.target.invoiceSubTab === state.invoiceSubTab)
+      (!exactNode.target.invoiceSubTab || exactNode.target.invoiceSubTab === state.invoiceSubTab) &&
+      (!exactNode.target.financeSubTab || exactNode.target.financeSubTab === state.financeSubTab)
     ) {
       return node.id === state.lastSelectedSidebarId;
     }
@@ -557,12 +660,12 @@ export function isSidebarLeafActive(
   if (t.reportsSubTab && t.reportsSubTab !== state.reportsSubTab) return false;
   if (t.staffSubTab && t.staffSubTab !== state.staffSubTab) return false;
   if (t.invoiceSubTab && t.invoiceSubTab !== state.invoiceSubTab) return false;
+  if (t.financeSubTab && t.financeSubTab !== (state.financeSubTab || 'dashboard')) return false;
+  if (t.inventorySubTab && t.inventorySubTab !== (state.inventorySubTab || 'dashboard')) return false;
 
   // Default canonical winners when no lastSelectedSidebarId disambiguates
+  if (t.activeTab === 'inventory' && node.id !== 'fo-rates-inventory') return false;
   if (t.activeTab === 'calendar' && node.id !== 'stay-overview') return false;
-  if (t.activeTab === 'reports' && t.reportsSubTab === 'daily_sales' && node.id !== 'reports-graphs') {
-    return false;
-  }
   if (t.activeTab === 'otaManager' && node.id !== 'channel-manager') return false;
   if (t.activeTab === 'rooms' && t.roomSubTab === 'dashboard' && node.id !== 'ps-rooms-category') {
     return false;

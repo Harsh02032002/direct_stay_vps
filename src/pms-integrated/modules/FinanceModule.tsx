@@ -1,5 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  getTodayIst,
+  getYesterdayIst,
+  formatDdmmyyyy,
+  getPresetDateRange,
+} from '../../utils/reportingDates';
+import {
   BookingRecord,
   CashBankAccountRecord,
   DailyClosingEntry,
@@ -181,7 +187,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
   onAddMiscIncome,
   onTransferFunds,
 }) => {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getTodayIst();
 
   // Normalize Sidebar sub-tab IDs to FinanceModule internal sub-tab IDs
   const effectiveSubTab =
@@ -197,10 +203,10 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
       ? 'pl_reports'
       : activeSubTab || 'dashboard';
 
-  // Global Date Filter across ALL Finance Hub Menus & Submenus (Defaults to All Dates so client sees everything immediately, with 1-click Today/Yesterday/Week/Month/Custom filters)
-  const [datePreset, setDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('all');
-  const [fromDate, setFromDate] = useState<string>('');
-  const [toDate, setToDate] = useState<string>('');
+  // Global Date Filter across ALL Finance Hub Menus & Submenus (Defaults to Today's IST Date, with 1-click Today/Yesterday/Week/Month/All/Custom filters)
+  const [datePreset, setDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('today');
+  const [fromDate, setFromDate] = useState<string>(todayStr);
+  const [toDate, setToDate] = useState<string>(todayStr);
   const [daybookSearch, setDaybookSearch] = useState<string>('');
   const [daybookTypeFilter, setDaybookTypeFilter] = useState<'all' | 'in' | 'out'>('all');
 
@@ -230,22 +236,22 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
 
   const applyDatePreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
     setDatePreset(preset);
-    const now = new Date();
     if (preset === 'today') {
-      setFromDate(todayStr);
-      setToDate(todayStr);
+      const range = getPresetDateRange('today');
+      setFromDate(range.from);
+      setToDate(range.to);
     } else if (preset === 'yesterday') {
-      const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
-      setFromDate(y);
-      setToDate(y);
+      const range = getPresetDateRange('yesterday');
+      setFromDate(range.from);
+      setToDate(range.to);
     } else if (preset === 'this_week') {
-      const w = new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10);
-      setFromDate(w);
-      setToDate(todayStr);
+      const range = getPresetDateRange('last7days');
+      setFromDate(range.from);
+      setToDate(range.to);
     } else if (preset === 'this_month') {
-      const m = `${todayStr.slice(0, 7)}-01`;
-      setFromDate(m);
-      setToDate(todayStr);
+      const range = getPresetDateRange('thisMonth');
+      setFromDate(range.from);
+      setToDate(range.to);
     } else if (preset === 'all') {
       setFromDate('');
       setToDate('');
@@ -2238,7 +2244,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
           </div>
         </div>
 
-        {/* GLOBAL DATE FILTER BAR FOR ALL FINANCE MENUS & SUBMENUS */}
+        {/* GLOBAL DATE FILTER BAR FOR ALL FINANCE MENUS & SUBMENUS (IST Default: Today) */}
         <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-900 mr-1">
@@ -2246,11 +2252,11 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
             </span>
             {(
               [
-                { id: 'all', label: 'All Dates' },
                 { id: 'today', label: 'Today' },
                 { id: 'yesterday', label: 'Yesterday' },
                 { id: 'this_week', label: 'This Week' },
                 { id: 'this_month', label: 'This Month' },
+                { id: 'all', label: 'All Dates' },
               ] as const
             ).map((p) => (
               <button
@@ -2266,6 +2272,14 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                 {p.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => applyDatePreset('today')}
+              className="px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold text-amber-900 bg-amber-100/80 hover:bg-amber-200/80 border border-amber-300 transition cursor-pointer ml-1"
+              title="Reset back to today's date"
+            >
+              Reset to Today
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -2278,6 +2292,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                 setFromDate(e.target.value);
               }}
               className="px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+              title={`From: ${formatDdmmyyyy(fromDate)}`}
             />
             <span className="text-slate-400 font-bold">→</span>
             <input
@@ -2288,7 +2303,13 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                 setToDate(e.target.value);
               }}
               className="px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+              title={`To: ${formatDdmmyyyy(toDate)}`}
             />
+            {fromDate && toDate && (
+              <span className="text-[10px] font-mono text-slate-600 font-bold bg-white px-2 py-1 rounded border border-amber-200">
+                {formatDdmmyyyy(fromDate)} → {formatDdmmyyyy(toDate)}
+              </span>
+            )}
             {(fromDate || toDate) && (
               <button
                 type="button"
@@ -2299,27 +2320,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               </button>
             )}
           </div>
-        </div>
-
-        {/* SUB-TAB NAVIGATION BAR */}
-        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
-          {SUB_TABS.map((t) => {
-            const isActive = effectiveSubTab === t.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => onSubTabChange(t.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                  isActive
-                    ? 'bg-slate-900 text-amber-400 shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {t.label}
-              </button>
-            );
-          })}
         </div>
       </div>
 

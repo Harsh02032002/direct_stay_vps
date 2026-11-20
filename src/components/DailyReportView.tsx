@@ -1,6 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { Room, Booking, GuestCheckIn, Invoice, Expense, Staff, HotelSettings, PaymentRecord, ExtraCharge, PosOrder, PosItem } from '../types';
 import DirtyRoomsPanel from './DirtyRoomsPanel';
+import {
+  getTodayIst,
+  getYesterdayIst,
+  formatDdmmyyyy,
+  getPresetDateRange,
+} from '../utils/reportingDates';
 import { 
   Calendar, FileText, Download, Printer, Users, FileSpreadsheet,
   Search, ChevronRight, AlertCircle, TrendingUp, DollarSign, ArrowUpDown,
@@ -33,16 +39,12 @@ export default function DailyReportView({
   posItems = [],
   hotelSettings
 }: DailyReportViewProps) {
-  // System context & reference dates
-  const [refTodayDate, setRefTodayDate] = useState(() => new Date().toISOString().substring(0, 10));
+  // System context & reference dates (IST Default: Today)
+  const [refTodayDate, setRefTodayDate] = useState(() => getTodayIst());
   const [datePreset, setDatePreset] = useState<DatePreset>('today');
-  const [singleDate, setSingleDate] = useState(() => new Date().toISOString().substring(0, 10));
-  const [customStartDate, setCustomStartDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 5);
-    return d.toISOString().substring(0, 10);
-  });
-  const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().substring(0, 10));
+  const [singleDate, setSingleDate] = useState(() => getTodayIst());
+  const [customStartDate, setCustomStartDate] = useState(() => getTodayIst());
+  const [customEndDate, setCustomEndDate] = useState(() => getTodayIst());
   
   // Advanced query toggles
   const [filterDateType, setFilterDateType] = useState<FilterDateType>('checkin');

@@ -374,11 +374,11 @@ export function renderGrcHtml(d: GrcPrintData): string {
 
   <div class="bold" style="margin-top:8px">FOR OFFICE USE ONLY</div>
   <table class="grc-box">
-    ${office('Room No.', d.roomNo || '', 'Room Type', d.roomType || '')}
-    ${office('Room Charge', d.roomCharge ?? '', 'Plan Name', d.planName || '')}
-    ${office('Tax', d.taxMode || '', 'Booking No.', d.bookingNo || '')}
-    ${office('Company', d.company || 'Walk-in', 'Voucher No.', d.voucherNo || '')}
-    ${office('Guest ID', String(d.guestIdType || '').toUpperCase(), 'ID Number', d.guestIdNumber || '')}
+    ${office('Room No.', d.roomNo || '—', 'Room Type', d.roomType || 'Standard')}
+    ${office('Room Charge', (d.roomCharge !== '' && d.roomCharge !== undefined && d.roomCharge !== null) ? (typeof d.roomCharge === 'number' || !isNaN(Number(d.roomCharge)) ? `₹${Number(d.roomCharge).toLocaleString('en-IN')}` : String(d.roomCharge)) : '—', 'Plan Name', d.planName || 'EP')}
+    ${office('Tax', d.taxMode || 'Exclude', 'Booking No.', d.bookingNo || '—')}
+    ${office('Company', d.company || 'Walk-in', 'Voucher No.', d.voucherNo || '—')}
+    ${office('Guest ID', String(d.guestIdType || 'Government ID').toUpperCase(), 'ID Number', d.guestIdNumber || '—')}
   </table>
 
   <div class="terms" style="margin-top:18px">

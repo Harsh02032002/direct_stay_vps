@@ -2,6 +2,11 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Room, Booking, GuestCheckIn, Invoice, Expense, HotelSettings, PosOrder, CashHandover, Staff } from '../types';
 import DirtyRoomsPanel from './DirtyRoomsPanel';
 import { showToast } from '../utils/toast';
+import {
+  getTodayIst,
+  formatDdmmyyyy,
+  addDaysIst,
+} from '../utils/reportingDates';
 import { 
   Printer, Download, Calendar, ChevronLeft, ChevronRight, 
   Search, RefreshCw, FileSpreadsheet, DollarSign, ArrowDown, Edit3, Check,
@@ -21,10 +26,7 @@ interface DailyCollectionSheetProps {
   onEditCheckout?: (guest: GuestCheckIn) => void;
 }
 
-const localTodayStr = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
+const localTodayStr = () => getTodayIst();
 
 const toLocalYmd = (raw?: string): string => {
   const s = String(raw || '').trim();
@@ -90,18 +92,12 @@ export default function DailyCollectionSheet({
 
   // Format date as DD-MM-YYYY for display
   const formattedDisplayDate = useMemo(() => {
-    const parts = selectedDate.split('-');
-    if (parts.length === 3) {
-      return `${parts[2]}-${parts[1]}-${parts[0]}`;
-    }
-    return selectedDate;
+    return formatDdmmyyyy(selectedDate);
   }, [selectedDate]);
 
-  // Navigate date
+  // Navigate date (IST arithmetic)
   const handleShiftDate = (days: number) => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + 1 * days);
-    setSelectedDate(d.toISOString().substring(0, 10));
+    setSelectedDate((prev) => addDaysIst(prev, days));
   };
 
   // Compile guest ledger records for the selected date

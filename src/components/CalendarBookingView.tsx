@@ -9,6 +9,7 @@ import {
 } from '../types';
 import type { BookingRecord, RoomBlockRecord } from '../pms-integrated/types';
 import { showToast } from '../utils/toast';
+import { getTodayIst, parseDdmmyyyyToYmd } from '../utils/reportingDates';
 import {
   Calendar,
   Layers,
@@ -51,6 +52,7 @@ export interface CalendarBookingViewProps {
   loggedInUser?: string;
   autoMarkDirtyOnCheckout?: boolean;
   setActiveTab?: (tab: string) => void;
+  setFrontDeskSubTab?: (sub: string) => void;
   onUpdateBookings: (bookings: Booking[]) => void;
   onUpdateRooms: (rooms: Room[]) => void;
   onUpdateCheckins?: (checkins: GuestCheckIn[]) => void;
@@ -194,6 +196,9 @@ export default function CalendarBookingView({
   currentRole = 'Admin',
   loggedInUser = 'Front Desk',
   autoMarkDirtyOnCheckout = true,
+  setActiveTab,
+  setFrontDeskSubTab,
+  onOpenAdvanceBooking,
   onUpdateBookings,
   onUpdateRooms,
   onUpdateCheckins,
@@ -289,7 +294,7 @@ export default function CalendarBookingView({
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
   const todayColRef = useRef<HTMLTableCellElement | null>(null);
 
-  const todayStr = useMemo(() => formatDateStr(new Date()), []);
+  const todayStr = useMemo(() => getTodayIst(), []);
   const canAuthoriseRoomOverride = useMemo(() => {
     const r = String(currentRole || '').trim().toLowerCase();
     return r === 'superadmin' || r === 'owner' || r === 'admin' || r === 'manager';
@@ -309,14 +314,30 @@ export default function CalendarBookingView({
   const unifiedBookings = useMemo<Booking[]>(() => {
     const list: Booking[] = [...bookings];
     checkins.forEach((c) => {
-      const alreadyLinked = list.some(
-        (b) =>
+      const cGuest = String(c.guestName || '').trim().toLowerCase();
+      const cRoom = String(c.roomNumber || '').trim();
+      const cInDate = parseDdmmyyyyToYmd(c.checkInDate || todayStr);
+      const alreadyLinked = list.some((b) => {
+        if (
           b.id === c.id ||
           b.id === (c as any).bookingId ||
-          (b.roomNumber === c.roomNumber &&
-            b.checkInDate === c.checkInDate &&
-            b.guestName === c.guestName)
-      );
+          (c as any).bookingNo === b.id ||
+          (b as any).checkInId === c.id
+        ) {
+          return true;
+        }
+        const bGuest = String(b.guestName || '').trim().toLowerCase();
+        const bInDate = parseDdmmyyyyToYmd(b.checkInDate || todayStr);
+        const bRooms = extractBookingRooms(b);
+        const matchRoom = bRooms.includes(cRoom) || String(b.roomNumber || '').trim() === cRoom;
+        return (
+          matchRoom &&
+          bInDate === cInDate &&
+          (bGuest === cGuest ||
+            (bGuest.length > 2 && cGuest.startsWith(bGuest)) ||
+            (cGuest.length > 2 && bGuest.startsWith(cGuest)))
+        );
+      });
       if (!alreadyLinked) {
         const isOut = Boolean(c.checkedOutDateTime || c.status === 'Checked Out');
         list.push({
@@ -693,8 +714,73 @@ export default function CalendarBookingView({
     setCheckInOverrideReason('');
   };
 
-  // Open Quick Create Modal on Empty Cell Click
+  // Redirect directly to Unified Check-In / Walk-In Form with preselected room & dates
+  const redirectToCheckIn = (roomNum?: string, roomCat?: string, rateVal?: number, inDate?: string) => {
+    try {
+      if (roomNum || inDate) {
+        sessionStorage.setItem(
+          'pms_preselect_room',
+          JSON.stringify({
+            roomNumber: roomNum || '',
+            roomType: roomCat || '',
+            rate: rateVal || 0,
+            checkInDate: inDate || todayStr,
+          })
+        );
+        sessionStorage.setItem(
+          'directstay_quick_booking_draft',
+          JSON.stringify({
+            roomNumber: roomNum || '',
+            roomType: roomCat || '',
+            checkInDate: inDate || todayStr,
+            checkOutDate: inDate ? addDaysStr(inDate, 1) : addDaysStr(todayStr, 1),
+            roomRate: rateVal || 0,
+          })
+        );
+      }
+    } catch {}
+
+    if (onOpenAdvanceBooking && roomNum) {
+      try {
+        onOpenAdvanceBooking({
+          roomNumber: roomNum,
+          roomType: roomCat || '',
+          date: inDate || todayStr,
+        });
+      } catch {}
+    }
+
+    try {
+      if (typeof window !== 'undefined') {
+        window.history.pushState({}, '', '/admin/frontDesk/checkin');
+        window.dispatchEvent(
+          new CustomEvent('directstay:checkin-nav', {
+            detail: {
+              bookingCategory: 'standard',
+              roomNumber: roomNum,
+              checkInDate: inDate || todayStr,
+            },
+          })
+        );
+      }
+    } catch {}
+
+    if (setFrontDeskSubTab) {
+      setFrontDeskSubTab('checkin');
+    }
+    if (setActiveTab) {
+      setActiveTab('frontDesk');
+    } else if (typeof window !== 'undefined') {
+      window.location.href = '/admin/frontDesk/checkin';
+    }
+  };
+
+  // Open Quick Create Modal on Empty Cell Click -> routes to Unified Check-In Form
   const handleEmptyCellClick = (room: Room, dateStr: string) => {
+    if (dateStr < todayStr) {
+      showToast('Cannot create booking for past dates. Please select today or a future date.', 'warning');
+      return;
+    }
     const blkReason = getRoomBlockOverlap(room, dateStr, addDaysStr(dateStr, 1));
     if (blkReason) {
       showToast(`Blocked: ${blkReason}`, 'warning');
@@ -706,21 +792,12 @@ export default function CalendarBookingView({
       return;
     }
     const effectiveRate = getEffectiveRateForCategoryOnDate(room.category, dateStr, room.rate);
-    setIsUnallocatedCreate(false);
-    setTargetRoomNumber(room.number);
-    setTargetRoomType(room.category);
-    setTargetRate(effectiveRate);
-    setTargetDateStr(dateStr);
-    setGuestName('');
-    setGuestMobile('');
-    setNightsCount(1);
-    setAdultsCount(room.baseOccupancy || 2);
-    setAdvancePaid(0);
-    setDiscountAmount(0);
-    setInstantCheckInNow(dateStr === todayStr && !isRoomDirtyState(room));
-    setCreateDirtyOverride(false);
-    setCreateDirtyReason('');
-    setIsBookModalOpen(true);
+    redirectToCheckIn(room.number, room.category, effectiveRate, dateStr);
+  };
+
+  const handleOpenCreateModal = (room: Room, dateStr: string) => {
+    const effectiveRate = getEffectiveRateForCategoryOnDate(room.category, dateStr, room.rate);
+    redirectToCheckIn(room.number, room.category, effectiveRate, dateStr);
   };
 
   // Create Booking from Stay Overview Modal
@@ -733,6 +810,10 @@ export default function CalendarBookingView({
 
     const nights = Math.max(1, Number(nightsCount) || 1);
     const checkInStr = targetDateStr;
+    if (checkInStr < todayStr) {
+      showToast('Cannot create booking for past dates. Please select today or a future date.', 'warning');
+      return;
+    }
     const checkOutStr = addDaysStr(checkInStr, nights);
 
     if (!isUnallocatedCreate) {
@@ -956,6 +1037,10 @@ export default function CalendarBookingView({
       )
     );
     const newCheckInDate = targetDateStr;
+    if (newCheckInDate < todayStr) {
+      showToast('Cannot move bookings to past dates.', 'warning');
+      return;
+    }
     const newCheckOutDate = addDaysStr(newCheckInDate, nights);
 
     if (
@@ -1624,18 +1709,7 @@ export default function CalendarBookingView({
           <button
             type="button"
             onClick={() => {
-              setIsUnallocatedCreate(false);
-              const firstAvail = rooms.find((r) => !isRoomOutOfOrderState(r)) || rooms[0];
-              setTargetRoomNumber(firstAvail?.number || '');
-              setTargetRoomType(firstAvail?.category || 'Standard');
-              setTargetRate(firstAvail?.rate || 2000);
-              setTargetDateStr(todayStr);
-              setGuestName('');
-              setGuestMobile('');
-              setNightsCount(1);
-              setAdvancePaid(0);
-              setInstantCheckInNow(false);
-              setIsBookModalOpen(true);
+              redirectToCheckIn(undefined, undefined, undefined, todayStr);
             }}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-950 font-bold text-xs transition cursor-pointer"
           >
@@ -1817,7 +1891,7 @@ export default function CalendarBookingView({
             <table className="w-full border-collapse table-fixed select-none" style={{ minWidth: `${210 + monthDates.length * 56}px` }}>
               <thead>
                 <tr className="border-b border-slate-200 bg-white">
-                  <th className="sticky left-0 z-30 bg-white w-[210px] min-w-[210px] px-3.5 py-2.5 text-left border-r border-slate-200 shadow-[2px_0_4px_rgba(15,23,42,0.03)]">
+                  <th className="sticky left-0 z-40 bg-white w-[210px] min-w-[210px] max-w-[210px] px-3.5 py-2.5 text-left border-r border-slate-200 shadow-[3px_0_6px_rgba(15,23,42,0.06)]">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-700">Room Type</span>
                       <button
@@ -1844,7 +1918,7 @@ export default function CalendarBookingView({
                         setViewMode('daily');
                       }}
                       title={`Open Daily View for ${formatHumanDate(md.iso)}`}
-                      className={`w-[56px] min-w-[56px] py-2 px-1 text-center border-r border-slate-100 cursor-pointer transition ${
+                      className={`w-[56px] min-w-[56px] max-w-[56px] z-20 py-2 px-1 text-center border-r border-slate-100 cursor-pointer transition ${
                         md.isToday
                           ? 'bg-amber-50/90 border-x-2 border-x-[#C49A3A]'
                           : md.isWeekend
@@ -1916,7 +1990,7 @@ export default function CalendarBookingView({
                                 [catName]: !prev[catName],
                               }))
                             }
-                            className="sticky left-0 z-20 bg-slate-100 px-3.5 py-2 border-r border-slate-200 cursor-pointer hover:bg-slate-200/70 transition shadow-[2px_0_4px_rgba(15,23,42,0.03)]"
+                            className="sticky left-0 z-30 w-[210px] min-w-[210px] max-w-[210px] bg-slate-100 px-3.5 py-2 border-r border-slate-200 cursor-pointer hover:bg-slate-200/70 transition shadow-[3px_0_6px_rgba(15,23,42,0.06)]"
                           >
                             <div className="flex items-center justify-between gap-1.5">
                               <div className="flex items-center gap-1.5 min-w-0">
@@ -1941,7 +2015,7 @@ export default function CalendarBookingView({
                             return (
                               <td
                                 key={`cat-${catName}-${md.iso}`}
-                                className={`py-1.5 text-center border-r border-slate-200/60 ${
+                                className={`w-[56px] min-w-[56px] max-w-[56px] py-1.5 text-center border-r border-slate-200/60 ${
                                   md.isToday ? 'bg-amber-100/50 border-x border-x-[#C49A3A]/50' : ''
                                 }`}
                               >
@@ -1981,7 +2055,7 @@ export default function CalendarBookingView({
                                 className="border-b border-slate-100 hover:bg-slate-50/40 transition-colors"
                               >
                                 {/* Sticky Room Label Cell */}
-                                <td className="sticky left-0 z-20 bg-white px-3.5 py-2 border-r border-slate-200 shadow-[2px_0_4px_rgba(15,23,42,0.03)]">
+                                <td className="sticky left-0 z-30 w-[210px] min-w-[210px] max-w-[210px] bg-white px-3.5 py-2 border-r border-slate-200 shadow-[3px_0_6px_rgba(15,23,42,0.06)] overflow-hidden">
                                   <div className="flex items-center justify-between gap-1.5">
                                     <div className="min-w-0">
                                       <div className="text-xs font-bold text-slate-800 truncate">
@@ -2021,23 +2095,33 @@ export default function CalendarBookingView({
                                   const barStartingHere = barsByStartCol.get(colIdx);
                                   const blkToday = isRoomBlockedOnNight(room, md.iso);
                                   const isHoverTarget = dragHoverKey === cellKey;
+                                  const isPastDate = md.iso < todayStr;
 
                                   return (
                                     <td
                                       key={cellKey}
-                                      onDragOver={(e) => handleDragOverCell(e, cellKey)}
-                                      onDrop={(e) => handleDropOnCell(e, room, md.iso)}
-                                      onClick={() => handleEmptyCellClick(room, md.iso)}
-                                      className={`relative h-11 p-0 border-r border-slate-100 cursor-pointer transition-colors ${
+                                      onDragOver={isPastDate ? undefined : (e) => handleDragOverCell(e, cellKey)}
+                                      onDrop={isPastDate ? undefined : (e) => handleDropOnCell(e, room, md.iso)}
+                                      onClick={() => {
+                                        if (isPastDate) {
+                                          showToast('Cannot create booking for past dates. Please select today or a future date.', 'warning');
+                                          return;
+                                        }
+                                        handleEmptyCellClick(room, md.iso);
+                                      }}
+                                      title={isPastDate ? `${formatHumanDate(md.iso)} (Past Date — Booking Closed)` : undefined}
+                                      className={`relative h-11 w-[56px] min-w-[56px] max-w-[56px] p-0 border-r border-slate-100 transition-colors ${
                                         isHoverTarget
                                           ? 'bg-emerald-100/80 ring-2 ring-inset ring-emerald-500'
                                           : md.isToday
                                           ? 'bg-amber-50/45 border-x border-x-[#C49A3A]/40'
                                           : blkToday
                                           ? 'bg-rose-50/50'
+                                          : isPastDate
+                                          ? 'bg-slate-100/40 text-slate-400 cursor-not-allowed select-none'
                                           : md.isWeekend
-                                          ? 'bg-[#FBF8F1]/40 hover:bg-emerald-50/40'
-                                          : 'hover:bg-emerald-50/40'
+                                          ? 'bg-[#FBF8F1]/40 hover:bg-emerald-50/40 cursor-pointer'
+                                          : 'hover:bg-emerald-50/40 cursor-pointer'
                                       }`}
                                     >
                                       {/* Today subtle vertical centerline */}
@@ -2091,14 +2175,14 @@ export default function CalendarBookingView({
                                                 ? 'Checked Out'
                                                 : 'Confirmed'
                                             }${isDraggable ? '\nDrag to reassign room or dates • Click for actions' : ''}`}
-                                            className={`absolute top-1.5 bottom-1.5 z-20 border shadow-2xs px-2 flex items-center gap-1.5 overflow-hidden transition ${colorStyles} ${
+                                            className={`absolute top-1.5 bottom-1.5 z-10 border shadow-2xs px-2 flex items-center gap-1.5 overflow-hidden transition ${colorStyles} ${
                                               startsBeforeMonth ? 'rounded-r-lg' : endsAfterMonth ? 'rounded-l-lg' : 'rounded-lg'
                                             } ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
                                           >
                                             <span className="w-4 h-4 rounded-full bg-slate-900/80 text-white text-[9px] font-extrabold inline-flex items-center justify-center shrink-0">
                                               {bk.guestName?.trim()?.[0]?.toUpperCase() || 'G'}
                                             </span>
-                                            <span className="text-[11px] font-bold truncate leading-tight">
+                                            <span className="text-[11px] font-bold truncate leading-tight min-w-0">
                                               {bk.guestName}
                                             </span>
                                             {spanCols >= 2 && (
@@ -2124,7 +2208,7 @@ export default function CalendarBookingView({
               {/* Bottom Summary Rows: Available Inventory, Total Occupied & Occupancy % */}
               <tfoot className="bg-slate-50 border-t-2 border-slate-200 text-[11px]">
                 <tr className="border-b border-slate-200/80">
-                  <td className="sticky left-0 z-20 bg-slate-100 px-3.5 py-2 font-bold text-emerald-800 border-r border-slate-200">
+                  <td className="sticky left-0 z-30 w-[210px] min-w-[210px] max-w-[210px] bg-slate-100 px-3.5 py-2 font-bold text-emerald-800 border-r border-slate-200 shadow-[3px_0_6px_rgba(15,23,42,0.06)]">
                     Available Inventory
                   </td>
                   {monthDates.map((md) => {
@@ -2132,7 +2216,7 @@ export default function CalendarBookingView({
                     return (
                       <td
                         key={`ft-avail-${md.iso}`}
-                        className={`py-2 text-center font-extrabold border-r border-slate-200/60 ${
+                        className={`w-[56px] min-w-[56px] max-w-[56px] py-2 text-center font-extrabold border-r border-slate-200/60 ${
                           md.isToday ? 'bg-amber-100/60 text-amber-950' : 'text-emerald-700'
                         }`}
                       >
@@ -2143,7 +2227,7 @@ export default function CalendarBookingView({
                 </tr>
 
                 <tr className="border-b border-slate-200/80">
-                  <td className="sticky left-0 z-20 bg-slate-100 px-3.5 py-2 font-bold text-slate-800 border-r border-slate-200">
+                  <td className="sticky left-0 z-30 w-[210px] min-w-[210px] max-w-[210px] bg-slate-100 px-3.5 py-2 font-bold text-slate-800 border-r border-slate-200 shadow-[3px_0_6px_rgba(15,23,42,0.06)]">
                     Total Occupied
                   </td>
                   {monthDates.map((md) => {
@@ -2151,7 +2235,7 @@ export default function CalendarBookingView({
                     return (
                       <td
                         key={`ft-occ-${md.iso}`}
-                        className={`py-2 text-center font-bold border-r border-slate-200/60 ${
+                        className={`w-[56px] min-w-[56px] max-w-[56px] py-2 text-center font-bold border-r border-slate-200/60 ${
                           md.isToday ? 'bg-amber-100/60 text-amber-950' : 'text-slate-700'
                         }`}
                       >
@@ -2162,7 +2246,7 @@ export default function CalendarBookingView({
                 </tr>
 
                 <tr>
-                  <td className="sticky left-0 z-20 bg-slate-100 px-3.5 py-2 font-bold text-slate-800 border-r border-slate-200">
+                  <td className="sticky left-0 z-30 w-[210px] min-w-[210px] max-w-[210px] bg-slate-100 px-3.5 py-2 font-bold text-slate-800 border-r border-slate-200 shadow-[3px_0_6px_rgba(15,23,42,0.06)]">
                     Occupancy%
                   </td>
                   {monthDates.map((md) => {
@@ -2170,7 +2254,7 @@ export default function CalendarBookingView({
                     return (
                       <td
                         key={`ft-pct-${md.iso}`}
-                        className={`py-2 text-center font-extrabold border-r border-slate-200/60 ${
+                        className={`w-[56px] min-w-[56px] max-w-[56px] py-2 text-center font-extrabold border-r border-slate-200/60 ${
                           md.isToday
                             ? 'bg-amber-100/60 text-[#9A7420]'
                             : pct >= 70
@@ -2386,13 +2470,19 @@ export default function CalendarBookingView({
                             </button>
                           </>
                         ) : !blk ? (
-                          <button
-                            type="button"
-                            onClick={() => handleEmptyCellClick(room, selectedDateIso)}
-                            className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer"
-                          >
-                            + Book Room {room.number}
-                          </button>
+                          selectedDateIso >= todayStr ? (
+                            <button
+                              type="button"
+                              onClick={() => handleEmptyCellClick(room, selectedDateIso)}
+                              className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer"
+                            >
+                              + Book Room {room.number}
+                            </button>
+                          ) : (
+                            <div className="w-full py-1.5 px-2 rounded-xl bg-slate-100 text-slate-400 font-semibold text-xs text-center select-none">
+                              Past Date (Booking Closed)
+                            </div>
+                          )
                         ) : null}
                       </div>
                     </div>
@@ -2597,17 +2687,7 @@ export default function CalendarBookingView({
                   type="button"
                   onClick={() => {
                     setShowUnallocatedModal(false);
-                    setIsUnallocatedCreate(true);
-                    setTargetRoomNumber('');
-                    setTargetRoomType(uniqueCategories[0] || 'Standard');
-                    setTargetRate(rooms[0]?.rate || 2000);
-                    setTargetDateStr(todayStr);
-                    setGuestName('');
-                    setGuestMobile('');
-                    setNightsCount(1);
-                    setAdvancePaid(0);
-                    setInstantCheckInNow(false);
-                    setIsBookModalOpen(true);
+                    redirectToCheckIn(undefined, uniqueCategories[0] || 'Standard', rooms[0]?.rate || 2000, todayStr);
                   }}
                   className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs cursor-pointer"
                 >
@@ -3349,6 +3429,23 @@ export default function CalendarBookingView({
               </div>
 
               <form onSubmit={handleSaveCalendarBooking} className="p-5 overflow-y-auto space-y-3.5 text-xs">
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div>
+                    <span className="font-bold text-slate-900 text-xs block">Unified PMS Check-In & Folio Form</span>
+                    <span className="text-[11px] text-slate-600 block">Open complete guest check-in with ID verification, GST billing & guest folio</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsBookModalOpen(false);
+                      redirectToCheckIn(targetRoomNumber, targetRoomType, targetRate, targetDateStr);
+                    }}
+                    className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-xs rounded-lg shadow-xs cursor-pointer shrink-0"
+                  >
+                    Open Check-In Form →
+                  </button>
+                </div>
+
                 <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
                   <button
                     type="button"
@@ -3379,8 +3476,17 @@ export default function CalendarBookingView({
                     <input
                       type="date"
                       required
+                      min={todayStr}
                       value={targetDateStr}
-                      onChange={(e) => setTargetDateStr(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val < todayStr) {
+                          showToast('Check-in date cannot be in the past.', 'warning');
+                          setTargetDateStr(todayStr);
+                          return;
+                        }
+                        setTargetDateStr(val);
+                      }}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 font-semibold"
                     />
                   </div>

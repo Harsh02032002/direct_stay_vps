@@ -124,6 +124,51 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
   >('ALL');
   const [priorityFilter, setPriorityFilter] = useState<'ALL' | HkPriority>('ALL');
 
+  // Automatic Current Date & Date Filter (Asia/Kolkata timezone, Default: Today)
+  const todayStr = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }, []);
+
+  const [datePreset, setDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('today');
+  const [fromDate, setFromDate] = useState<string>(todayStr);
+  const [toDate, setToDate] = useState<string>(todayStr);
+
+  const applyDatePreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
+    setDatePreset(preset);
+    const now = new Date();
+    if (preset === 'all') {
+      setFromDate('');
+      setToDate('');
+    } else if (preset === 'today') {
+      setFromDate(todayStr);
+      setToDate(todayStr);
+    } else if (preset === 'yesterday') {
+      const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+      setFromDate(y);
+      setToDate(y);
+    } else if (preset === 'this_week') {
+      const w = new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10);
+      setFromDate(w);
+      setToDate(todayStr);
+    } else if (preset === 'this_month') {
+      setFromDate(`${todayStr.slice(0, 7)}-01`);
+      setToDate(todayStr);
+    }
+  };
+
+  const matchesDateRange = (dateStr?: string): boolean => {
+    if (datePreset === 'all' && !fromDate && !toDate) return true;
+    if (!dateStr) return datePreset === 'all';
+    const norm = String(dateStr).slice(0, 10);
+    if (fromDate && norm < fromDate) return false;
+    if (toDate && norm > toDate) return false;
+    return true;
+  };
+
   // Room Detail & Status Progression Modal
   const [editingRoom, setEditingRoom] = useState<RoomAsset | null>(null);
   const [modalStage, setModalStage] = useState<HkStage>('Clean');
@@ -171,6 +216,24 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
 
   const [localLostFound, setLocalLostFound] = useState<LostFoundRecord[]>(lostFound);
   useEffect(() => setLocalLostFound(lostFound), [lostFound]);
+
+  const filteredTasks = useMemo(() => {
+    return tasks.filter((t) =>
+      matchesDateRange((t as any).createdAt || (t as any).date || (t as any).timing || todayStr)
+    );
+  }, [tasks, datePreset, fromDate, toDate, todayStr]);
+
+  const filteredLaundryOrders = useMemo(() => {
+    return laundryOrders.filter((o) =>
+      matchesDateRange((o as any).createdAt || (o as any).orderDate || (o as any).date || todayStr)
+    );
+  }, [laundryOrders, datePreset, fromDate, toDate, todayStr]);
+
+  const filteredLostFound = useMemo(() => {
+    return localLostFound.filter((lf) =>
+      matchesDateRange((lf as any).foundDate || (lf as any).createdAt || (lf as any).date || todayStr)
+    );
+  }, [localLostFound, datePreset, fromDate, toDate, todayStr]);
 
   const [lfItemName, setLfItemName] = useState('');
   const [lfCategory, setLfCategory] = useState('Electronics');
@@ -646,6 +709,66 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
               </button>
             );
           })}
+        </div>
+
+        {/* Date Filter Bar (Asia/Kolkata timezone, Default: Today) */}
+        <div className="pt-2.5 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 font-mono mr-1">
+              Date Filter:
+            </span>
+            {(
+              [
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+                { id: 'this_week', label: 'This Week' },
+                { id: 'this_month', label: 'This Month' },
+                { id: 'all', label: 'All Dates' },
+              ] as const
+            ).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => applyDatePreset(p.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  datePreset === p.id
+                    ? 'bg-slate-900 text-amber-400 shadow-xs'
+                    : 'bg-slate-100 hover:bg-amber-100/80 text-slate-700 border border-slate-200'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => {
+                setDatePreset('custom');
+                setFromDate(e.target.value);
+              }}
+              className="px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+            />
+            <span className="text-slate-400 font-bold">→</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => {
+                setDatePreset('custom');
+                setToDate(e.target.value);
+              }}
+              className="px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+            />
+            <button
+              type="button"
+              onClick={() => applyDatePreset('today')}
+              className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 font-bold text-[11px] cursor-pointer"
+            >
+              Reset to Today
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1501,7 +1624,7 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
           <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900">
-                Housekeeping Task &amp; Completion Log ({tasks.length})
+                Housekeeping Task &amp; Completion Log ({filteredTasks.length})
               </h3>
               <span className="text-xs text-slate-500">
                 Synced with Room Board &amp; Front Desk Availability
@@ -1519,14 +1642,14 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {tasks.length === 0 ? (
+                  {filteredTasks.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-10 text-center text-slate-400">
-                        No housekeeping tasks logged yet. Tasks are auto-created on Guest Check-Out or via Assign Staff.
+                        No housekeeping tasks found for the selected date range.
                       </td>
                     </tr>
                   ) : (
-                    tasks.map((task) => (
+                    filteredTasks.map((task) => (
                       <tr key={task.id} className="hover:bg-slate-50">
                         <td className="py-3.5 px-4 whitespace-nowrap">
                           <div className="font-extrabold text-slate-900">{task.roomName}</div>
@@ -1681,14 +1804,14 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {laundryOrders.length === 0 ? (
+                  {filteredLaundryOrders.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-10 text-center text-slate-400">
-                        No laundry orders recorded yet.
+                        No laundry orders found for the selected date range.
                       </td>
                     </tr>
                   ) : (
-                    laundryOrders.map((ord) => (
+                    filteredLaundryOrders.map((ord) => (
                       <tr key={ord.id}>
                         <td className="py-3.5 px-4 font-bold whitespace-nowrap">{ord.orderNumber}</td>
                         <td className="py-3.5 px-4 whitespace-nowrap">
@@ -1819,14 +1942,14 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {localLostFound.length === 0 ? (
+                  {filteredLostFound.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-10 text-center text-slate-400">
-                        No lost &amp; found items registered yet.
+                        No lost &amp; found items found for the selected date range.
                       </td>
                     </tr>
                   ) : (
-                    localLostFound.map((lf) => (
+                    filteredLostFound.map((lf) => (
                       <tr key={lf.id}>
                         <td className="py-3 px-4 font-bold text-slate-900">{lf.itemName}</td>
                         <td className="py-3 px-4 whitespace-nowrap">{lf.category}</td>

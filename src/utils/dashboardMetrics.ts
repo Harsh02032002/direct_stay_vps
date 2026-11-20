@@ -1,4 +1,5 @@
 import type { Booking, GuestCheckIn, Invoice, PosOrder, Room } from '../types';
+import { getTodayIst } from './reportingDates';
 import type {
   BookingRecord,
   HousekeepingTask,
@@ -141,7 +142,7 @@ function shiftIsoDate(isoDate: string, deltaDays: number): string {
 }
 
 export function formatDashboardHeaderDate(isoDate: string, todayIso?: string): string {
-  const actualToday = todayIso || new Date().toISOString().slice(0, 10);
+  const actualToday = todayIso || getTodayIst();
   const dt = /^\d{4}-\d{2}-\d{2}$/.test(isoDate)
     ? new Date(`${isoDate}T00:00:00`)
     : new Date();
@@ -370,7 +371,7 @@ export function computeDashboardMetrics(input: DashboardMetricsInput): Dashboard
     standardCheckOutTime = '11:00 AM',
   } = input;
 
-  const todayActualIso = new Date().toISOString().slice(0, 10);
+  const todayActualIso = getTodayIst();
   const effectiveDate = /^\d{4}-\d{2}-\d{2}$/.test(selectedDate) ? selectedDate : todayActualIso;
   const yesterdayDate = shiftIsoDate(effectiveDate, -1);
   const tomorrowDate = shiftIsoDate(effectiveDate, 1);

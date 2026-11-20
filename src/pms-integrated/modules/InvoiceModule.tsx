@@ -10,6 +10,7 @@ import {
   FilePlus2,
   Lock,
   Calendar,
+  Eye,
 } from 'lucide-react';
 import { BookingRecord, InvoiceRecord, InvoiceScope } from '../types';
 import { formatCurrency } from '../utils/formatters';
@@ -211,6 +212,7 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
   };
 
   const [search, setSearch] = useState('');
+  const [gstFilter, setGstFilter] = useState<'all' | 'gst' | 'non_gst'>('all');
   const [selectedBookingId, setSelectedBookingId] = useState(bookings[0]?.id || '');
   const [selectedScope, setSelectedScope] = useState<InvoiceScope>(
     'Booking + Other Services'
@@ -332,6 +334,15 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
     return allFolioInvoices.filter((inv) => {
       if (!matchesDateRange(inv)) return false;
 
+      const hasGst = !(
+        inv.isWithoutGst === true ||
+        (inv.gstRate !== undefined && Number(inv.gstRate) <= 0) ||
+        (inv.gstRate === undefined && Number(inv.totalTax || 0) <= 0)
+      );
+
+      if (gstFilter === 'gst' && !hasGst) return false;
+      if (gstFilter === 'non_gst' && hasGst) return false;
+
       const q = search.toLowerCase().trim();
       const matchesSearch =
         !q ||
@@ -355,7 +366,23 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
       }
       return true;
     });
-  }, [allFolioInvoices, search, effectiveSubTab, datePreset, fromDate, toDate]);
+  }, [allFolioInvoices, search, effectiveSubTab, datePreset, fromDate, toDate, gstFilter]);
+
+  const gstCounts = useMemo(() => {
+    let withGst = 0;
+    let withoutGst = 0;
+    allFolioInvoices.forEach((inv) => {
+      if (!matchesDateRange(inv)) return;
+      const hasGst = !(
+        inv.isWithoutGst === true ||
+        (inv.gstRate !== undefined && Number(inv.gstRate) <= 0) ||
+        (inv.gstRate === undefined && Number(inv.totalTax || 0) <= 0)
+      );
+      if (hasGst) withGst++;
+      else withoutGst++;
+    });
+    return { all: withGst + withoutGst, withGst, withoutGst };
+  }, [allFolioInvoices, datePreset, fromDate, toDate]);
 
   const targetBooking = useMemo(
     () => bookings.find((b) => b.id === selectedBookingId) || bookings[0] || null,
@@ -867,16 +894,58 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
           {/* Invoices Table */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4">
-              <div className="relative w-72">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search Invoice #, Guest, Room #, Booking #..."
-                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-xs"
-                />
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative w-64 sm:w-72">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search Invoice #, Guest, Room #, Booking #..."
+                    className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-xs"
+                  />
+                </div>
+
+                {/* GST Bills vs Without GST Bills Filter Bar */}
+                <div className="inline-flex items-center p-1 rounded-xl bg-slate-100 border border-slate-200/80 text-xs font-bold gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setGstFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      gstFilter === 'all'
+                        ? 'bg-slate-900 text-amber-400 shadow-2xs font-extrabold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    All Bills ({gstCounts.all})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGstFilter('gst')}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                      gstFilter === 'gst'
+                        ? 'bg-emerald-700 text-white shadow-2xs font-extrabold'
+                        : 'text-emerald-700 hover:bg-emerald-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+                    GST Bills ({gstCounts.withGst})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGstFilter('non_gst')}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                      gstFilter === 'non_gst'
+                        ? 'bg-amber-600 text-white shadow-2xs font-extrabold'
+                        : 'text-amber-800 hover:bg-amber-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-400 inline-block"></span>
+                    Without GST Bills ({gstCounts.withoutGst})
+                  </button>
+                </div>
               </div>
+
               <div className="text-xs text-slate-500">
                 Showing <strong>{filteredInvoices.length}</strong> of <strong>{allFolioInvoices.length}</strong> records • SAC:{' '}
                 <strong>{settings.roomSac} (Room)</strong> • <strong>{settings.foodSac} (F&B)</strong>
@@ -1102,6 +1171,21 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                           </td>
                           <td className="py-3.5 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onOpenInvoiceModal(
+                                    bookingForModal,
+                                    displayScope,
+                                    isFolioRow ? undefined : inv
+                                  )
+                                }
+                                className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                                title="View Folio & Invoice Breakdown"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-slate-600" />
+                                View
+                              </button>
                               {isFolioRow && (
                                 <button
                                   type="button"

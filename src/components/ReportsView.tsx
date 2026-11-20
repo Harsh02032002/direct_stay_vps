@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Room, Booking, GuestCheckIn, Invoice, Expense, WaterBottleRecord, PaymentRecord, HotelSettings, PosOrder, PosItem, CashHandover, Staff } from '../types';
 import { showToast } from '../utils/toast';
+import {
+  getTodayIst,
+  getYesterdayIst,
+  formatDdmmyyyy,
+  getPresetDateRange,
+} from '../utils/reportingDates';
 import DailyCollectionSheet from './DailyCollectionSheet';
 import DirtyRoomsPanel, { isRoomDirty } from './DirtyRoomsPanel';
 import { 
@@ -88,29 +94,19 @@ export default function ReportsView({
     showToast(msg, 'info');
   };
   
-  // --- DYNAMIC SYSTEM REFERENCE TIME ---
-  const [refTodayDate, setRefTodayDate] = useState(() => {
-    return new Date().toISOString().substring(0, 10);
-  });
+  // --- DYNAMIC SYSTEM REFERENCE TIME (IST Default: Today) ---
+  const [refTodayDate, setRefTodayDate] = useState(() => getTodayIst());
 
   // --- FILTER RANGE PRESETS & STATES ---
   const [dateFilterPreset, setDateFilterPreset] = useState<'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'custom'>('today');
-  const [customStartDate, setCustomStartDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 5);
-    return d.toISOString().substring(0, 10);
-  });
-  const [customEndDate, setCustomEndDate] = useState(() => {
-    return new Date().toISOString().substring(0, 10);
-  });
+  const [customStartDate, setCustomStartDate] = useState(() => getTodayIst());
+  const [customEndDate, setCustomEndDate] = useState(() => getTodayIst());
   
   // Excluded dates within the active range (allows toggling individual dates)
   const [excludedDates, setExcludedDates] = useState<string[]>([]);
   
-  // GST Tax Report Month
-  const [taxMonth, setTaxMonth] = useState(() => {
-    return new Date().toISOString().substring(0, 7);
-  });
+  // GST Tax Report Month (IST Current Month YYYY-MM)
+  const [taxMonth, setTaxMonth] = useState(() => getTodayIst().substring(0, 7));
 
   // Search input inside ledger tables
   const [ledgerSearch, setLedgerSearch] = useState('');

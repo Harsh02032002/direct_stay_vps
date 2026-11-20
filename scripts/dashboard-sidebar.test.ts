@@ -50,6 +50,7 @@ test('Left Sidebar matches approved structure including Financial Hub & Point of
       'Guest Profiles',
       'Guest Self Service',
       'Invoices & Billing',
+      'Guest Services',
       'Lost & Found',
       'Availability',
       'Guest Status',
@@ -119,16 +120,53 @@ test('Left Sidebar matches approved structure including Financial Hub & Point of
     ['Properties', 'Building & Floor', 'Users', 'User Roles', 'Audit Logs', 'Profile Setup']
   );
 
-  // Financial Hub opens in-page; Point of Sale opens the standalone POS in a new browser tab
+  // Financial Hub is an expandable group with all finance sub-menus; Point of Sale opens the standalone POS in a new browser tab
   const finNode = DIRECTSTAY_PMS_SIDEBAR_TREE.find((n) => n.label === 'Financial Hub')!;
-  assert.equal(finNode.target?.activeTab, 'finance');
+  assert.deepEqual(
+    finNode.children?.map((c) => c.label),
+    [
+      'Finance Overview',
+      'Income Ledger',
+      'Expense Register',
+      'Petty Cash Drawer',
+      'Cash & Bank A/c',
+      'Vouchers',
+      'Vendor Payments',
+      'Owner/Director Payments',
+      'Staff Reimbursements',
+      'Daily Shift Closing',
+      'P&L & 5% GST Summary',
+    ]
+  );
+  const vouchersNode = finNode.children!.find((c) => c.label === 'Vouchers')!;
+  assert.deepEqual(
+    vouchersNode.children?.map((c) => c.label),
+    ['Payment Voucher', 'Receipt Voucher']
+  );
+  const finLeafTabs = flattenSidebarLeafNodes()
+    .filter((l) => l.target?.activeTab === 'finance')
+    .map((l) => l.target?.financeSubTab);
+  assert.deepEqual(finLeafTabs, [
+    'dashboard',
+    'income',
+    'expenses',
+    'petty_cash',
+    'cash_bank',
+    'vouchers_payment',
+    'vouchers_receipt',
+    'vendors',
+    'owner_payments',
+    'reimbursements',
+    'daily_closing',
+    'pl_reports',
+  ]);
   const posNode = DIRECTSTAY_PMS_SIDEBAR_TREE.find((n) => n.label === 'Point of Sale')!;
   assert.equal(posNode.target?.activeTab, 'pos');
   assert.equal(posNode.target?.openInNewTab, true);
 });
 
 // 2. Every Leaf Item Connects to a Valid Existing Module & Active Highlighting Works
-test('All 52 leaf sidebar items resolve to valid DirectStay modules and active state highlights cleanly', () => {
+test('All 63 leaf sidebar items resolve to valid DirectStay modules and active state highlights cleanly', () => {
   const validTabs = new Set([
     'dashboard',
     'calendar',
@@ -145,10 +183,11 @@ test('All 52 leaf sidebar items resolve to valid DirectStay modules and active s
     'auditLogs',
     'finance',
     'pos',
+    'inventory',
   ]);
 
   const leaves = flattenSidebarLeafNodes();
-  assert.equal(leaves.length, 52);
+  assert.equal(leaves.length, 64);
   for (const leaf of leaves) {
     assert.ok(leaf.target?.activeTab, `Missing target on ${leaf.label}`);
     assert.equal(

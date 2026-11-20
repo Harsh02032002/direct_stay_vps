@@ -73,6 +73,7 @@ export default function RoomManagementView({
     if (onSubTabChange) onSubTabChange(tab);
   };
   const [qrModalRoom, setQrModalRoom] = useState<Room | null>(null);
+  const [viewRoomDetails, setViewRoomDetails] = useState<Room | null>(null);
 
   // Common Search & Filters State
   const [search, setSearch] = useState('');
@@ -138,7 +139,14 @@ export default function RoomManagementView({
   const [newAmenityDesc, setNewAmenityDesc] = useState('');
 
   // Dynamic Room Categories (zero static categories; derived strictly from actual hotel rooms + user-created categories)
-  const [customCategories, setCustomCategories] = useState<CategoryConfig[]>([]);
+  const [customCategories, setCustomCategories] = useState<CategoryConfig[]>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('directstay_room_categories') : null;
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
   const [deletedCategoryNames, setDeletedCategoryNames] = useState<string[]>([]);
 
   const categories = React.useMemo<CategoryConfig[]>(() => {
@@ -196,6 +204,11 @@ export default function RoomManagementView({
   // Persist categories helper
   const saveCustomCategoriesToStore = (updatedList: CategoryConfig[]) => {
     setCustomCategories(updatedList);
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('directstay_room_categories', JSON.stringify(updatedList));
+      }
+    } catch {}
   };
 
   // Persist amenities helper
@@ -966,40 +979,54 @@ export default function RoomManagementView({
                     </div>
                   </div>
 
-                  <div className="flex gap-1.5 pt-1">
-                    {!isRestrictedRole && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="grid grid-cols-2 gap-1.5">
                       <button
-                        onClick={() => setSelectedRoomForStatus(room)}
-                        className="flex-1 py-1.5 bg-luxury-brown-900 hover:bg-black text-luxury-gold-300 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                        onClick={() => setViewRoomDetails(room)}
+                        className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                        title="View Room & Guest Details"
                       >
-                        <Edit2 className="w-3.5 h-3.5" /> Status
+                        <Eye className="w-3.5 h-3.5 text-slate-600 shrink-0" /> View
                       </button>
-                    )}
-                    <button
-                      onClick={() => setQrModalRoom(room)}
-                      className="px-2 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                      title="Room QR Code"
-                    >
-                      <QrCode className="w-3.5 h-3.5 text-amber-700" /> QR
-                    </button>
-                    {!isRestrictedRole && (
+                      {!isRestrictedRole ? (
+                        <button
+                          onClick={() => setSelectedRoomForStatus(room)}
+                          className="py-1.5 px-2 bg-luxury-brown-900 hover:bg-black text-luxury-gold-300 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                          title="Change Room Operational Status"
+                        >
+                          <Edit2 className="w-3.5 h-3.5 shrink-0" /> Status
+                        </button>
+                      ) : (
+                        <div />
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => handleEditRoomClick(room)}
-                        className="px-2.5 py-1.5 bg-luxury-beige-100 hover:bg-luxury-beige-200 text-luxury-brown-900 font-bold text-xs rounded-xl transition-colors cursor-pointer"
-                        title="Edit Room Details & Photo"
+                        onClick={() => setQrModalRoom(room)}
+                        className="flex-1 py-1 px-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                        title="Room QR Code for Direct Guest Booking / Room Service"
                       >
-                        Edit
+                        <QrCode className="w-3.5 h-3.5 text-amber-700 shrink-0" /> QR
                       </button>
-                    )}
-                    {canDeleteRoom && (
-                      <button
-                        onClick={() => handleDeleteRoom(room.id, room.number)}
-                        className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
-                        title="Delete Room"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                      {!isRestrictedRole && (
+                        <button
+                          onClick={() => handleEditRoomClick(room)}
+                          className="flex-1 py-1 px-2 bg-luxury-beige-100 hover:bg-luxury-beige-200 text-luxury-brown-900 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                          title="Edit Room Details & Photo"
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {canDeleteRoom && (
+                        <button
+                          onClick={() => handleDeleteRoom(room.id, room.number)}
+                          className="p-1 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl transition-colors flex items-center justify-center cursor-pointer"
+                          title="Delete Room"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1410,38 +1437,50 @@ export default function RoomManagementView({
                     )}
                   </div>
 
-                  <div className="flex gap-1.5 pt-1">
-                    <button
-                      onClick={() => setSelectedRoomForStatus(room)}
-                      className="flex-1 py-1.5 bg-luxury-brown-900 hover:bg-black text-luxury-gold-300 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" /> Status
-                    </button>
-                    <button
-                      onClick={() => setQrModalRoom(room)}
-                      className="px-2 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                      title="Room QR Code for Direct Guest Booking / Room Service"
-                    >
-                      <QrCode className="w-3.5 h-3.5 text-amber-700" /> QR
-                    </button>
-                    {!isRestrictedRole && (
-                      <>
-                        <button
-                          onClick={() => handleEditRoomClick(room)}
-                          className="px-2.5 py-1.5 bg-luxury-beige-100 hover:bg-luxury-beige-200 text-luxury-brown-900 font-bold text-xs rounded-xl transition-colors cursor-pointer"
-                          title="Edit Room Details & Photo"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDeleteRoom(room.id, room.number)}
-                          className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
-                          title="Delete Room"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        onClick={() => setViewRoomDetails(room)}
+                        className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                        title="View Room & Guest Details"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-slate-600 shrink-0" /> View
+                      </button>
+                      <button
+                        onClick={() => setSelectedRoomForStatus(room)}
+                        className="py-1.5 px-2 bg-luxury-brown-900 hover:bg-black text-luxury-gold-300 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                        title="Change Room Operational Status"
+                      >
+                        <Edit2 className="w-3.5 h-3.5 shrink-0" /> Status
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setQrModalRoom(room)}
+                        className="flex-1 py-1 px-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                        title="Room QR Code for Direct Guest Booking / Room Service"
+                      >
+                        <QrCode className="w-3.5 h-3.5 text-amber-700 shrink-0" /> QR
+                      </button>
+                      {!isRestrictedRole && (
+                        <>
+                          <button
+                            onClick={() => handleEditRoomClick(room)}
+                            className="flex-1 py-1 px-2 bg-luxury-beige-100 hover:bg-luxury-beige-200 text-luxury-brown-900 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                            title="Edit Room Details & Photo"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteRoom(room.id, room.number)}
+                            className="p-1 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl transition-colors flex items-center justify-center cursor-pointer"
+                            title="Delete Room"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -2070,6 +2109,194 @@ export default function RoomManagementView({
                 </>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {/* --- ROOM DETAILS & ACTIVE GUEST VIEW MODAL --- */}
+      {viewRoomDetails && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-luxury-brown-200 space-y-5 my-8 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex justify-between items-start border-b border-luxury-brown-100 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-luxury-gold-600 bg-luxury-gold-50 px-2 py-0.5 rounded-full border border-luxury-gold-200">
+                    Room Overview & Inspection
+                  </span>
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
+                    viewRoomDetails.status === 'Available' ? 'bg-emerald-100 text-emerald-800' :
+                    viewRoomDetails.status === 'Occupied' ? 'bg-rose-100 text-rose-800' :
+                    viewRoomDetails.status === 'Reserved' ? 'bg-amber-100 text-amber-800' :
+                    'bg-slate-100 text-slate-800'
+                  }`}>
+                    {viewRoomDetails.status}
+                  </span>
+                </div>
+                <h3 className="text-2xl font-serif font-bold text-luxury-brown-950 mt-1">
+                  Room {viewRoomDetails.number} — {viewRoomDetails.category || (viewRoomDetails as any).type || 'Standard'}
+                </h3>
+                <p className="text-xs text-luxury-brown-500">
+                  Floor: {viewRoomDetails.floor || '1st Floor'} • Bed: {viewRoomDetails.bedType || 'King Bed'} • Tariff: ₹{(viewRoomDetails.rate || 0).toLocaleString('en-IN')}/night
+                </p>
+              </div>
+              <button
+                onClick={() => setViewRoomDetails(null)}
+                className="text-gray-400 hover:text-gray-700 p-2 rounded-xl hover:bg-gray-100 cursor-pointer transition-colors"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Room Photo Gallery if present */}
+            {viewRoomDetails.images && viewRoomDetails.images.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-luxury-brown-600">Room Photos</span>
+                <div className="grid grid-cols-3 gap-2">
+                  {viewRoomDetails.images.slice(0, 3).map((img, idx) => (
+                    <div key={idx} className="h-28 rounded-xl overflow-hidden border border-luxury-brown-200 bg-slate-100">
+                      <img src={img} alt={`Room ${viewRoomDetails.number} photo ${idx + 1}`} className="w-full h-full object-cover" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Room Specifications Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-luxury-beige-50/60 p-4 rounded-2xl border border-luxury-beige-200">
+              <div className="bg-white p-3 rounded-xl border border-luxury-brown-100 shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-luxury-brown-400 block">Nightly Tariff</span>
+                <span className="text-base font-bold font-serif text-luxury-brown-900">₹{(viewRoomDetails.rate || 0).toLocaleString('en-IN')}</span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-luxury-brown-100 shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-luxury-brown-400 block">Housekeeping</span>
+                <span className={`text-sm font-bold block ${viewRoomDetails.cleaningStatus === 'Dirty' ? 'text-amber-700' : 'text-emerald-700'}`}>
+                  {viewRoomDetails.cleaningStatus || 'Clean'}
+                </span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-luxury-brown-100 shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-luxury-brown-400 block">Occupancy</span>
+                <span className="text-sm font-bold text-luxury-brown-900">
+                  {viewRoomDetails.baseOccupancy || 2} Base / {viewRoomDetails.maxOccupancy || 3} Max
+                </span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-luxury-brown-100 shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-luxury-brown-400 block">Extra Bed</span>
+                <span className={`text-sm font-bold block ${viewRoomDetails.allowExtraBed !== false ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {viewRoomDetails.allowExtraBed !== false ? `Allowed (+₹${viewRoomDetails.extraPersonCharge || 500})` : 'Not Allowed'}
+                </span>
+              </div>
+            </div>
+
+            {/* Active Guest Info if Occupied or Booked */}
+            {(() => {
+              const activeBooking = bookings?.find(b =>
+                (b.status === 'Checked-In' || b.status === 'Confirmed') &&
+                (b.roomNumber === viewRoomDetails.number || (Array.isArray((b as any).assignedRooms) && (b as any).assignedRooms.includes(viewRoomDetails.number)))
+              );
+
+              if (activeBooking) {
+                return (
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <h4 className="font-serif font-bold text-sm text-luxury-brown-950">
+                          Active In-House Guest Details
+                        </h4>
+                      </div>
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        {activeBooking.status}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <span className="text-[10px] text-luxury-brown-500 uppercase font-bold block">Guest Name</span>
+                        <span className="font-bold text-luxury-brown-900">{activeBooking.guestName || 'Guest'}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-luxury-brown-500 uppercase font-bold block">Contact</span>
+                        <span className="font-bold text-luxury-brown-900">{activeBooking.mobile || activeBooking.email || 'N/A'}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-luxury-brown-500 uppercase font-bold block">Booking ID</span>
+                        <span className="font-mono text-luxury-gold-700 font-bold">{activeBooking.id}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-luxury-brown-500 uppercase font-bold block">Stay Dates</span>
+                        <span className="font-medium text-slate-700">{activeBooking.checkInDate} to {activeBooking.checkOutDate}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-luxury-brown-500 uppercase font-bold block">Advance Paid</span>
+                        <span className="font-bold text-emerald-700">₹{(activeBooking.advanceAmount || (activeBooking as any).advancePaid || 0).toLocaleString('en-IN')}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-luxury-brown-500 uppercase font-bold block">Total Amount</span>
+                        <span className="font-bold text-luxury-brown-900">₹{(activeBooking.bookingAmount || (activeBooking as any).totalAmount || 0).toLocaleString('en-IN')}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-center text-xs text-slate-500">
+                  No active stay or booking assigned to Room {viewRoomDetails.number} right now. Room is ready for assignment.
+                </div>
+              );
+            })()}
+
+            {/* Amenities Library */}
+            {viewRoomDetails.amenities && viewRoomDetails.amenities.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-luxury-brown-600 block">
+                  Configured Amenities
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {viewRoomDetails.amenities.map((am, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-luxury-beige-100 text-luxury-brown-900 text-xs font-medium border border-luxury-brown-200">
+                      <Check className="w-3 h-3 text-emerald-600" /> {am}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-between pt-3 border-t border-luxury-brown-100">
+              <button
+                onClick={() => setViewRoomDetails(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const r = viewRoomDetails;
+                    setViewRoomDetails(null);
+                    setSelectedRoomForStatus(r);
+                  }}
+                  className="px-4 py-2 bg-luxury-brown-900 hover:bg-black text-luxury-gold-300 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Edit2 className="w-3.5 h-3.5" /> Update Status
+                </button>
+                {!isRestrictedRole && (
+                  <button
+                    onClick={() => {
+                      const r = viewRoomDetails;
+                      setViewRoomDetails(null);
+                      handleEditRoomClick(r);
+                    }}
+                    className="px-4 py-2 bg-luxury-gold-500 hover:bg-luxury-gold-600 text-luxury-brown-950 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    Edit Room
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

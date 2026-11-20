@@ -4,7 +4,7 @@ import {
   Contact, Printer, Check, Receipt, RefreshCw, FileCheck, Users, 
   Sparkles, DollarSign, Plus, Trash2, Landmark, Send, Download, 
   ClipboardList, Settings, Sliders, Hotel, Calendar, UserCheck, Inbox, ShieldCheck,
-  Globe, Building, FileSpreadsheet, ShieldAlert, FileText, Layers, Eye, Search, Filter, Clock, PenTool, X, ChevronDown, ChevronUp, BedDouble
+  Globe, Building, FileSpreadsheet, ShieldAlert, FileText, Layers, Eye, Search, Filter, Clock, PenTool, X, ChevronDown, ChevronUp, BedDouble, AlertCircle
 } from 'lucide-react';
 import { showToast } from '../utils/toast';
 import QuickDateInput from './QuickDateInput';
@@ -268,6 +268,63 @@ export default function CheckInFormView({
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const serviceAmountOf = (s: WaterBottleRecord) => Math.max(0, Number(s.configuredAmount ?? s.chargeAmount ?? 0));
   const [folioFilter, setFolioFilter] = useState<'active' | 'checkedout' | 'all'>('active');
+  const [folioDatePreset, setFolioDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('today');
+  const [folioFromDate, setFolioFromDate] = useState<string>(() => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  });
+  const [folioToDate, setFolioToDate] = useState<string>(() => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  });
+
+  const applyFolioDatePreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
+    setFolioDatePreset(preset);
+    let today = '';
+    try {
+      today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    } catch {
+      today = new Date().toISOString().slice(0, 10);
+    }
+    const now = new Date();
+    if (preset === 'all') {
+      setFolioFromDate('');
+      setFolioToDate('');
+    } else if (preset === 'today') {
+      setFolioFromDate(today);
+      setFolioToDate(today);
+    } else if (preset === 'yesterday') {
+      const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+      setFolioFromDate(y);
+      setFolioToDate(y);
+    } else if (preset === 'this_week') {
+      const w = new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10);
+      setFolioFromDate(w);
+      setFolioToDate(today);
+    } else if (preset === 'this_month') {
+      setFolioFromDate(`${today.slice(0, 7)}-01`);
+      setFolioToDate(today);
+    }
+  };
+
+  const matchesFolioDate = (ci?: string, co?: string): boolean => {
+    if (folioDatePreset === 'all' && !folioFromDate && !folioToDate) return true;
+    const cIn = String(ci || '').slice(0, 10);
+    const cOut = String(co || '').slice(0, 10);
+    if (!cIn && !cOut) return folioDatePreset === 'all';
+    if (folioFromDate && folioToDate && cIn && cOut) {
+      return cIn <= folioToDate && cOut >= folioFromDate;
+    }
+    if (folioFromDate && cIn && cIn < folioFromDate && cOut && cOut < folioFromDate) return false;
+    if (folioToDate && cIn && cIn > folioToDate) return false;
+    return true;
+  };
   const [showAllCheckedInGuests, setShowAllCheckedInGuests] = useState(false);
   
   // 1. Hotel Configuration state (direct edits)
@@ -341,6 +398,7 @@ export default function CheckInFormView({
 
   const handleAddSecondaryGuest = () => {
     userCountTouchedRef.current = true;
+    extraChargeTouchedRef.current = false;
     setSecondaryGuests(prev => {
       const next = [
         ...prev,
@@ -353,6 +411,7 @@ export default function CheckInFormView({
 
   const handleRemoveSecondaryGuest = (index: number) => {
     userCountTouchedRef.current = true;
+    extraChargeTouchedRef.current = false;
     setSecondaryGuests(prev => {
       const next = prev.filter((_, i) => i !== index);
       setManualExtraPaxCount(next.length);
@@ -375,6 +434,7 @@ export default function CheckInFormView({
 
   const handleSyncExtraGuestRows = (rawCount: number) => {
     const count = Math.min(20, Math.max(0, Math.floor(Number(rawCount) || 0)));
+    extraChargeTouchedRef.current = false;
     setManualExtraPaxCount(count);
     setSecondaryGuests(prev => {
       if (prev.length === count) return prev;
@@ -551,19 +611,73 @@ export default function CheckInFormView({
     } else {
       setRoomRate(selectedRoom.rate);
     }
+    // Resolve extraPersonCharge & baseOccupancy from Room, Category Definitions, or Sibling Rooms
+    let catExtra = 0;
+    let catBase = 0;
+    let catMax = 0;
+    try {
+      const storedCats = typeof window !== 'undefined' ? localStorage.getItem('directstay_room_categories') : null;
+      if (storedCats) {
+        const parsed = JSON.parse(storedCats);
+        if (Array.isArray(parsed)) {
+          const match = parsed.find(
+            (c: any) => String(c.name || '').trim().toLowerCase() === String(selectedRoom.category || '').trim().toLowerCase()
+          );
+          if (match) {
+            catExtra = Number(match.extra || match.extraPaxFee || 0);
+            catBase = Number(match.baseOcc || 0);
+            catMax = Number(match.maxOcc || 0);
+          }
+        }
+      }
+    } catch {}
+
+    const siblingRoom = rooms.find(
+      r =>
+        String(r.category || '').trim().toLowerCase() === String(selectedRoom.category || '').trim().toLowerCase() &&
+        (Number(r.extraPersonCharge) > 0 || Number(r.baseOccupancy) > 0)
+    );
+
     const configuredExtra =
-      selectedRoom.extraPersonCharge !== undefined &&
-      selectedRoom.extraPersonCharge !== null &&
       Number(selectedRoom.extraPersonCharge) > 0
-        ? Math.max(0, Number(selectedRoom.extraPersonCharge) || 0)
+        ? Number(selectedRoom.extraPersonCharge)
+        : catExtra > 0
+        ? catExtra
+        : Number(siblingRoom?.extraPersonCharge) > 0
+        ? Number(siblingRoom?.extraPersonCharge)
         : Number((hotelSettings as any)?.defaultExtraPersonCharge) > 0
         ? Number((hotelSettings as any).defaultExtraPersonCharge)
         : 500;
+
+    const configuredExtraBed =
+      Number((selectedRoom as any).extraBedRate) > 0
+        ? Number((selectedRoom as any).extraBedRate)
+        : Number(selectedRoom.extraPersonCharge) > 0
+        ? Number(selectedRoom.extraPersonCharge)
+        : catExtra > 0
+        ? catExtra
+        : Number(siblingRoom?.extraPersonCharge) > 0
+        ? Number(siblingRoom?.extraPersonCharge)
+        : Number((hotelSettings as any)?.defaultExtraBedRate) > 0
+        ? Number((hotelSettings as any).defaultExtraBedRate)
+        : configuredExtra > 0
+        ? configuredExtra
+        : 500;
+
+    const resolvedBaseOcc =
+      Number(selectedRoom.baseOccupancy) > 0
+        ? Number(selectedRoom.baseOccupancy)
+        : catBase > 0
+        ? catBase
+        : Number(siblingRoom?.baseOccupancy) > 0
+        ? Number(siblingRoom?.baseOccupancy)
+        : 2;
+
     setExtraPersonCharge(configuredExtra);
-    if (!selectedBooking?.extraBedRate && !editingCheckIn?.extraBedRate) {
-      setExtraBedRate(configuredExtra > 0 ? configuredExtra : 500);
-    }
-    setBaseOccupancy(selectedRoom.baseOccupancy ?? 2);
+    setExtraPersonRateOverride(''); // Autofill newly selected room's extra pax rate
+    setExtraBedRate(configuredExtraBed); // Autofill newly selected room's extra bed rate
+    setBaseOccupancy(resolvedBaseOcc);
+    extraChargeTouchedRef.current = false;
   }, [selectedRoomNumber, rooms, selectedBooking, editingCheckIn]);
 
   // Handle direct adjusted tariff or auto-calculate discount
@@ -734,9 +848,40 @@ export default function CheckInFormView({
   const [extraPersonNightsOverride, setExtraPersonNightsOverride] = useState<number | ''>('');
   const [manualExtraPaxCount, setManualExtraPaxCount] = useState<number | ''>('');
   const activeSelectedRoomObj = rooms.find(r => r.number === selectedRoomNumber);
-  const selectedRoomMaxOccupancy = activeSelectedRoomObj?.maxOccupancy ?? Math.max(baseOccupancy, 2);
-  const totalOccupants = Number(adults) + Number(children) + secondaryGuests.length;
-  const extraGuestsCount = Math.max(0, totalOccupants - baseOccupancy);
+  const selectedRoomMaxOccupancy = React.useMemo(() => {
+    if (Number(activeSelectedRoomObj?.maxOccupancy) > 0) {
+      return Number(activeSelectedRoomObj?.maxOccupancy);
+    }
+    try {
+      const storedCats = typeof window !== 'undefined' ? localStorage.getItem('directstay_room_categories') : null;
+      if (storedCats && activeSelectedRoomObj?.category) {
+        const parsed = JSON.parse(storedCats);
+        if (Array.isArray(parsed)) {
+          const match = parsed.find(
+            (c: any) => String(c.name || '').trim().toLowerCase() === String(activeSelectedRoomObj.category || '').trim().toLowerCase()
+          );
+          if (match && Number(match.maxOcc || match.maxOccupancy) > 0) {
+            return Number(match.maxOcc || match.maxOccupancy);
+          }
+        }
+      }
+    } catch {}
+    const sibling = rooms.find(
+      r =>
+        String(r.category || '').trim().toLowerCase() === String(activeSelectedRoomObj?.category || '').trim().toLowerCase() &&
+        Number(r.maxOccupancy) > 0
+    );
+    if (sibling && Number(sibling.maxOccupancy) > 0) {
+      return Number(sibling.maxOccupancy);
+    }
+    return Math.max(baseOccupancy, 3);
+  }, [activeSelectedRoomObj, rooms, baseOccupancy]);
+  const singleTotalOccupants = Math.max(
+    (Number(adults) || 1) + (Number(children) || 0),
+    1 + secondaryGuests.length
+  );
+  const totalOccupants = singleTotalOccupants;
+  const extraGuestsCount = Math.max(0, singleTotalOccupants - baseOccupancy);
   const extraGuestExplicitCount =
     manualExtraPaxCount !== ''
       ? Math.max(0, Number(manualExtraPaxCount) || 0)
@@ -979,6 +1124,9 @@ export default function CheckInFormView({
     setGroupRooms(prev => prev.map(gr => {
       if (gr.id === id) {
         const updated = { ...gr, [field]: value };
+        if (field === 'adults' || field === 'children' || field === 'roomNumber') {
+          extraChargeTouchedRef.current = false;
+        }
         if (field === 'roomNumber') {
           const rm = rooms.find(r => r.number === value);
           if (rm) {
@@ -1045,6 +1193,21 @@ export default function CheckInFormView({
     : 0;
   const effectiveRoomChargesTotal = checkInMode === 'single' ? roomChargesTotal : groupRoomChargesTotal;
   const effectiveExtraBedTotal = checkInMode === 'single' ? extraBedTotal : groupExtraBedChargesTotal;
+
+  // Auto-apply Extra Person Charge when occupants exceed Room base occupancy
+  useEffect(() => {
+    if (editingCheckIn) return;
+    const targetExtra = checkInMode === 'group' ? groupExtraGuestsCount : extraGuestsCount;
+    if (!extraChargeTouchedRef.current) {
+      if (targetExtra > 0) {
+        setApplyExtraPersonCharge(true);
+        setExtraPersonQty(targetExtra);
+      } else {
+        setApplyExtraPersonCharge(false);
+        setExtraPersonQty(1);
+      }
+    }
+  }, [checkInMode, extraGuestsCount, groupExtraGuestsCount, editingCheckIn]);
 
   // Ticked optional hotel services (exclude any service already billed on a separate invoice)
   const separatelyBilledServiceNames = React.useMemo(() => {
@@ -2698,7 +2861,7 @@ export default function CheckInFormView({
     // 2. Walk-In guests are fresh arrivals — never auto-link them to an advance reservation.
     //    Only an explicitly selected advance booking (Check-In tab) is used.
     const effectiveBooking: Booking | null = editingCheckIn
-      ? (bookings.find(b => b.id === editingCheckIn.id) || null)
+      ? (bookings.find(b => b.id === editingCheckIn.id || (editingCheckIn.bookingId && b.id === editingCheckIn.bookingId) || (b.roomNumber === editingCheckIn.roomNumber && b.guestName === editingCheckIn.guestName && !b.isCompleted)) || null)
       : (selectedBooking || null);
 
     const prevEditingRooms: string[] = editingCheckIn
@@ -3411,7 +3574,7 @@ export default function CheckInFormView({
         checkedInBy: autoDetectedCheckedInBy,
         checkInTimestamp: resolvedCheckInTimestamp
       };
-      onUpdateBookings([...bookings, mirroredBooking]);
+      onUpdateBookings([...bookings.filter(b => b.id !== mirroredBooking.id), mirroredBooking]);
     }
 
     // Save check-in (replace if same ID existed, otherwise append)
@@ -3863,8 +4026,8 @@ export default function CheckInFormView({
                     GUEST REGISTRATION CARD
                   </div>
                   <p className="text-[10px] font-mono pt-0.5 text-[#17120F]">
-                    <span className="text-[#7A6B5D]">Registration Code:</span>{' '}
-                    <span className="font-bold text-sm text-[#17120F]">{livePrintDoc.id}</span>
+                    <span className="text-[#7A6B5D]">Registration / Booking No.:</span>{' '}
+                    <span className="font-bold text-sm text-[#17120F]">{livePrintDoc.id || livePrintDoc.bookingId}</span>
                   </p>
                   <p className="text-[9.5px] font-mono text-[#7A6B5D]">Date: {new Date().toLocaleDateString()}</p>
                   <p className="text-[9.5px] font-mono text-[#7A6B5D]">Desk: {livePrintDoc.checkedInBy || 'Front Desk Executive'}</p>
@@ -3905,7 +4068,7 @@ export default function CheckInFormView({
                   </div>
                   <div>
                     <span className="block text-[8.5px] font-mono uppercase tracking-wider text-[#8A7A6D] font-semibold">ID Document Number Reference</span>
-                    <span className="font-mono font-bold text-xs text-[#17120F] tracking-wide">{livePrintDoc.idNumber || 'N/A'}</span>
+                    <span className="font-mono font-bold text-xs text-[#17120F] tracking-wide">{livePrintDoc.idNumber || livePrintDoc.aadhaarNumber || livePrintDoc.passportNumber || livePrintDoc.idProofNumber || 'N/A'}</span>
                   </div>
                   <div>
                     <span className="block text-[8.5px] font-mono uppercase tracking-wider text-[#8A7A6D] font-semibold">D.O.B & Purpose of Visit</span>
@@ -3989,7 +4152,7 @@ export default function CheckInFormView({
                   <span className="text-[8.5px] font-mono text-[#D4AF37]/80 font-normal">Reservation Timelines</span>
                 </div>
                 <div className="p-3 border border-[#E6DCCF] border-t-0 bg-[#FDFBF7] rounded-b-md space-y-2">
-                  <div className="grid grid-cols-4 gap-2 text-center">
+                  <div className="grid grid-cols-5 gap-2 text-center">
                     <div className="bg-white border border-[#EBE3D5] rounded-lg p-2 shadow-2xs">
                       <strong className="block text-[8px] text-[#8A7A6D] uppercase font-mono tracking-wider">Room Number</strong>
                       <span className="text-sm font-serif font-bold text-[#8B691E]">Rm {livePrintDoc.roomNumber}</span>
@@ -3997,6 +4160,10 @@ export default function CheckInFormView({
                     <div className="bg-white border border-[#EBE3D5] rounded-lg p-2 shadow-2xs">
                       <strong className="block text-[8px] text-[#8A7A6D] uppercase font-mono tracking-wider">Room Category</strong>
                       <span className="text-xs font-bold text-[#17120F]">{livePrintDoc.bookedRooms?.[0]?.category || 'Standard'}</span>
+                    </div>
+                    <div className="bg-white border border-[#EBE3D5] rounded-lg p-2 shadow-2xs">
+                      <strong className="block text-[8px] text-[#8A7A6D] uppercase font-mono tracking-wider">Room Charge</strong>
+                      <span className="text-xs font-bold font-mono text-[#8B691E]">₹{(livePrintDoc.roomRate || livePrintDoc.rate || livePrintDoc.tariff || 0).toLocaleString('en-IN')}/N</span>
                     </div>
                     <div className="bg-white border border-[#EBE3D5] rounded-lg p-2 shadow-2xs">
                       <strong className="block text-[8px] text-[#8A7A6D] uppercase font-mono tracking-wider">Total Occupants</strong>
@@ -5045,10 +5212,10 @@ export default function CheckInFormView({
                                 type="number"
                                 required
                                 min={1}
-                                max={6}
                                 value={adults}
                                 onChange={(e) => {
                                   const val = e.target.value;
+                                  extraChargeTouchedRef.current = false;
                                   setAdults(val === '' ? '' : Math.max(1, parseInt(val, 10) || 1));
                                 }}
                                 onBlur={() => {
@@ -5064,10 +5231,10 @@ export default function CheckInFormView({
                                 type="number"
                                 required
                                 min={0}
-                                max={6}
                                 value={children}
                                 onChange={(e) => {
                                   const val = e.target.value;
+                                  extraChargeTouchedRef.current = false;
                                   setChildren(val === '' ? '' : Math.max(0, parseInt(val, 10) || 0));
                                 }}
                                 onBlur={() => {
@@ -5677,67 +5844,7 @@ export default function CheckInFormView({
                     </div>
                   )}
 
-                  {/* Dedicated Complimentary Water Bottles (Free ₹0) Section */}
-                  <div className="p-3.5 rounded-xl bg-sky-50/70 border border-sky-200 space-y-2">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-bold uppercase text-sky-950 flex items-center gap-1.5">
-                          💧 Complimentary Water Bottles (Free ₹0)
-                        </span>
-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
-                          Free • Included in Stay
-                        </span>
-                      </div>
-                      <span className="text-[11px] font-mono text-slate-600">
-                        Inventory Stock:{' '}
-                        <strong className={(waterBottleInventoryProduct?.currentStock ?? 100) === 0 ? 'text-rose-600 font-bold' : 'text-emerald-700 font-bold'}>
-                          {waterBottleInventoryProduct?.currentStock ?? 100} Bottles Available
-                        </strong>
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between flex-wrap gap-3 pt-1">
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs text-slate-700 font-semibold">Allocated Bottles:</label>
-                        <div className="flex items-center border border-sky-300 rounded-lg bg-white overflow-hidden shadow-2xs">
-                          <button
-                            type="button"
-                            onClick={() => setComplimentaryWaterBottles(prev => Math.max(0, prev - 1))}
-                            className="px-2.5 py-1 text-slate-600 hover:bg-sky-100 font-bold cursor-pointer"
-                          >
-                            −
-                          </button>
-                          <span className="px-3 py-1 font-mono font-bold text-sm text-sky-950">
-                            {complimentaryWaterBottles}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const avail = Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0));
-                              if (complimentaryWaterBottles >= avail) {
-                                showToast(
-                                  avail <= 0
-                                    ? 'Water Bottle stock in Inventory is 0. Please add stock in Inventory before allocating bottles.'
-                                    : `Only ${avail} water bottle(s) available in Inventory.`,
-                                  'error'
-                                );
-                                return;
-                              }
-                              setComplimentaryWaterBottles(prev => prev + 1);
-                            }}
-                            className="px-2.5 py-1 text-slate-600 hover:bg-sky-100 font-bold cursor-pointer"
-                          >
-                            +
-                          </button>
-                        </div>
-                        <span className="text-[11px] text-slate-500 font-mono">Packaged 1L Bottles</span>
-                      </div>
-
-                      <p className="text-[11px] text-slate-500 italic">
-                        Standard complimentary bottles included with room stay. Automatically verified & deducted from store inventory.
-                      </p>
-                    </div>
-                  </div>
+                  {/* Water bottle section removed as requested by user - water bottles logged in Guest Services */}
 
                 </div>
               </div>
@@ -6343,9 +6450,11 @@ export default function CheckInFormView({
                         checked={applyExtraPersonCharge}
                         onChange={(e) => {
                           const checked = e.target.checked;
+                          extraChargeTouchedRef.current = true;
                           setApplyExtraPersonCharge(checked);
                           if (checked && manualExtraPaxCount === '') {
                             setManualExtraPaxCount(Math.max(1, effectiveExtraGuestsCount));
+                            setExtraPersonQty(Math.max(1, effectiveExtraGuestsCount));
                           }
                         }}
                         className="w-4 h-4 accent-purple-700 cursor-pointer"
@@ -6367,7 +6476,12 @@ export default function CheckInFormView({
                           min={1}
                           max={10}
                           value={resolvedSingleExtraPaxCount}
-                          onChange={(e) => setManualExtraPaxCount(Math.max(0, Number(e.target.value) || 0))}
+                          onChange={(e) => {
+                            const val = Math.max(0, Number(e.target.value) || 0);
+                            extraChargeTouchedRef.current = true;
+                            setManualExtraPaxCount(val);
+                            setExtraPersonQty(Math.max(1, val));
+                          }}
                           className="w-full px-2.5 py-1.5 border border-purple-300 rounded-lg bg-white font-bold text-slate-900"
                         />
                       </div>
@@ -7636,6 +7750,7 @@ export default function CheckInFormView({
                               placeholder="Enter adults"
                               onChange={e => {
                                 userCountTouchedRef.current = true;
+                                extraChargeTouchedRef.current = false;
                                 setAdults(e.target.value === '' ? '' : Math.max(1, Number(e.target.value)));
                               }}
                               className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
@@ -7650,6 +7765,7 @@ export default function CheckInFormView({
                               placeholder="Enter children"
                               onChange={e => {
                                 userCountTouchedRef.current = true;
+                                extraChargeTouchedRef.current = false;
                                 setChildren(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)));
                               }}
                               className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
@@ -7672,6 +7788,11 @@ export default function CheckInFormView({
                               />
                               <Users className="w-3.5 h-3.5 text-[#C49A3A]" />
                               <span>Extra Person</span>
+                              {extraGuestsCount > 0 && (
+                                <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-800 font-bold rounded-full">
+                                  Auto (+{extraGuestsCount} Extra)
+                                </span>
+                              )}
                             </label>
 
                             {(() => {
@@ -7706,6 +7827,15 @@ export default function CheckInFormView({
                           </div>
                         </div>
 
+                        {checkInMode === 'single' && Boolean(selectedRoomNumber) && singleTotalOccupants > selectedRoomMaxOccupancy && (
+                          <div className="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                            <span>
+                              <strong>Capacity Alert:</strong> {singleTotalOccupants} Occupants exceeds Room {selectedRoomNumber} standard Max Capacity ({selectedRoomMaxOccupancy} Max). Extra person fee (₹{effectiveExtraPaxRate.toLocaleString('en-IN')}/night) applied automatically.
+                            </span>
+                          </div>
+                        )}
+
                         {/* CONDITIONAL PANEL 1: EXTRA PERSON (SHOWN ONLY WHEN EXTRA PERSON CHECKBOX IS SELECTED) */}
                         {applyExtraPersonCharge && (
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-xl bg-white border border-[#C49A3A]/50 text-xs shadow-2xs">
@@ -7717,7 +7847,10 @@ export default function CheckInFormView({
                                 type="number"
                                 min={1}
                                 value={extraPersonQty}
-                                onChange={e => setExtraPersonQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                                onChange={e => {
+                                  extraChargeTouchedRef.current = true;
+                                  setExtraPersonQty(Math.max(1, Math.floor(Number(e.target.value) || 1)));
+                                }}
                                 className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
                               />
                             </div>
@@ -8121,6 +8254,11 @@ export default function CheckInFormView({
                               />
                               <Users className="w-3.5 h-3.5 text-[#C49A3A]" />
                               <span>Extra Person</span>
+                              {groupExtraGuestsCount > 0 && (
+                                <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-800 font-bold rounded-full">
+                                  Auto (+{groupExtraGuestsCount} Extra)
+                                </span>
+                              )}
                             </label>
 
                             {applyExtraPersonCharge && (
@@ -8133,7 +8271,10 @@ export default function CheckInFormView({
                                     type="number"
                                     min={1}
                                     value={extraPersonQty}
-                                    onChange={e => setExtraPersonQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                                    onChange={e => {
+                                      extraChargeTouchedRef.current = true;
+                                      setExtraPersonQty(Math.max(1, Math.floor(Number(e.target.value) || 1)));
+                                    }}
                                     className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
                                   />
                                 </div>
@@ -8752,7 +8893,7 @@ export default function CheckInFormView({
                             Packages &amp; add-ons
                           </span>
                           <span className="text-xs text-slate-500 block">
-                            Attach hotel services, complimentary water bottles, early check-in &amp; custom add-ons (Optional)
+                            Attach hotel services, early check-in &amp; custom add-ons (Optional)
                           </span>
                         </div>
                       </div>
@@ -8837,22 +8978,9 @@ export default function CheckInFormView({
                           </div>
                         )}
 
-                        {/* Water Bottles & Custom Add-On */}
+                        {/* Custom Add-On */}
                         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 p-3.5 rounded-xl bg-[#F4F6F9] border border-[#DCE3EC] items-end">
-                          <div className="md:col-span-3 space-y-1">
-                            <label className="text-[11px] font-bold text-[#263449] block">
-                              Complimentary Water (Stock: {Number(waterBottleInventoryProduct?.currentStock ?? 0)})
-                            </label>
-                            <input
-                              type="number"
-                              min={0}
-                              max={Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0))}
-                              value={complimentaryWaterBottles}
-                              onChange={e => setComplimentaryWaterBottles(Math.max(0, Number(e.target.value) || 0))}
-                              className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
-                            />
-                          </div>
-                          <div className="md:col-span-4 space-y-1">
+                          <div className="md:col-span-6 space-y-1">
                             <label className="text-[11px] font-bold text-[#263449] block">Custom Add-on Label</label>
                             <input
                               type="text"
@@ -9532,21 +9660,22 @@ export default function CheckInFormView({
 
         {/* TAB 2: IN-HOUSE GUESTS & FOLIOS REGISTER */}
         {activeSubTab === 'folios' && (() => {
-          const activeInHouse = checkins.filter(c => !c.checkedOutDateTime);
-          const checkedOutRecords = checkins.filter(c => Boolean(c.checkedOutDateTime));
+          const dateFiltered = checkins.filter(c => matchesFolioDate(c.checkInDate, c.checkOutDate || c.checkedOutDateTime));
+          const activeInHouse = dateFiltered.filter(c => !c.checkedOutDateTime);
+          const checkedOutRecords = dateFiltered.filter(c => Boolean(c.checkedOutDateTime));
           const displayedCheckins =
             folioFilter === 'active'
               ? activeInHouse
               : folioFilter === 'checkedout'
               ? checkedOutRecords
-              : checkins;
+              : dateFiltered;
 
           return (
           <div className="bg-white border border-luxury-brown-100 rounded-b-xl p-6 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-luxury-brown-100 pb-3">
               <div>
                 <h3 className="text-base font-serif font-bold text-luxury-brown-950 flex items-center gap-2">
-                  <Receipt className="w-5 h-5 text-[#9E2A2B]" /> In-House Active Guest Register & Folios
+                  <Receipt className="w-5 h-5 text-[#9E2A2B]" /> In-House Active Guest Register &amp; Folios
                 </h3>
                 <p className="text-xs text-luxury-brown-600">Currently checked-in guests, room allocations, extra bed logs, and live balance status.</p>
               </div>
@@ -9590,6 +9719,68 @@ export default function CheckInFormView({
                   }`}
                 >
                   All Folios ({checkins.length})
+                </button>
+              </div>
+            </div>
+
+            {/* Date-Wise Filter Bar (Asia/Kolkata timezone, Default: Today) */}
+            <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-900 flex items-center gap-1 mr-1">
+                  <Calendar className="w-3.5 h-3.5 text-amber-700" />
+                  Date Filter:
+                </span>
+                {(
+                  [
+                    { id: 'today', label: 'Today' },
+                    { id: 'yesterday', label: 'Yesterday' },
+                    { id: 'this_week', label: 'This Week' },
+                    { id: 'this_month', label: 'This Month' },
+                    { id: 'all', label: 'All Dates' },
+                  ] as const
+                ).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => applyFolioDatePreset(p.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      folioDatePreset === p.id
+                        ? 'bg-slate-900 text-amber-400 shadow-xs'
+                        : 'bg-white hover:bg-amber-100/80 text-slate-700 border border-amber-200/80'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-[11px] font-bold text-slate-600">From → To:</span>
+                <input
+                  type="date"
+                  value={folioFromDate}
+                  onChange={(e) => {
+                    setFolioDatePreset('custom');
+                    setFolioFromDate(e.target.value);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+                />
+                <span className="text-slate-400 font-bold">→</span>
+                <input
+                  type="date"
+                  value={folioToDate}
+                  onChange={(e) => {
+                    setFolioDatePreset('custom');
+                    setFolioToDate(e.target.value);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => applyFolioDatePreset('today')}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 font-bold text-[11px] cursor-pointer"
+                >
+                  Reset to Today
                 </button>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   Plus,
   Search,
@@ -153,16 +153,22 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [fdDatePreset, setFdDatePreset] = useState<'all' | 'today' | 'yesterday' | 'this_month' | 'custom'>('all');
-  const [fdFromDate, setFdFromDate] = useState<string>('');
-  const [fdToDate, setFdToDate] = useState<string>('');
+  const todayIsoStr = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }, []);
+
+  const [fdDatePreset, setFdDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('today');
+  const [fdFromDate, setFdFromDate] = useState<string>(todayIsoStr);
+  const [fdToDate, setFdToDate] = useState<string>(todayIsoStr);
   const [lifecycleBanner, setLifecycleBanner] = useState<string | null>(null);
   const [fdPage, setFdPage] = useState(1);
   const [fdPageSize, setFdPageSize] = useState(10);
 
-  const todayIsoStr = new Date().toISOString().slice(0, 10);
-
-  const applyFdDatePreset = (preset: 'all' | 'today' | 'yesterday' | 'this_month') => {
+  const applyFdDatePreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
     setFdDatePreset(preset);
     if (preset === 'all') {
       setFdFromDate('');
@@ -174,6 +180,10 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
       const y = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
       setFdFromDate(y);
       setFdToDate(y);
+    } else if (preset === 'this_week') {
+      const w = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+      setFdFromDate(w);
+      setFdToDate(todayIsoStr);
     } else if (preset === 'this_month') {
       setFdFromDate(`${todayIsoStr.slice(0, 7)}-01`);
       setFdToDate(todayIsoStr);
@@ -1155,10 +1165,11 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
                 </span>
                 {(
                   [
-                    { id: 'all', label: 'All' },
                     { id: 'today', label: 'Today' },
                     { id: 'yesterday', label: 'Yesterday' },
+                    { id: 'this_week', label: 'This Week' },
                     { id: 'this_month', label: 'This Month' },
+                    { id: 'all', label: 'All Dates' },
                   ] as const
                 ).map((p) => (
                   <button
@@ -1196,15 +1207,13 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
                   }}
                   className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
                 />
-                {(fdFromDate || fdToDate) && (
-                  <button
-                    type="button"
-                    onClick={() => applyFdDatePreset('all')}
-                    className="px-2 py-1 rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 font-bold text-[11px] cursor-pointer"
-                  >
-                    Reset
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => applyFdDatePreset('today')}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 font-bold text-[11px] cursor-pointer"
+                >
+                  Reset to Today
+                </button>
               </div>
             </div>
 

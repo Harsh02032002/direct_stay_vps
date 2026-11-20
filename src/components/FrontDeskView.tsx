@@ -43,7 +43,8 @@ import {
   Hotel as HotelIcon, FileText, Sparkles, FileCheck, FileCheck2, FileSpreadsheet, 
   ShieldCheck, Search, Plus, Printer, Phone, Calendar, ArrowRight, Eye, 
   Filter, Check, Key, Shield, RefreshCw, Clock, DollarSign, Download, 
-  Trash2, Tag, ChevronRight, AlertCircle, ShoppingBag, Droplets, Bed, CheckCircle2, X, Receipt, Edit, Undo2
+  Trash2, Tag, ChevronRight, AlertCircle, ShoppingBag, Droplets, Bed, CheckCircle2, X, Receipt, Edit, Undo2, ArrowRightLeft,
+  Smartphone, Share2, Copy, ExternalLink, QrCode
 } from 'lucide-react';
 
 interface FrontDeskViewProps {
@@ -212,12 +213,149 @@ export default function FrontDeskView({
   const [reportSubView, setReportSubView] = useState<'operational' | 'daily'>('operational');
   const [preArrivalSearch, setPreArrivalSearch] = useState('');
   const [preArrivalDateFilter, setPreArrivalDateFilter] = useState<'all' | 'today'>('all');
+  const [selfServiceFilterTab, setSelfServiceFilterTab] = useState<'self_service' | 'pending' | 'today' | 'all'>('self_service');
+  const [viewingGuestIdDoc, setViewingGuestIdDoc] = useState<{
+    guestName: string;
+    roomNumber: string;
+    bookingId: string;
+    idType: string;
+    idNumber: string;
+    docUrl?: string;
+  } | null>(null);
   const [prefillForReservation, setPrefillForReservation] = useState<{ roomNumber?: string; roomType?: string; checkInDate?: string; checkInTime?: string } | null>(null);
   
   // Quick Search state for In-House & Document archives
   const [inHouseSearch, setInHouseSearch] = useState('');
   const [docSearch, setDocSearch] = useState('');
   const [docCategoryFilter, setDocCategoryFilter] = useState('All');
+
+  // Date-wise filtering for In-House & Check-Out (Default: Today in Asia/Kolkata)
+  const todayStr = React.useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }, []);
+
+  const [inHouseDatePreset, setInHouseDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('today');
+  const [inHouseFromDate, setInHouseFromDate] = useState<string>(todayStr);
+  const [inHouseToDate, setInHouseToDate] = useState<string>(todayStr);
+
+  const applyInHouseDatePreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
+    setInHouseDatePreset(preset);
+    const now = new Date();
+    if (preset === 'all') {
+      setInHouseFromDate('');
+      setInHouseToDate('');
+    } else if (preset === 'today') {
+      setInHouseFromDate(todayStr);
+      setInHouseToDate(todayStr);
+    } else if (preset === 'yesterday') {
+      const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+      setInHouseFromDate(y);
+      setInHouseToDate(y);
+    } else if (preset === 'this_week') {
+      const w = new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10);
+      setInHouseFromDate(w);
+      setInHouseToDate(todayStr);
+    } else if (preset === 'this_month') {
+      setInHouseFromDate(`${todayStr.slice(0, 7)}-01`);
+      setInHouseToDate(todayStr);
+    }
+  };
+
+  const matchesInHouseDate = (checkInDate?: string, checkOutDate?: string): boolean => {
+    if (inHouseDatePreset === 'all' && !inHouseFromDate && !inHouseToDate) return true;
+    const ci = String(checkInDate || '').slice(0, 10);
+    const co = String(checkOutDate || '').slice(0, 10);
+    if (!ci && !co) return inHouseDatePreset === 'all';
+    if (inHouseFromDate && inHouseToDate && ci && co) {
+      return ci <= inHouseToDate && co >= inHouseFromDate;
+    }
+    if (inHouseFromDate && ci && ci < inHouseFromDate && co && co < inHouseFromDate) return false;
+    if (inHouseToDate && ci && ci > inHouseToDate) return false;
+    return true;
+  };
+
+  // Express Check-Out & Departure Settlement Desk Date Filter (Default: Today in Asia/Kolkata)
+  const [checkoutDatePreset, setCheckoutDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('today');
+  const [checkoutFromDate, setCheckoutFromDate] = useState<string>(todayStr);
+  const [checkoutToDate, setCheckoutToDate] = useState<string>(todayStr);
+  const [checkoutSearch, setCheckoutSearch] = useState<string>('');
+
+  const applyCheckoutDatePreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
+    setCheckoutDatePreset(preset);
+    const now = new Date();
+    if (preset === 'all') {
+      setCheckoutFromDate('');
+      setCheckoutToDate('');
+    } else if (preset === 'today') {
+      setCheckoutFromDate(todayStr);
+      setCheckoutToDate(todayStr);
+    } else if (preset === 'yesterday') {
+      const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+      setCheckoutFromDate(y);
+      setCheckoutToDate(y);
+    } else if (preset === 'this_week') {
+      const w = new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10);
+      setCheckoutFromDate(w);
+      setCheckoutToDate(todayStr);
+    } else if (preset === 'this_month') {
+      setCheckoutFromDate(`${todayStr.slice(0, 7)}-01`);
+      setCheckoutToDate(todayStr);
+    }
+  };
+
+  const matchesCheckoutDate = (checkOutDate?: string, checkInDate?: string): boolean => {
+    if (checkoutDatePreset === 'all' && !checkoutFromDate && !checkoutToDate) return true;
+    const co = String(checkOutDate || '').slice(0, 10);
+    if (!co) return checkoutDatePreset === 'all';
+    if (checkoutDatePreset === 'today') {
+      return co <= todayStr;
+    }
+    if (checkoutFromDate && co < checkoutFromDate) return false;
+    if (checkoutToDate && co > checkoutToDate) return false;
+    return true;
+  };
+
+  // Guest Services Date Filter (Default: Today in Asia/Kolkata)
+  const [guestServiceDatePreset, setGuestServiceDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('today');
+  const [guestServiceFromDate, setGuestServiceFromDate] = useState<string>(todayStr);
+  const [guestServiceToDate, setGuestServiceToDate] = useState<string>(todayStr);
+  const [guestServiceSearch, setGuestServiceSearch] = useState<string>('');
+
+  const applyGuestServiceDatePreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
+    setGuestServiceDatePreset(preset);
+    const now = new Date();
+    if (preset === 'all') {
+      setGuestServiceFromDate('');
+      setGuestServiceToDate('');
+    } else if (preset === 'today') {
+      setGuestServiceFromDate(todayStr);
+      setGuestServiceToDate(todayStr);
+    } else if (preset === 'yesterday') {
+      const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+      setGuestServiceFromDate(y);
+      setGuestServiceToDate(y);
+    } else if (preset === 'this_week') {
+      const w = new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10);
+      setGuestServiceFromDate(w);
+      setGuestServiceToDate(todayStr);
+    } else if (preset === 'this_month') {
+      setGuestServiceFromDate(`${todayStr.slice(0, 7)}-01`);
+      setGuestServiceToDate(todayStr);
+    }
+  };
+
+  const matchesGuestServiceDate = (dateTimeStr?: string): boolean => {
+    if (guestServiceDatePreset === 'all' && !guestServiceFromDate && !guestServiceToDate) return true;
+    const dStr = String(dateTimeStr || '').slice(0, 10);
+    if (!dStr) return guestServiceDatePreset === 'all';
+    if (guestServiceFromDate && dStr < guestServiceFromDate) return false;
+    if (guestServiceToDate && dStr > guestServiceToDate) return false;
+    return true;
+  };
   
   // Selected item modals
   const [viewingGrc, setViewingGrc] = useState<GuestCheckIn | null>(null);
@@ -290,7 +428,7 @@ export default function FrontDeskView({
   };
   const [isConditionsModalOpen, setIsConditionsModalOpen] = useState<boolean>(false);
   const [editingCheckedOutGuest, setEditingCheckedOutGuest] = useState<GuestCheckIn | null>(null);
-  const [checkedOutHistoryFilter, setCheckedOutHistoryFilter] = useState<'today' | '7days' | 'all'>('all');
+  const [checkedOutHistoryFilter, setCheckedOutHistoryFilter] = useState<'today' | '7days' | 'all'>('today');
   const [checkedOutSearch, setCheckedOutSearch] = useState<string>('');
 
   const handleOpenCheckoutConfirmModal = (guest: GuestCheckIn) => {
@@ -1359,10 +1497,15 @@ export default function FrontDeskView({
         return;
       }
       const otherOccupant = checkins.find(
-        c => !c.checkedOutDateTime && c.id !== editingInHouseGuest.id && c.roomNumber === editGuestRoomNo
+        c =>
+          c.id !== editingInHouseGuest.id &&
+          !c.checkedOutDateTime &&
+          c.status !== 'Checked-Out' &&
+          c.status !== 'Departed' &&
+          (c.roomNumber === editGuestRoomNo || (c.bookedRooms || []).some(br => br.roomNumber === editGuestRoomNo))
       );
-      if (otherOccupant || targetRoom.status === 'Occupied') {
-        showToast(`Room ${editGuestRoomNo} is currently occupied.`, 'error');
+      if (otherOccupant) {
+        showToast(`Room ${editGuestRoomNo} is currently occupied by ${otherOccupant.guestName || 'another guest'}.`, 'error');
         return;
       }
     }
@@ -1500,7 +1643,17 @@ export default function FrontDeskView({
                   }
                 : br
             )
-          : editingInHouseGuest.bookedRooms
+          : [{
+              roomNumber: editGuestRoomNo,
+              category: (targetRoomObj?.category || editingInHouseGuest.roomType || 'Standard') as any,
+              rate: Number(editGuestRoomRate) || 0,
+              adults: Number(editGuestNumGuests) || 1,
+              guestsCount: Number(editGuestNumGuests) || 1,
+              hasExtraBed: editGuestHasExtraBed,
+              extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
+              extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
+              totalRoomAmount: newTotalAmount
+            }]
     };
 
     onUpdateCheckins(checkins.map(c => (c.id === editingInHouseGuest.id ? updatedCheckin : c)));
@@ -1518,6 +1671,19 @@ export default function FrontDeskView({
           aadhaarNumber: editGuestIdType === 'Aadhaar' ? editGuestIdNumber.trim() : b.aadhaarNumber,
           roomNumber: editGuestRoomNo,
           roomType: (targetRoomObj?.category || b.roomType) as any,
+          bookedRooms: b.bookedRooms && b.bookedRooms.length > 0
+            ? b.bookedRooms.map((br, idx) => idx === 0 ? { ...br, roomNumber: editGuestRoomNo, category: (targetRoomObj?.category || br.category) as any } : br)
+            : [{
+                roomNumber: editGuestRoomNo,
+                category: (targetRoomObj?.category || b.roomType || 'Standard') as any,
+                rate: Number(editGuestRoomRate) || b.bookingAmount || 0,
+                originalRate: Number(editGuestRoomRate) || b.bookingAmount || 0,
+                discountAmountOfRoom: 0,
+                guestsCount: Number(editGuestNumGuests) || b.adults || 1,
+                extraGuestsCount: 0,
+                extraPersonChargeApplied: 0,
+                totalRoomAmount: newTotalAmount
+              }],
           checkInDate: editGuestCheckInDate,
           checkOutDate: editGuestCheckOutDate,
           nights: stayNights,
@@ -1555,6 +1721,7 @@ export default function FrontDeskView({
             guestName: editGuestName.trim(),
             guestMobile: editGuestMobile.trim(),
             roomNumber: editGuestRoomNo,
+            roomNumbers: [editGuestRoomNo],
             checkInDate: editGuestCheckInDate,
             checkOutDate: editGuestCheckOutDate,
             roomCharges: roomRentTotal,
@@ -1594,7 +1761,7 @@ export default function FrontDeskView({
       onUpdateRooms(
         rooms.map(r => {
           if (r.number === editGuestRoomNo) return { ...r, status: 'Occupied' as const };
-          if (r.number === prevRoomNo) return { ...r, status: 'Available' as const };
+          if (r.number === prevRoomNo) return { ...r, status: 'Available' as const, cleaningStatus: 'Clean' as const };
           return r;
         })
       );
@@ -1604,7 +1771,11 @@ export default function FrontDeskView({
       'In-House / Walk-In Stay Edited',
       `Updated guest stay record #${editingInHouseGuest.id}: ${editGuestName} (Room ${editGuestRoomNo}${editGuestRoomNo !== prevRoomNo ? `, transferred from Room ${prevRoomNo}` : ''}).`
     );
-    showToast(`Updated stay details for ${editGuestName} (Room ${editGuestRoomNo}).`, 'success');
+    if (editGuestRoomNo !== prevRoomNo) {
+      showToast(`Room Transfer successful! Transferred ${editGuestName} from Room ${prevRoomNo} to Room ${editGuestRoomNo}.`, 'success');
+    } else {
+      showToast(`Updated stay details for ${editGuestName} (Room ${editGuestRoomNo}).`, 'success');
+    }
     const targetForInvoice: Booking = matchedBookingObj || ({
       id: editingInHouseGuest.id,
       guestName: editGuestName.trim(),
@@ -2612,15 +2783,36 @@ export default function FrontDeskView({
 
   // Filtered in-house stays
   const activeInHouseGuests = activeCheckins.filter(c => {
-    const q = inHouseSearch.toLowerCase();
+    const q = inHouseSearch.toLowerCase().trim();
     const gName = c.guestName || '';
     const rNo = c.roomNumber || '';
     const mob = c.mobile || '';
     const idStr = c.id || '';
-    return gName.toLowerCase().includes(q) ||
-           rNo.toLowerCase().includes(q) ||
-           mob.includes(q) ||
-           idStr.toLowerCase().includes(q);
+    const matchesSearch =
+      !q ||
+      gName.toLowerCase().includes(q) ||
+      rNo.toLowerCase().includes(q) ||
+      mob.includes(q) ||
+      idStr.toLowerCase().includes(q);
+    if (!matchesSearch) return false;
+    return matchesInHouseDate(c.checkInDate, c.checkOutDate);
+  });
+
+  // Filtered checkouts & pending departures for Departure Settlement Desk
+  const filteredCheckoutGuests = activeCheckins.filter(guest => {
+    const q = checkoutSearch.toLowerCase().trim();
+    const gName = guest.guestName || '';
+    const rNo = guest.roomNumber || '';
+    const mob = guest.mobile || '';
+    const idStr = guest.id || '';
+    const matchesSearch =
+      !q ||
+      gName.toLowerCase().includes(q) ||
+      rNo.toLowerCase().includes(q) ||
+      mob.includes(q) ||
+      idStr.toLowerCase().includes(q);
+    if (!matchesSearch) return false;
+    return matchesCheckoutDate(guest.checkOutDate, guest.checkInDate);
   });
 
   // Filtered documents archive
@@ -2692,13 +2884,14 @@ export default function FrontDeskView({
           <CalendarBookingView
             rooms={rooms}
             bookings={bookings}
-            setActiveTab={(tab) => onSelectSubTab(tab)}
+            setActiveTab={(tab) => onSelectSubTab(tab === 'frontDesk' ? 'checkin' : tab)}
+            setFrontDeskSubTab={onSelectSubTab}
             onUpdateBookings={onUpdateBookings}
             onUpdateRooms={onUpdateRooms}
             onAddAuditLog={onAddAuditLog}
             onOpenAdvanceBooking={(prefill) => {
               setPrefillForReservation(prefill);
-              onSelectSubTab('reservations');
+              onSelectSubTab('checkin');
             }}
           />
         </div>
@@ -2758,13 +2951,14 @@ export default function FrontDeskView({
               loggedInUser={loggedInUser}
               autoMarkDirtyOnCheckout={hotelSettings?.autoMarkDirtyOnCheckout !== false}
               currentRole={currentRole}
-              setActiveTab={(tab) => onSelectSubTab(tab)}
+              setActiveTab={(tab) => onSelectSubTab(tab === 'frontDesk' ? 'checkin' : tab)}
+              setFrontDeskSubTab={onSelectSubTab}
               onUpdateBookings={onUpdateBookings}
               onUpdateRooms={onUpdateRooms}
               onAddAuditLog={onAddAuditLog}
               onOpenAdvanceBooking={(prefill) => {
                 setPrefillForReservation(prefill);
-                setRoomSubView('inventory');
+                onSelectSubTab('checkin');
               }}
             />
           )}
@@ -2773,133 +2967,353 @@ export default function FrontDeskView({
 
       {/* 2B. PRE-ARRIVAL DESK SUB-TAB */}
       {currentSubTab === 'prearrival' && (() => {
-        const todayStr = new Date().toISOString().split('T')[0];
-        const filteredPreArrival = preArrivalBookingsList.filter(bk => {
+        const todayStr = (() => {
+          try {
+            return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+          } catch {
+            return new Date().toISOString().split('T')[0];
+          }
+        })();
+
+        const isGuestSelfService = (b: Booking) => {
+          return (
+            Boolean((b as any).isSelfService) ||
+            b.bookingSource === 'Guest Self Service' ||
+            b.bookingSource === 'Website' ||
+            b.bookingSource === 'Online' ||
+            b.bookingSource === 'Direct Link' ||
+            (Boolean(b.id) && b.id.startsWith('WEB-')) ||
+            (Boolean(b.notes) && (
+              b.notes.includes('Direct Guest Booking') ||
+              b.notes.includes('Self Check-In') ||
+              b.notes.includes('QR Standee') ||
+              b.notes.includes('Needs Hotel Approval')
+            ))
+          );
+        };
+
+        const selfServiceBookings = preArrivalBookingsList.filter(isGuestSelfService);
+        const pendingApprovalBookings = preArrivalBookingsList.filter(b => b.status === 'Pending');
+        const arrivingTodayBookings = preArrivalBookingsList.filter(b => b.checkInDate === todayStr);
+
+        let activeList = preArrivalBookingsList;
+        if (selfServiceFilterTab === 'self_service') {
+          activeList = selfServiceBookings.length > 0 ? selfServiceBookings : preArrivalBookingsList;
+        } else if (selfServiceFilterTab === 'pending') {
+          activeList = pendingApprovalBookings;
+        } else if (selfServiceFilterTab === 'today') {
+          activeList = arrivingTodayBookings;
+        }
+
+        const filteredList = activeList.filter(bk => {
           const q = preArrivalSearch.toLowerCase();
           const matchesSearch =
             (bk.guestName || '').toLowerCase().includes(q) ||
             (bk.mobile || '').includes(q) ||
             (bk.roomNumber || '').toLowerCase().includes(q) ||
-            (bk.id || '').toLowerCase().includes(q);
+            (bk.id || '').toLowerCase().includes(q) ||
+            (bk.notes || '').toLowerCase().includes(q);
           const matchesDate = preArrivalDateFilter === 'all' || bk.checkInDate === todayStr;
           return matchesSearch && matchesDate;
         });
 
-        const arrivingTodayCount = preArrivalBookingsList.filter(b => b.checkInDate === todayStr).length;
         const totalPrepaid = preArrivalBookingsList.reduce((s, b) => s + Number(b.advanceAmount || 0), 0);
+        const publicBookingUrl = typeof window !== 'undefined'
+          ? `${window.location.origin}/?hotelBooking=${encodeURIComponent(hotelSettings.id || 'hotel-1')}`
+          : '';
 
         return (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white border border-luxury-brown-100 rounded-2xl p-4 shadow-xs">
-                <span className="text-[11px] font-mono uppercase text-slate-500 font-bold">Upcoming Reservations</span>
-                <div className="text-2xl font-serif font-bold text-[#263449] mt-1">{preArrivalBookingsList.length}</div>
-                <span className="text-[11px] text-slate-500">Pending guest arrival & check-in</span>
-              </div>
-              <div className="bg-white border border-luxury-brown-100 rounded-2xl p-4 shadow-xs">
-                <span className="text-[11px] font-mono uppercase text-amber-700 font-bold">Arriving Today ({todayStr})</span>
-                <div className="text-2xl font-serif font-bold text-amber-700 mt-1">{arrivingTodayCount}</div>
-                <span className="text-[11px] text-slate-500">Scheduled check-in @ {hotelSettings.checkInTime || '12:00 PM'}</span>
-              </div>
-              <div className="bg-white border border-luxury-brown-100 rounded-2xl p-4 shadow-xs">
-                <span className="text-[11px] font-mono uppercase text-emerald-700 font-bold">Ready & Clean Rooms</span>
-                <div className="text-2xl font-serif font-bold text-emerald-700 mt-1">
-                  {rooms.filter(r => r.status === 'Available' && r.cleaningStatus !== 'Dirty').length}
+            {/* Top Shareable QR & Direct Guest Booking Link Banner */}
+            <div className="bg-gradient-to-r from-[#17120F] via-[#241A14] to-[#17120F] border border-[#C49A3A]/40 rounded-2xl p-4 sm:p-5 text-white shadow-md flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-xl bg-[#C49A3A]/20 border border-[#C49A3A]/50 flex items-center justify-center text-[#E5C158] shrink-0">
+                  <QrCode className="w-6 h-6" />
                 </div>
-                <span className="text-[11px] text-slate-500">Inspected & ready for allocation</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-[#E5C158] font-bold">
+                      Direct Guest Self Check-In & Booking Portal
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold">
+                      ● Active
+                    </span>
+                  </div>
+                  <h3 className="text-sm font-bold text-white mt-0.5">
+                    Shareable Guest Form Link & Room QR Standees
+                  </h3>
+                  <div className="font-mono text-xs text-white/80 break-all select-all mt-1 bg-black/40 px-2.5 py-1 rounded-lg border border-white/10 inline-block">
+                    {publicBookingUrl}
+                  </div>
+                </div>
               </div>
-              <div className="bg-white border border-luxury-brown-100 rounded-2xl p-4 shadow-xs">
-                <span className="text-[11px] font-mono uppercase text-[#8B691E] font-bold">Advance Deposits Collected</span>
-                <div className="text-2xl font-mono font-bold text-[#263449] mt-1">₹{totalPrepaid.toLocaleString('en-IN')}</div>
-                <span className="text-[11px] text-slate-500">Pre-arrival advance payments</span>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (publicBookingUrl) {
+                      navigator.clipboard.writeText(publicBookingUrl).then(() => {
+                        showToast('Guest Self-Service Booking Link copied to clipboard!', 'success');
+                      });
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold border border-white/20 flex items-center gap-1.5 cursor-pointer transition-all"
+                >
+                  <Copy className="w-3.5 h-3.5 text-[#E5C158]" />
+                  <span>Copy Link</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (publicBookingUrl) {
+                      const text = `Welcome to *${hotelSettings.name || 'DirectStay Hotel'}*! 🏨\nPlease complete your guest check-in or book your stay directly online using our official link:\n${publicBookingUrl}`;
+                      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Share on WhatsApp</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (publicBookingUrl) {
+                      window.open(publicBookingUrl, '_blank', 'noopener,noreferrer');
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-[#C49A3A] hover:bg-[#d4a946] text-[#17120F] text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open Guest Form</span>
+                </button>
               </div>
             </div>
 
+            {/* Metric KPI Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div
+                onClick={() => setSelfServiceFilterTab('self_service')}
+                className={`bg-white border rounded-2xl p-4 shadow-xs cursor-pointer transition-all ${
+                  selfServiceFilterTab === 'self_service' ? 'border-[#C49A3A] ring-2 ring-[#C49A3A]/20 bg-[#FDF8ED]' : 'border-luxury-brown-100 hover:border-[#C49A3A]/40'
+                }`}
+              >
+                <span className="text-[11px] font-mono uppercase text-purple-700 font-bold flex items-center gap-1">
+                  <Smartphone className="w-3.5 h-3.5" /> Guest Self-Service
+                </span>
+                <div className="text-2xl font-serif font-bold text-[#263449] mt-1">{selfServiceBookings.length}</div>
+                <span className="text-[11px] text-slate-500">Filled by guests via QR / Online</span>
+              </div>
+
+              <div
+                onClick={() => setSelfServiceFilterTab('pending')}
+                className={`bg-white border rounded-2xl p-4 shadow-xs cursor-pointer transition-all ${
+                  selfServiceFilterTab === 'pending' ? 'border-[#C49A3A] ring-2 ring-[#C49A3A]/20 bg-[#FDF8ED]' : 'border-luxury-brown-100 hover:border-[#C49A3A]/40'
+                }`}
+              >
+                <span className="text-[11px] font-mono uppercase text-amber-700 font-bold flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" /> Pending Approval
+                </span>
+                <div className="text-2xl font-serif font-bold text-amber-700 mt-1">{pendingApprovalBookings.length}</div>
+                <span className="text-[11px] text-slate-500">Awaiting front desk verification</span>
+              </div>
+
+              <div
+                onClick={() => setSelfServiceFilterTab('today')}
+                className={`bg-white border rounded-2xl p-4 shadow-xs cursor-pointer transition-all ${
+                  selfServiceFilterTab === 'today' ? 'border-[#C49A3A] ring-2 ring-[#C49A3A]/20 bg-[#FDF8ED]' : 'border-luxury-brown-100 hover:border-[#C49A3A]/40'
+                }`}
+              >
+                <span className="text-[11px] font-mono uppercase text-emerald-700 font-bold flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5" /> Arriving Today ({todayStr})
+                </span>
+                <div className="text-2xl font-serif font-bold text-emerald-700 mt-1">{arrivingTodayBookings.length}</div>
+                <span className="text-[11px] text-slate-500">Scheduled for today\'s check-in</span>
+              </div>
+
+              <div
+                onClick={() => setSelfServiceFilterTab('all')}
+                className={`bg-white border rounded-2xl p-4 shadow-xs cursor-pointer transition-all ${
+                  selfServiceFilterTab === 'all' ? 'border-[#C49A3A] ring-2 ring-[#C49A3A]/20 bg-[#FDF8ED]' : 'border-luxury-brown-100 hover:border-[#C49A3A]/40'
+                }`}
+              >
+                <span className="text-[11px] font-mono uppercase text-[#8B691E] font-bold flex items-center gap-1">
+                  <Users className="w-3.5 h-3.5" /> Total Pre-Arrivals
+                </span>
+                <div className="text-2xl font-serif font-bold text-[#263449] mt-1">{preArrivalBookingsList.length}</div>
+                <span className="text-[11px] text-slate-500">Advance collected: ₹{totalPrepaid.toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+
+            {/* Main Table Card */}
             <div className="bg-white border border-luxury-brown-100 rounded-2xl p-6 shadow-sm space-y-5">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-luxury-brown-100 pb-4">
                 <div>
                   <h3 className="text-lg font-serif font-bold text-[#263449] flex items-center gap-2">
-                    <Clock className="w-5 h-5 text-[#C49A3A]" /> Pre-Arrival Verification & Room Readiness Desk
+                    <Smartphone className="w-5 h-5 text-[#C49A3A]" />
+                    {selfServiceFilterTab === 'self_service'
+                      ? 'Guest Self-Service Online & QR Submissions'
+                      : selfServiceFilterTab === 'pending'
+                      ? 'Bookings Pending Reception Approval'
+                      : selfServiceFilterTab === 'today'
+                      ? `Guest Arrivals Scheduled Today (${todayStr})`
+                      : 'All Upcoming Pre-Arrival Reservations'}
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Verify upcoming guest arrivals, inspect assigned room readiness, send pre-arrival welcome alerts & launch 1-click Check-In & GRC.
+                    {selfServiceFilterTab === 'self_service'
+                      ? 'Review bookings and self check-in details submitted directly by guests from Room QR Standees or online link.'
+                      : 'Verify guest details, inspect room readiness, view uploaded ID proof & launch 1-click Check-In.'}
                   </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-                  <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                  {/* Filter Sub-Tabs */}
+                  <div className="flex flex-wrap items-center bg-slate-100 p-1 rounded-xl text-xs font-bold gap-1">
                     <button
                       type="button"
-                      onClick={() => setPreArrivalDateFilter('all')}
-                      className={`px-3 py-1.5 rounded-lg cursor-pointer transition-all ${
-                        preArrivalDateFilter === 'all' ? 'bg-[#17120F] text-[#C49A3A] shadow-2xs' : 'text-slate-600'
+                      onClick={() => setSelfServiceFilterTab('self_service')}
+                      className={`px-3 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1.5 ${
+                        selfServiceFilterTab === 'self_service' ? 'bg-[#17120F] text-[#E5C158] shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
-                      All Upcoming ({preArrivalBookingsList.length})
+                      <Smartphone className="w-3.5 h-3.5" />
+                      <span>Guest Self-Service ({selfServiceBookings.length})</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPreArrivalDateFilter('today')}
-                      className={`px-3 py-1.5 rounded-lg cursor-pointer transition-all ${
-                        preArrivalDateFilter === 'today' ? 'bg-[#17120F] text-[#C49A3A] shadow-2xs' : 'text-slate-600'
+                      onClick={() => setSelfServiceFilterTab('pending')}
+                      className={`px-3 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1.5 ${
+                        selfServiceFilterTab === 'pending' ? 'bg-[#17120F] text-[#E5C158] shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
-                      Today ({arrivingTodayCount})
+                      <span>Pending ({pendingApprovalBookings.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelfServiceFilterTab('today')}
+                      className={`px-3 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1.5 ${
+                        selfServiceFilterTab === 'today' ? 'bg-[#17120F] text-[#E5C158] shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <span>Today ({arrivingTodayBookings.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelfServiceFilterTab('all')}
+                      className={`px-3 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1.5 ${
+                        selfServiceFilterTab === 'all' ? 'bg-[#17120F] text-[#E5C158] shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <span>All ({preArrivalBookingsList.length})</span>
                     </button>
                   </div>
-                  <div className="relative flex-1 md:w-64">
+
+                  <div className="relative flex-1 md:w-60">
                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                     <input
                       type="text"
                       value={preArrivalSearch}
                       onChange={e => setPreArrivalSearch(e.target.value)}
-                      placeholder="Search Guest, Mobile, Room..."
+                      placeholder="Search Guest, Mobile, Room, Ref..."
                       className="w-full bg-white border border-luxury-brown-200 rounded-xl pl-9 pr-3 py-2 text-xs text-[#263449] focus:outline-none focus:border-[#C49A3A]"
                     />
                   </div>
+
                   <button
                     type="button"
-                    onClick={() => onSelectSubTab('reservations')}
+                    onClick={() => onSelectSubTab('checkin')}
                     className="px-3.5 py-2 bg-[#C49A3A] hover:bg-[#B0862B] text-[#17120F] font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                   >
-                    <Plus className="w-4 h-4" /> New Advance Booking
+                    <Plus className="w-4 h-4" /> New Check-In
                   </button>
                 </div>
               </div>
 
+              {/* Table */}
               <div className="overflow-x-auto rounded-xl border border-slate-200">
-                <table className="w-full min-w-[920px] text-left border-collapse text-xs">
+                <table className="w-full min-w-[960px] text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-[#17120F] text-white font-mono font-bold uppercase">
-                      <th className="p-3.5 whitespace-nowrap">Booking ID</th>
+                      <th className="p-3.5 whitespace-nowrap">Booking Ref & Source</th>
                       <th className="p-3.5 whitespace-nowrap">Guest & Occupants</th>
                       <th className="p-3.5 whitespace-nowrap">Contact</th>
-                      <th className="p-3.5 whitespace-nowrap">Assigned Room & Readiness</th>
+                      <th className="p-3.5 whitespace-nowrap">Assigned Room & Status</th>
                       <th className="p-3.5 whitespace-nowrap">Arrival & Stay</th>
-                      <th className="p-3.5 whitespace-nowrap">Advance Paid</th>
-                      <th className="p-3.5 text-right whitespace-nowrap">Pre-Arrival Actions</th>
+                      <th className="p-3.5 whitespace-nowrap">ID Proof</th>
+                      <th className="p-3.5 whitespace-nowrap">Tariff / Paid</th>
+                      <th className="p-3.5 text-right whitespace-nowrap">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {filteredPreArrival.length > 0 ? (
-                      filteredPreArrival.map(bk => {
+                    {filteredList.length > 0 ? (
+                      filteredList.map(bk => {
                         const roomObj = rooms.find(r => r.number === bk.roomNumber);
                         const isRoomClean = !roomObj || (roomObj.cleaningStatus !== 'Dirty' && roomObj.status !== 'Dirty');
+                        const isSelf = isGuestSelfService(bk);
+                        const guestDocUrl = (bk as any).idProofUrl || (typeof window !== 'undefined' ? localStorage.getItem('pms_guest_id_doc_' + bk.id) : null);
+                        const aadhaar = bk.aadhaarNumber && bk.aadhaarNumber !== 'PENDING_VERIFICATION' ? bk.aadhaarNumber : null;
+
                         return (
                           <tr key={bk.id} className="hover:bg-[#FDF8ED] transition-colors">
-                            <td className="p-3.5 font-mono font-bold text-[#263449] whitespace-nowrap">
-                              <span className="px-2.5 py-1 bg-slate-100 border border-slate-300 rounded-md">{bk.id}</span>
+                            {/* Ref & Source */}
+                            <td className="p-3.5 font-mono whitespace-nowrap">
+                              <div className="font-bold text-[#263449]">{bk.id}</div>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                {isSelf ? (
+                                  <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-800 border border-purple-200 text-[10px] font-mono font-bold inline-flex items-center gap-1">
+                                    <Smartphone className="w-3 h-3 text-purple-700" /> Self-Service
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-mono">
+                                    {bk.bookingSource || 'Direct'}
+                                  </span>
+                                )}
+                                {bk.status === 'Pending' ? (
+                                  <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-bold">
+                                    Pending
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold">
+                                    Confirmed
+                                  </span>
+                                )}
+                              </div>
                             </td>
+
+                            {/* Guest & Occupants */}
                             <td className="p-3.5 whitespace-nowrap">
                               <div className="font-serif font-bold text-[#263449] text-sm">{bk.guestName}</div>
-                              <span className="text-[11px] font-mono text-slate-500">
-                                {bk.adults || 2} Adult(s){bk.children ? `, ${bk.children} Child` : ''} • {bk.bookingSource || 'Direct'}
-                              </span>
+                              <div className="text-[11px] font-mono text-slate-500">
+                                {bk.adults || 2} Adult(s){bk.children ? `, ${bk.children} Child` : ''}
+                              </div>
+                              {bk.notes && (
+                                <div className="text-[10px] text-slate-400 max-w-[200px] truncate mt-0.5" title={bk.notes}>
+                                  {bk.notes}
+                                </div>
+                              )}
                             </td>
-                            <td className="p-3.5 font-mono font-semibold text-[#263449] whitespace-nowrap">
-                              <div>{bk.mobile}</div>
+
+                            {/* Contact */}
+                            <td className="p-3.5 whitespace-nowrap font-mono">
+                              <div className="flex items-center gap-1.5 font-semibold text-[#263449]">
+                                <span>{bk.mobile}</span>
+                                {bk.mobile && (
+                                  <a
+                                    href={`https://wa.me/91${bk.mobile.replace(/\D/g, '')}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-800 cursor-pointer"
+                                    title="Chat with Guest on WhatsApp"
+                                  >
+                                    <Share2 className="w-3 h-3" />
+                                  </a>
+                                )}
+                              </div>
                               {bk.email && <div className="text-[10px] text-slate-400">{bk.email}</div>}
                             </td>
+
+                            {/* Assigned Room */}
                             <td className="p-3.5 whitespace-nowrap">
                               <div className="flex items-center gap-2">
                                 <span className="px-2.5 py-1 bg-[#17120F] text-[#C49A3A] rounded-lg font-mono font-bold text-xs">
@@ -2912,43 +3326,98 @@ export default function FrontDeskView({
                                       : 'bg-amber-50 text-amber-800 border-amber-300'
                                   }`}
                                 >
-                                  {isRoomClean ? '✓ Clean & Ready' : '⚠ Needs Cleaning'}
+                                  {isRoomClean ? '✓ Clean' : '⚠ Dirty'}
                                 </span>
                               </div>
+                              <div className="text-[10px] font-mono text-slate-500 mt-1 uppercase">
+                                {bk.roomType || roomObj?.category || 'Standard'}
+                              </div>
                             </td>
+
+                            {/* Dates */}
                             <td className="p-3.5 font-mono whitespace-nowrap">
                               <div className="font-bold text-emerald-800">In: {bk.checkInDate}</div>
                               <div className="text-slate-500 text-[11px]">Out: {bk.checkOutDate} ({bk.nights || 1}N)</div>
                             </td>
-                            <td className="p-3.5 font-mono font-bold text-emerald-700 whitespace-nowrap">
-                              ₹{Number(bk.advanceAmount || 0).toLocaleString('en-IN')}
+
+                            {/* ID Proof */}
+                            <td className="p-3.5 whitespace-nowrap">
+                              {guestDocUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setViewingGuestIdDoc({
+                                      guestName: bk.guestName,
+                                      roomNumber: bk.roomNumber || 'TBD',
+                                      bookingId: bk.id,
+                                      idType: 'Uploaded ID Proof',
+                                      idNumber: aadhaar || 'Document Attached',
+                                      docUrl: guestDocUrl,
+                                    })
+                                  }
+                                  className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>View ID Proof</span>
+                                </button>
+                              ) : aadhaar ? (
+                                <span className="font-mono text-[11px] text-slate-700 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                                  {aadhaar}
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-slate-400 italic">No ID uploaded</span>
+                              )}
                             </td>
+
+                            {/* Tariff / Paid */}
+                            <td className="p-3.5 font-mono whitespace-nowrap">
+                              <div className="font-bold text-[#17120F]">
+                                ₹{Number(bk.bookingAmount || 0).toLocaleString('en-IN')}
+                              </div>
+                              <div className="text-[10px] text-emerald-700 font-semibold">
+                                Adv: ₹{Number(bk.advanceAmount || 0).toLocaleString('en-IN')}
+                              </div>
+                            </td>
+
+                            {/* Actions */}
                             <td className="p-3.5 text-right whitespace-nowrap">
                               <div className="inline-flex items-center gap-2">
-                                {!isRoomClean && roomObj && (
+                                {bk.status === 'Pending' && (
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      onUpdateRooms(
-                                        rooms.map(r =>
-                                          r.number === roomObj.number
-                                            ? { ...r, cleaningStatus: 'Clean', status: r.status === 'Dirty' ? 'Available' : r.status }
-                                            : r
-                                        )
-                                      );
-                                      showToast(`Room ${roomObj.number} marked Clean & Ready for Pre-Arrival`, 'success');
+                                      const updated = bookings.map(b => (b.id === bk.id ? { ...b, status: 'Confirmed' as any } : b));
+                                      onUpdateBookings(updated);
+                                      showToast(`Booking #${bk.id} approved for ${bk.guestName}!`, 'success');
                                     }}
-                                    className="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold rounded-lg text-xs cursor-pointer"
+                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+                                    title="Approve Booking"
                                   >
-                                    Mark Room Ready
+                                    <Check className="w-3.5 h-3.5" /> Approve
                                   </button>
                                 )}
+
                                 <button
                                   type="button"
                                   onClick={() => handleTriggerCheckIn(bk)}
-                                  className="px-3.5 py-1.5 bg-[#15805D] hover:bg-emerald-800 text-white font-bold rounded-lg text-xs inline-flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                                  className="px-3.5 py-1.5 bg-[#17120F] hover:bg-[#2A2018] text-[#E5C158] font-bold rounded-lg text-xs inline-flex items-center gap-1.5 shadow-2xs cursor-pointer border border-[#C49A3A]/40"
                                 >
-                                  <UserCheck className="w-3.5 h-3.5" /> Proceed to Check-In & GRC
+                                  <UserCheck className="w-3.5 h-3.5" /> 1-Click Check-In & GRC
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (window.confirm(`Are you sure you want to cancel booking #${bk.id} for ${bk.guestName}?`)) {
+                                      const updated = bookings.map(b => (b.id === bk.id ? { ...b, status: 'Cancelled' as any } : b));
+                                      onUpdateBookings(updated);
+                                      showToast(`Booking #${bk.id} cancelled.`, 'info');
+                                    }
+                                  }}
+                                  className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 hover:text-rose-700 cursor-pointer"
+                                  title="Cancel Booking"
+                                >
+                                  <X className="w-4 h-4" />
                                 </button>
                               </div>
                             </td>
@@ -2957,8 +3426,10 @@ export default function FrontDeskView({
                       })
                     ) : (
                       <tr>
-                        <td colSpan={7} className="p-10 text-center text-slate-400 italic">
-                          No upcoming pre-arrival reservations found matching your filter.
+                        <td colSpan={8} className="p-10 text-center text-slate-400 italic">
+                          {selfServiceFilterTab === 'self_service'
+                            ? 'No guest self-service online submissions found yet. Guests can submit by scanning the QR standees or using the direct booking link above!'
+                            : 'No upcoming pre-arrival reservations found matching your filter.'}
                         </td>
                       </tr>
                     )}
@@ -2966,63 +3437,93 @@ export default function FrontDeskView({
                 </table>
               </div>
             </div>
+
+            {/* ID Proof Preview Modal */}
+            {viewingGuestIdDoc && (
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-[#C49A3A]/40">
+                  <div className="flex items-center justify-between border-b pb-3">
+                    <div>
+                      <h3 className="font-serif font-bold text-base text-[#17120F]">
+                        Guest ID Verification Document
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        {viewingGuestIdDoc.guestName} • Room {viewingGuestIdDoc.roomNumber} ({viewingGuestIdDoc.bookingId})
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setViewingGuestIdDoc(null)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {viewingGuestIdDoc.docUrl ? (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50 p-2 text-center max-h-[420px] flex items-center justify-center">
+                      <img
+                        src={viewingGuestIdDoc.docUrl}
+                        alt="Guest ID Proof"
+                        className="max-h-[380px] w-auto object-contain rounded-lg shadow-sm"
+                      />
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center text-slate-500 italic bg-slate-50 rounded-xl border">
+                      No document image preview available. ID Reference: {viewingGuestIdDoc.idNumber}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-2">
+                    <span className="text-xs font-mono font-bold text-[#8B691E]">
+                      ID Reference: {viewingGuestIdDoc.idNumber}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setViewingGuestIdDoc(null)}
+                      className="px-4 py-2 rounded-xl bg-[#17120F] text-white text-xs font-bold hover:bg-black cursor-pointer"
+                    >
+                      Close Preview
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
 
-      {/* 3. WALK-IN BOOKING SUB-TAB */}
+      {/* 3. WALK-IN BOOKING SUB-TAB (Unified to New Check-In Form) */}
       {currentSubTab === 'walkin' && (
-        <div className="space-y-6">
-          <div className="bg-gradient-to-r from-white via-[#FFFDF7] to-[#FBF4E0] border border-[#C49A3A]/40 rounded-2xl p-6 text-[#263449] shadow-sm">
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="px-3 py-1 bg-[#C49A3A]/20 text-[#8B691E] border border-[#C49A3A]/35 font-mono text-xs uppercase tracking-wider rounded-full font-bold">
-                  Express Desk • Walk-In Registration
-                </span>
-                <h3 className="text-xl font-serif font-bold text-[#263449] mt-2">Instant Walk-In Guest Check-In</h3>
-                <p className="text-xs text-[#5A6B82] mt-1">
-                  Select an available room, capture guest identity details, assign extra beds & proceed to immediate guest check-in.
-                </p>
-              </div>
-              <button
-                onClick={() => onSelectSubTab('reservations')}
-                className="px-3.5 py-1.5 bg-white hover:bg-[#FBF4E0] text-[#263449] border border-[#DCE3EC] rounded-lg text-xs font-bold cursor-pointer"
-              >
-                ← Back to Advance Bookings
-              </button>
-            </div>
-          </div>
-
-          <CheckInFormView
-            waterBottles={waterBottles}
-            onUpdateWaterBottles={onUpdateWaterBottles}
-            posOrders={posOrders}
-            inventoryProducts={inventoryProducts}
-            onUpdateInventoryProducts={onUpdateInventoryProducts}
-            inventoryStockMovements={inventoryStockMovements}
-            onUpdateInventoryMovements={onUpdateInventoryMovements}
-            mode="walkin"
-            onSwitchTab={(t) => onSelectSubTab(t)}
-            bookings={bookings}
-            rooms={rooms}
-            checkins={checkins}
-            invoices={invoices}
-            onUpdateInvoices={onUpdateInvoices}
-            selectedBooking={null}
-            setSelectedBooking={setSelectedBookingForCheckin}
-            onUpdateBookings={onUpdateBookings}
-            onUpdateRooms={onUpdateRooms}
-            onUpdateCheckins={onUpdateCheckins}
-            currentRole={currentRole}
-            staff={staff}
-            onAddAuditLog={onAddAuditLog}
-            hotelSettings={hotelSettings}
-            onUpdateHotelSettings={onUpdateHotelSettings}
-            loggedInUser={loggedInUser}
-            travelAgents={travelAgents}
-            onUpdateTravelAgents={onUpdateTravelAgents}
-          />
-        </div>
+        <CheckInFormView
+          waterBottles={waterBottles}
+          onUpdateWaterBottles={onUpdateWaterBottles}
+          posOrders={posOrders}
+          inventoryProducts={inventoryProducts}
+          onUpdateInventoryProducts={onUpdateInventoryProducts}
+          inventoryStockMovements={inventoryStockMovements}
+          onUpdateInventoryMovements={onUpdateInventoryMovements}
+          mode="checkin"
+          onSwitchTab={(t) => onSelectSubTab(t)}
+          bookings={bookings}
+          rooms={rooms}
+          checkins={checkins}
+          invoices={invoices}
+          onUpdateInvoices={onUpdateInvoices}
+          selectedBooking={null}
+          setSelectedBooking={setSelectedBookingForCheckin}
+          onUpdateBookings={onUpdateBookings}
+          onUpdateRooms={onUpdateRooms}
+          onUpdateCheckins={onUpdateCheckins}
+          currentRole={currentRole}
+          staff={staff}
+          onAddAuditLog={onAddAuditLog}
+          hotelSettings={hotelSettings}
+          onUpdateHotelSettings={onUpdateHotelSettings}
+          loggedInUser={loggedInUser}
+          travelAgents={travelAgents}
+          onUpdateTravelAgents={onUpdateTravelAgents}
+        />
       )}
 
       {/* 4. CHECK-IN SUB-TAB */}
@@ -3095,6 +3596,71 @@ export default function FrontDeskView({
                 >
                   <Droplets className="w-4 h-4 text-[#C49A3A]" /> Log Water Bottles
                 </button>
+              </div>
+            </div>
+
+            {/* Date-Wise Filter Bar (Asia/Kolkata timezone, Default: Today) */}
+            <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-900 flex items-center gap-1 mr-1">
+                  <Calendar className="w-3.5 h-3.5 text-amber-700" />
+                  Date Filter:
+                </span>
+                {(
+                  [
+                    { id: 'today', label: 'Today' },
+                    { id: 'yesterday', label: 'Yesterday' },
+                    { id: 'this_week', label: 'This Week' },
+                    { id: 'this_month', label: 'This Month' },
+                    { id: 'all', label: 'All Dates' },
+                  ] as const
+                ).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => applyInHouseDatePreset(p.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      inHouseDatePreset === p.id
+                        ? 'bg-slate-900 text-amber-400 shadow-xs'
+                        : 'bg-white hover:bg-amber-100/80 text-slate-700 border border-amber-200/80'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-[11px] font-bold text-slate-600">From → To:</span>
+                <input
+                  type="date"
+                  value={inHouseFromDate}
+                  onChange={(e) => {
+                    setInHouseDatePreset('custom');
+                    setInHouseFromDate(e.target.value);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+                />
+                <span className="text-slate-400 font-bold">→</span>
+                <input
+                  type="date"
+                  value={inHouseToDate}
+                  onChange={(e) => {
+                    setInHouseDatePreset('custom');
+                    setInHouseToDate(e.target.value);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => applyInHouseDatePreset('today')}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 font-bold text-[11px] cursor-pointer"
+                >
+                  Reset to Today
+                </button>
+                <span className="ml-2 text-xs text-slate-600 font-medium">
+                  Showing <strong>{activeInHouseGuests.length}</strong> active in-house guests
+                </span>
               </div>
             </div>
 
@@ -3189,6 +3755,13 @@ export default function FrontDeskView({
                           </td>
                           <td className="p-3.5 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-2 flex-nowrap">
+                              <button
+                                onClick={() => handleOpenEditInHouseGuest(guest)}
+                                title="Room Transfer / Move to another room"
+                                className="px-2.5 py-1.5 bg-[#EFF6FF] hover:bg-[#DBEAFE] text-[#1E40AF] border border-[#BFDBFE] font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
+                              >
+                                <ArrowRightLeft className="w-3.5 h-3.5 text-[#2563EB]" /> Transfer Room
+                              </button>
                               <button
                                 onClick={() => handleOpenEditInHouseGuest(guest)}
                                 title="Edit Walk-In / Stay Details"
@@ -3448,8 +4021,79 @@ export default function FrontDeskView({
               </div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <span className="px-3.5 py-1.5 bg-[#FFF1F3] text-[#D92D4B] border border-[#FECDD6] font-mono text-xs rounded-full font-bold whitespace-nowrap">
-                  {activeCheckins.length} Active In-House Folios
+                  {filteredCheckoutGuests.length} Pending Departures
                 </span>
+              </div>
+            </div>
+
+            {/* Date-Wise Filter Bar (Asia/Kolkata timezone, Default: Today) */}
+            <div className="p-3 rounded-xl bg-rose-50/70 border border-rose-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-rose-950 flex items-center gap-1 mr-1">
+                  <Calendar className="w-3.5 h-3.5 text-rose-700" />
+                  Departure / Check-Out Filter:
+                </span>
+                {(
+                  [
+                    { id: 'today', label: 'Today (Due Out)' },
+                    { id: 'yesterday', label: 'Yesterday' },
+                    { id: 'this_week', label: 'This Week' },
+                    { id: 'this_month', label: 'This Month' },
+                    { id: 'all', label: 'All Dates' },
+                  ] as const
+                ).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => applyCheckoutDatePreset(p.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      checkoutDatePreset === p.id
+                        ? 'bg-slate-900 text-amber-400 shadow-xs'
+                        : 'bg-white hover:bg-rose-100/80 text-slate-700 border border-rose-200/80'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <div className="relative w-48">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
+                  <input
+                    type="text"
+                    value={checkoutSearch}
+                    onChange={(e) => setCheckoutSearch(e.target.value)}
+                    placeholder="Search room, guest..."
+                    className="w-full pl-8 pr-2.5 py-1 rounded-lg border border-rose-200 bg-white font-medium text-slate-800 text-xs"
+                  />
+                </div>
+                <input
+                  type="date"
+                  value={checkoutFromDate}
+                  onChange={(e) => {
+                    setCheckoutDatePreset('custom');
+                    setCheckoutFromDate(e.target.value);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-rose-300 bg-white font-bold text-slate-800 text-xs"
+                />
+                <span className="text-slate-400 font-bold">→</span>
+                <input
+                  type="date"
+                  value={checkoutToDate}
+                  onChange={(e) => {
+                    setCheckoutDatePreset('custom');
+                    setCheckoutToDate(e.target.value);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-rose-300 bg-white font-bold text-slate-800 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => applyCheckoutDatePreset('today')}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 font-bold text-[11px] cursor-pointer"
+                >
+                  Reset to Today
+                </button>
               </div>
             </div>
 
@@ -3468,7 +4112,7 @@ export default function FrontDeskView({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {activeCheckins.map(guest => {
+                  {filteredCheckoutGuests.map(guest => {
                     const liveCalc = computeConfirmGuestFinancials(guest);
                     const totalPaid = liveCalc.alreadyPaid;
                     const totalEst = liveCalc.grandTotal;
@@ -3544,10 +4188,10 @@ export default function FrontDeskView({
                       </tr>
                     );
                   })}
-                  {activeCheckins.length === 0 && (
+                  {filteredCheckoutGuests.length === 0 && (
                     <tr>
                       <td colSpan={8} className="p-10 text-center text-slate-400 italic">
-                        No checked-in rooms pending check-out currently.
+                        No pending departures or check-outs found for the selected date filter. Click &quot;Reset to Today&quot; or select &quot;All Dates&quot; to view all.
                       </td>
                     </tr>
                   )}
@@ -3677,6 +4321,78 @@ export default function FrontDeskView({
               )}
             </div>
 
+            {/* Guest Services Date-Wise Filter Bar (Asia/Kolkata timezone, Default: Today) */}
+            <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-900 flex items-center gap-1 mr-1">
+                  <Calendar className="w-3.5 h-3.5 text-amber-700" />
+                  Date Filter:
+                </span>
+                {(
+                  [
+                    { id: 'today', label: 'Today' },
+                    { id: 'yesterday', label: 'Yesterday' },
+                    { id: 'this_week', label: 'This Week' },
+                    { id: 'this_month', label: 'This Month' },
+                    { id: 'all', label: 'All Dates' },
+                  ] as const
+                ).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => applyGuestServiceDatePreset(p.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      guestServiceDatePreset === p.id
+                        ? 'bg-slate-900 text-amber-400 shadow-xs'
+                        : 'bg-white hover:bg-amber-100/80 text-slate-700 border border-amber-200/80'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-[11px] font-bold text-slate-600">From → To:</span>
+                <input
+                  type="date"
+                  value={guestServiceFromDate}
+                  onChange={(e) => {
+                    setGuestServiceDatePreset('custom');
+                    setGuestServiceFromDate(e.target.value);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+                />
+                <span className="text-slate-400 font-bold">→</span>
+                <input
+                  type="date"
+                  value={guestServiceToDate}
+                  onChange={(e) => {
+                    setGuestServiceDatePreset('custom');
+                    setGuestServiceToDate(e.target.value);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => applyGuestServiceDatePreset('today')}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 font-bold text-[11px] cursor-pointer"
+                >
+                  Reset to Today
+                </button>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={guestServiceSearch}
+                    onChange={(e) => setGuestServiceSearch(e.target.value)}
+                    placeholder="Search room, guest..."
+                    className="pl-8 pr-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs w-36 focus:w-48 transition-all"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Allocated Room Services Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
@@ -3721,18 +4437,31 @@ export default function FrontDeskView({
                       }
                     });
                     const allocationsList = Array.from(combinedMap.values());
+                    const filteredAllocations = allocationsList.filter(alloc => {
+                      if (!matchesGuestServiceDate(alloc.dateTime)) return false;
+                      if (guestServiceSearch.trim()) {
+                        const q = guestServiceSearch.trim().toLowerCase();
+                        const matchRoom = String(alloc.roomNumber || '').toLowerCase().includes(q);
+                        const matchGuest = String(alloc.guestName || '').toLowerCase().includes(q);
+                        const matchService = String(alloc.serviceName || '').toLowerCase().includes(q);
+                        if (!matchRoom && !matchGuest && !matchService) return false;
+                      }
+                      return true;
+                    });
 
-                    if (allocationsList.length === 0) {
+                    if (filteredAllocations.length === 0) {
                       return (
                         <tr>
                           <td colSpan={8} className="p-6 text-center text-luxury-brown-400 italic">
-                            No room services allocated yet. Click "Add/Allocate Service" to assign a service to an occupied room.
+                            {allocationsList.length === 0
+                              ? 'No room services allocated yet. Click "Add/Allocate Service" to assign a service to an occupied room.'
+                              : 'No service allocations match the selected date or search filter. Try selecting "All Dates" or "Reset to Today".'}
                           </td>
                         </tr>
                       );
                     }
 
-                    return allocationsList.map(alloc => {
+                    return filteredAllocations.map(alloc => {
                       const guestRecord =
                         checkins.find(c => c.id === alloc.checkInId) ||
                         checkins.find(c => c.roomNumber === alloc.roomNumber && !c.checkedOutDateTime);
@@ -4794,10 +5523,18 @@ export default function FrontDeskView({
                   >
                     {rooms.map(r => {
                       const isCurrent = r.number === editingInHouseGuest.roomNumber;
-                      const isOcc = r.status === 'Occupied' && !isCurrent;
+                      const hasActiveGuest = checkins.some(
+                        c =>
+                          c.id !== editingInHouseGuest.id &&
+                          !c.checkedOutDateTime &&
+                          c.status !== 'Checked-Out' &&
+                          c.status !== 'Departed' &&
+                          (c.roomNumber === r.number || (c.bookedRooms || []).some(br => br.roomNumber === r.number))
+                      );
+                      const isOcc = !isCurrent && hasActiveGuest;
                       return (
                         <option key={r.number} value={r.number} disabled={isOcc}>
-                          Room {r.number} — {r.category} {isCurrent ? '(Current)' : isOcc ? '(Occupied)' : `(₹${r.rate}/night)`}
+                          Room {r.number} — {r.category} {isCurrent ? '(Current Room)' : isOcc ? '(Occupied)' : `(Available • ₹${r.rate}/night)`}
                         </option>
                       );
                     })}

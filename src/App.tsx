@@ -488,7 +488,7 @@ export default function App() {
     initialRouteInfo.tab === 'otaManager' && initialRouteInfo.sub ? initialRouteInfo.sub : 'channels'
   );
   const [reportsSubTab, setReportsSubTab] = useState<string>(() =>
-    initialRouteInfo.tab === 'reports' && initialRouteInfo.sub ? initialRouteInfo.sub : 'daily_cash'
+    initialRouteInfo.tab === 'reports' && initialRouteInfo.sub ? initialRouteInfo.sub : 'dashboard'
   );
   const [staffSubTab, setStaffSubTab] = useState<string>(() =>
     initialRouteInfo.tab === 'staff' && initialRouteInfo.sub ? initialRouteInfo.sub : 'directory'
@@ -3257,6 +3257,7 @@ export default function App() {
           appPosItems={posItems}
           appPosOrders={posOrders}
           appInventoryProducts={inventoryProducts}
+          appInventoryCategories={inventoryCategories}
           appInventorySuppliers={inventorySuppliers}
           appInventoryPurchases={inventoryPurchases}
           appInventoryStockMovements={inventoryStockMovements}
@@ -3282,6 +3283,7 @@ export default function App() {
           onUpdatePosItems={handleUpdatePosItems}
           onUpdatePosOrders={handleUpdatePosOrders}
           onUpdateInventoryProducts={handleUpdateInventoryProducts}
+          onUpdateInventoryCategories={handleUpdateInventoryCategories}
           onUpdateInventorySuppliers={handleUpdateInventorySuppliers}
           onUpdateInventoryPurchases={handleUpdateInventoryPurchases}
           onUpdateInventoryMovements={handleUpdateInventoryMovements}
@@ -3545,6 +3547,7 @@ export default function App() {
             rooms={rooms}
             bookings={bookings}
             setActiveTab={setActiveTab}
+            setFrontDeskSubTab={setFrontDeskSubTab}
             onUpdateBookings={handleUpdateBookings}
             onUpdateRooms={handleUpdateRooms}
             onAddAuditLog={handleAddAuditLogDirectly}
@@ -4398,8 +4401,10 @@ export default function App() {
         logoUrl: '',
       };
     const effectiveBookHotelId = targetHotel?.id || publicHotelBookingId || selectedHotelId || 'hotel-1';
-    const targetRooms = rawRooms.filter(r => r.hotelId === effectiveBookHotelId);
-    const targetBookings = rawBookings.filter(b => b.hotelId === effectiveBookHotelId);
+    const hotelMatchingRooms = rawRooms.filter(r => r.hotelId === effectiveBookHotelId);
+    const targetRooms = hotelMatchingRooms.length > 0 ? hotelMatchingRooms : rawRooms;
+    const hotelMatchingBookings = rawBookings.filter(b => b.hotelId === effectiveBookHotelId);
+    const targetBookings = hotelMatchingBookings.length > 0 ? hotelMatchingBookings : rawBookings;
     const targetSettings: HotelSettings = targetHotel
       ? {
           id: targetHotel.id,
@@ -4530,14 +4535,20 @@ export default function App() {
               ...newBooking,
               hotelId: effectiveBookHotelId,
               status: 'Pending',
+              bookingSource: 'Guest Self Service',
             };
             const mergedBookings = [
               ...rawBookings.filter(b => b.id !== bookingWithHotel.id),
               bookingWithHotel,
             ];
             setRawBookings(mergedBookings);
+            // Always persist to local and cloud PMS store so reception sees it immediately
+            savePmsData({ bookings: mergedBookings });
+            try {
+              localStorage.setItem('GP_PMS_BOOKINGS', JSON.stringify(mergedBookings));
+            } catch {}
+
             if (isAuthenticated) {
-              savePmsData({ bookings: mergedBookings });
               handleAddAuditLogDirectly(
                 'Direct Guest Booking Submitted (Pending Approval)',
                 `Guest ${bookingWithHotel.guestName} (${bookingWithHotel.mobile}) submitted Direct Booking #${bookingWithHotel.id} for Room ${bookingWithHotel.roomNumber} (${bookingWithHotel.checkInDate} → ${bookingWithHotel.checkOutDate}). Awaiting hotel approval.`,

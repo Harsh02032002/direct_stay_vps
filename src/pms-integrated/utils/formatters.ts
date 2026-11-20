@@ -37,7 +37,11 @@ export const formatShortDate = (dateStr: string): string => {
 export const formatDate = formatShortDate;
 
 export const isDateInRange = (dateStr: string, startStr: string, endStr: string): boolean => {
-  return dateStr >= startStr && dateStr < endStr;
+  if (!dateStr) return false;
+  const d = dateStr.slice(0, 10);
+  if (startStr && d < startStr) return false;
+  if (endStr && d > endStr) return false;
+  return true;
 };
 
 export const hasDateOverlap = (startA: string, endA: string, startB: string, endB: string): boolean => {

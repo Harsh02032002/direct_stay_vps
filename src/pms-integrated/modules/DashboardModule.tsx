@@ -23,8 +23,12 @@ import {
   RefreshCw,
   AlertTriangle,
   X,
+  Utensils,
+  Eye,
+  ClipboardList,
 } from 'lucide-react';
 import { BookingRecord, HousekeepingTask, RoomAsset, RoomBlockRecord } from '../types';
+import { getTodayIst, formatDdmmyyyy } from '../../utils/reportingDates';
 import { formatCurrency } from '../utils/formatters';
 import type { Booking, GuestCheckIn, Invoice, PosOrder, Room } from '../../types';
 import {
@@ -108,17 +112,27 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({
   onUpdateBookings,
   onUpdateRooms,
   onChangeRoom,
+  onOpenQuickAddBooking,
   onSelectBooking,
   onOpenCheckIn,
   onQuickCheckOut,
+  onOpenRecordPayment,
+  onOpenInvoice,
+  onOpenRoomTasks,
+  onOpenRoomOrder,
   onNavigate,
+  onCancelBooking,
 }) => {
-  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayIso = useMemo(() => getTodayIst(), []);
   const [selectedDate, setSelectedDate] = useState<string>(todayIso);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchFocused, setSearchFocused] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const dateInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Live Room Status Rack State
+  const [roomFilter, setRoomFilter] = useState<'All' | 'Available' | 'Occupied' | 'Confirmed' | 'Dirty' | 'Out of Service'>('All');
+  const [bookChoiceRoomId, setBookChoiceRoomId] = useState<string | null>(null);
 
   // Quick Action Modals: Assign Room & Room Move
   const [assignModalOpen, setAssignModalOpen] = useState<boolean>(false);
@@ -239,19 +253,58 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({
   );
 
   const triggerOpenNewReservation = () => {
-    try {
-      sessionStorage.setItem('pms_open_advance_modal', '1');
-      sessionStorage.setItem('pms_reservation_segment', 'All');
-      window.dispatchEvent(
-        new CustomEvent('directstay:reservation-nav', {
-          detail: { openModal: true, segment: 'All' },
-        })
-      );
-    } catch {
-      // ignore storage errors
-    }
-    onNavigate('frontDesk', 'reservations');
+    onNavigate('frontDesk', 'checkin');
   };
+
+  const getRoomTasksCount = (room: RoomAsset) =>
+    tasks.filter((t) => (t.roomId === room.id || t.roomNumber === room.number) && t.status !== 'Completed').length;
+
+  const findBookingForRoom = (room: RoomAsset): BookingRecord | undefined => {
+    if (room.currentBookingId) {
+      const byId = bookings.find(
+        (b) => b.id === room.currentBookingId && b.status !== 'Checked Out' && b.status !== 'Cancelled' && b.status !== 'No-Show'
+      );
+      if (byId) return byId;
+    }
+    const inHouse = bookings.find(
+      (b) =>
+        b.roomNumbers.includes(room.number) &&
+        b.isCheckedIn &&
+        !b.isCheckedOut &&
+        b.status !== 'Checked Out' &&
+        b.status !== 'Cancelled' &&
+        b.status !== 'No-Show'
+    );
+    if (inHouse) return inHouse;
+
+    return bookings.find(
+      (b) =>
+        b.roomNumbers.includes(room.number) &&
+        b.status !== 'Checked Out' &&
+        b.status !== 'Cancelled' &&
+        b.status !== 'No-Show' &&
+        (!b.checkInDate || b.checkInDate <= selectedDate) &&
+        (!b.checkOutDate || b.checkOutDate >= selectedDate)
+    );
+  };
+
+  const findUpcomingBookingForRoom = (room: RoomAsset): BookingRecord | undefined =>
+    bookings
+      .filter(
+        (b) =>
+          b.roomNumbers.includes(room.number) &&
+          !b.isCheckedIn &&
+          b.status !== 'Checked Out' &&
+          b.status !== 'Cancelled' &&
+          b.status !== 'No-Show' &&
+          Boolean(b.checkInDate && b.checkInDate > selectedDate)
+      )
+      .sort((a, b) => (a.checkInDate || '').localeCompare(b.checkInDate || ''))[0];
+
+  const categories = useMemo(
+    () => Array.from(new Set(rooms.map((r) => r.category).filter(Boolean))),
+    [rooms]
+  );
 
   const handleAssignRoomSubmit = () => {
     if (!selectedUnassignedBookingId || !selectedAssignRoomNo) return;
@@ -562,14 +615,14 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({
             In-House Guests
           </div>
           <div className="text-2xl font-extrabold text-[#17120F] mt-1 tracking-tight flex items-baseline gap-1.5">
-            <span>{metrics.inHouseGuestsTotal}</span>
+            <span>{metrics.inHouseRoomsCount}</span>
             <span className="text-xs font-semibold text-slate-500">
-              ({metrics.inHouseAdults}A/{metrics.inHouseChildren}C)
+              ({metrics.inHouseGuestsTotal} {metrics.inHouseGuestsTotal === 1 ? 'Guest' : 'Guests'})
             </span>
           </div>
           <div className="flex items-center justify-between gap-1.5 mt-2 pt-1.5 border-t border-slate-100 text-[11px] text-slate-500">
             <span className="truncate">
-              {metrics.inHouseRoomsCount} {metrics.inHouseRoomsCount === 1 ? 'Room' : 'Rooms'} •{' '}
+              {metrics.inHouseRoomsCount} {metrics.inHouseRoomsCount === 1 ? 'Active Stay' : 'Active Stays'} •{' '}
               {metrics.inHouseAdults}A, {metrics.inHouseChildren}C
             </span>
           </div>
@@ -878,6 +931,328 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({
       </div>
 
       {/* ==================================================================== */}
+      {/* LIVE ROOM STATUS RACK (CLICK ROOM FOR ACTIONS / PROCEDURE)          */}
+      {/* ==================================================================== */}
+      <div className="bg-white rounded-2xl border border-[#E8DEC8] p-4 sm:p-5 shadow-2xs space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div>
+            <h2 className="text-sm sm:text-base font-bold text-[#17120F] flex items-center gap-2 leading-snug">
+              <BedDouble className="w-4 h-4 sm:w-5 sm:h-5 text-[#C49A3A] shrink-0" />
+              <span>Live Room Status Rack (Click Room for Booking Details or Quick Book)</span>
+            </h2>
+            <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5 leading-relaxed">
+              Grouped by Asset Categories • Click any room card to book, view details, assign tasks, or settle folio.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center gap-1.5 w-full md:w-auto">
+            {(['All', 'Available', 'Occupied', 'Confirmed', 'Dirty', 'Out of Service'] as const).map((status) => {
+              const count =
+                status === 'All'
+                  ? rooms.length
+                  : status === 'Dirty'
+                  ? rooms.filter((r) => r.status === 'Dirty' || r.cleaningStatus === 'Dirty').length
+                  : rooms.filter((r) => r.status === status).length;
+              return (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setRoomFilter(status)}
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold transition flex items-center justify-between sm:justify-center gap-1.5 whitespace-nowrap border cursor-pointer ${
+                    roomFilter === status
+                      ? 'bg-gradient-to-r from-[#DFB962] via-[#CEA346] to-[#BE9032] text-[#17120F] font-bold shadow-2xs border-[#C49A3A]'
+                      : 'bg-[#FAF6EE] text-[#3E5068] border-[#E2D6BE] hover:bg-[#F2E8D2]'
+                  }`}
+                >
+                  <span>{status === 'Confirmed' ? 'Booked' : status === 'Out of Service' ? 'Blocked' : status}</span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/85 text-[#263449] font-bold">
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          {rooms.length === 0 ? (
+            <div className="py-7 px-4 text-center bg-[#FAF6EE]/60 rounded-2xl border border-dashed border-[#DFC078] space-y-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100/80 text-amber-600 flex items-center justify-center mx-auto">
+                <BedDouble className="w-5 h-5" />
+              </div>
+              <div className="text-sm font-bold text-slate-800">No Rooms Added Yet</div>
+              <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                Add your hotel room inventory and categories in Room Management to start accepting bookings.
+              </p>
+              <button
+                type="button"
+                onClick={() => onNavigate('rooms', 'dashboard')}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <Plus className="w-4 h-4 shrink-0" />
+                <span>Add Rooms in Room Management</span>
+              </button>
+            </div>
+          ) : (
+            (() => {
+              const matchingTotal = rooms.filter((r) => {
+                if (roomFilter === 'All') return true;
+                if (roomFilter === 'Dirty') return r.status === 'Dirty' || r.cleaningStatus === 'Dirty';
+                return r.status === roomFilter;
+              }).length;
+
+              if (matchingTotal === 0) {
+                const filterDisplay =
+                  roomFilter === 'Confirmed' ? 'Booked' : roomFilter === 'Out of Service' ? 'Blocked' : roomFilter;
+                return (
+                  <div className="py-6 px-4 text-center bg-slate-50/80 rounded-xl border border-dashed border-slate-200 space-y-2">
+                    <div className="text-xs sm:text-sm font-bold text-slate-700">
+                      No rooms currently in &ldquo;{filterDisplay}&rdquo; status
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      All {rooms.length} room(s) in your inventory are under other operational statuses.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setRoomFilter('All')}
+                      className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      Show All Rooms ({rooms.length})
+                    </button>
+                  </div>
+                );
+              }
+
+              return categories.map((category) => {
+                const categoryRooms = rooms.filter((r) => {
+                  if (r.category !== category) return false;
+                  if (roomFilter === 'All') return true;
+                  if (roomFilter === 'Dirty') return r.status === 'Dirty' || r.cleaningStatus === 'Dirty';
+                  return r.status === roomFilter;
+                });
+
+                if (categoryRooms.length === 0) return null;
+
+                return (
+                  <div key={category} className="space-y-2.5">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-xs sm:text-sm font-bold text-slate-800 uppercase tracking-wider">{category}</h3>
+                        <span className="text-[11px] sm:text-xs text-slate-400 font-medium">({categoryRooms.length} rooms)</span>
+                      </div>
+                      <span className="text-[11px] sm:text-xs text-slate-500">
+                        Base Tariff: <strong className="text-slate-800">{formatCurrency(categoryRooms[0]?.rate || 2000)}</strong> / night
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3.5">
+                      {categoryRooms.map((room) => {
+                        const activeBooking = findBookingForRoom(room);
+                        const upcomingBooking = !activeBooking ? findUpcomingBookingForRoom(room) : undefined;
+                        const isDirty = room.status === 'Dirty' || room.cleaningStatus === 'Dirty';
+
+                        let cardStyle = 'border-emerald-200 bg-emerald-50/40 hover:border-emerald-400';
+                        let badgeStyle = 'bg-emerald-100 text-emerald-800 border-emerald-300';
+                        let statusLabel = 'Available';
+
+                        if (room.status === 'Occupied' || (activeBooking && activeBooking.isCheckedIn && !activeBooking.isCheckedOut)) {
+                          cardStyle = 'border-blue-200 bg-blue-50/40 hover:border-blue-400';
+                          badgeStyle = 'bg-blue-100 text-blue-800 border-blue-300';
+                          statusLabel = 'Occupied';
+                        } else if (room.status === 'Confirmed' || activeBooking) {
+                          cardStyle = 'border-indigo-200 bg-indigo-50/40 hover:border-indigo-400';
+                          badgeStyle = 'bg-indigo-100 text-indigo-800 border-indigo-300';
+                          statusLabel = 'Booked';
+                        } else if (isDirty) {
+                          cardStyle = 'border-amber-300 bg-amber-50/50 hover:border-amber-500';
+                          badgeStyle = 'bg-amber-100 text-amber-800 border-amber-300';
+                          statusLabel = 'Dirty';
+                        } else if (room.status === 'Out of Service') {
+                          cardStyle = 'border-rose-200 bg-rose-50/40 hover:border-rose-400';
+                          badgeStyle = 'bg-rose-100 text-rose-800 border-rose-300';
+                          statusLabel = 'Blocked';
+                        }
+
+                        return (
+                          <div
+                            key={room.id}
+                            onClick={() => {
+                              if (activeBooking) {
+                                onSelectBooking(activeBooking);
+                              }
+                            }}
+                            className={`rounded-xl border p-3.5 transition flex flex-col justify-between min-h-[148px] min-w-0 overflow-hidden ${cardStyle} ${
+                              activeBooking ? 'cursor-pointer' : ''
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-start justify-between gap-2 min-w-0">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-extrabold text-slate-900 truncate">{room.name}</div>
+                                  <div className="text-[11px] text-slate-500 truncate">{room.floor} • {room.bedType}</div>
+                                </div>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 whitespace-nowrap ${badgeStyle}`}>
+                                  {statusLabel}
+                                </span>
+                              </div>
+
+                              {/* Body details */}
+                              <div className="mt-2.5 min-w-0">
+                                {activeBooking ? (
+                                  <div className="space-y-1 min-w-0">
+                                    <div className="text-xs font-bold text-slate-900 truncate">
+                                      {activeBooking.customerName}
+                                    </div>
+                                    <div className="flex items-center justify-between gap-1 text-[11px] text-slate-600">
+                                      <span className="truncate">{activeBooking.nights} Night(s)</span>
+                                      <span
+                                        className={`font-bold shrink-0 ${
+                                          activeBooking.dueAmount > 0 ? 'text-rose-600' : 'text-emerald-600'
+                                        }`}
+                                      >
+                                        {activeBooking.dueAmount > 0
+                                          ? `Due ₹${Number(activeBooking.dueAmount || 0).toLocaleString('en-IN')}`
+                                          : 'Settled'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ) : room.status === 'Out of Service' ? (
+                                  <div className="text-[11px] text-rose-700 font-medium flex items-center gap-1 mt-1">
+                                    <Ban className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="truncate">{room.blockedReason || 'Blocked for Maintenance'}</span>
+                                  </div>
+                                ) : isDirty ? (
+                                  <div className="text-[11px] text-amber-800 font-medium mt-1">
+                                    Housekeeping required before next check-in
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1 mt-1">
+                                    <div className="text-xs font-bold text-slate-700">
+                                      {formatCurrency(room.rate)}{' '}
+                                      <span className="text-[10px] font-normal text-slate-500">/ night</span>
+                                    </div>
+                                    {upcomingBooking && (
+                                      <div
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onSelectBooking(upcomingBooking);
+                                        }}
+                                        className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-1.5 py-0.5 truncate cursor-pointer hover:bg-indigo-100"
+                                        title={`Upcoming Advance Booking: ${upcomingBooking.customerName} (${upcomingBooking.checkInDate})`}
+                                      >
+                                        Next: {upcomingBooking.customerName} ({upcomingBooking.checkInDate})
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Card Footer Actions */}
+                            <div
+                              className="mt-3 pt-2 border-t border-slate-200/60 flex flex-wrap items-center gap-1.5 w-full min-w-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {activeBooking ? (
+                                activeBooking.isCheckedIn && !activeBooking.isCheckedOut ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => onQuickCheckOut(activeBooking)}
+                                      className="flex-1 min-w-0 py-1.5 px-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1 cursor-pointer shadow-sm whitespace-nowrap"
+                                      title="Check-Out Guest & Settle Folio"
+                                    >
+                                      <LogOut className="w-3 h-3 shrink-0" />
+                                      <span className="truncate">Check-Out</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => onOpenRoomOrder(activeBooking)}
+                                      className="py-1.5 px-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px] transition flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-2xs whitespace-nowrap"
+                                      title="Order Food (POS Room Service)"
+                                    >
+                                      <Utensils className="w-3 h-3 text-amber-600 shrink-0" />
+                                      <span>Food</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => onSelectBooking(activeBooking)}
+                                      className="py-1.5 px-2 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold text-[11px] transition flex items-center justify-center cursor-pointer shrink-0"
+                                      title="View Booking Details, GRC & Invoices"
+                                    >
+                                      <Eye className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => onOpenCheckIn(activeBooking)}
+                                      className="flex-1 min-w-0 py-1.5 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1 cursor-pointer shadow-sm whitespace-nowrap"
+                                      title="Check-In Guest"
+                                    >
+                                      <LogIn className="w-3 h-3 shrink-0" />
+                                      <span className="truncate">Check-In</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => onSelectBooking(activeBooking)}
+                                      className="py-1.5 px-2.5 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold text-[11px] transition flex items-center justify-center gap-1 cursor-pointer shrink-0 whitespace-nowrap"
+                                      title="View Booking Details & Print GRC"
+                                    >
+                                      <Eye className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                                      <span>Details</span>
+                                    </button>
+                                  </>
+                                )
+                              ) : room.status === 'Out of Service' || isDirty ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenRoomTasks(room)}
+                                  className={`w-full py-1.5 px-3 rounded-lg text-[11px] font-semibold transition flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap ${
+                                    isDirty
+                                      ? 'bg-amber-500 text-slate-950 font-bold'
+                                      : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300'
+                                  }`}
+                                >
+                                  <ClipboardList className="w-3 h-3 shrink-0" />
+                                  <span className="truncate">{isDirty ? 'Clean Room (Dirty)' : 'Maintenance Tasks'}</span>
+                                </button>
+                              ) : (
+                                <div className="flex items-center gap-1.5 w-full">
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenQuickAddBooking(room, 'checkin')}
+                                    className="flex-1 py-1.5 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition flex items-center justify-center gap-1 cursor-pointer shadow-sm whitespace-nowrap"
+                                    title="Book Room Now"
+                                  >
+                                    <Plus className="w-3 h-3 shrink-0" />
+                                    <span>Book Room</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenRoomTasks(room)}
+                                    className="py-1.5 px-2 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold text-[11px] transition flex items-center justify-center cursor-pointer shrink-0"
+                                    title="Assign Task or Note for Room"
+                                  >
+                                    <ClipboardList className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              });
+            })()
+          )}
+        </div>
+      </div>
+
+      {/* ==================================================================== */}
       {/* ROW 3: TODAY'S ARRIVALS & TODAY'S DEPARTURES TABLES                  */}
       {/* ==================================================================== */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5">
@@ -1104,12 +1479,7 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({
           {/* 2. Walk-in Check In */}
           <button
             type="button"
-            onClick={() => {
-              try {
-                sessionStorage.setItem('pms_booking_category', 'room');
-              } catch {}
-              onNavigate('frontDesk', 'walkin');
-            }}
+            onClick={() => onNavigate('frontDesk', 'checkin')}
             className="p-3 rounded-xl border border-[#E8DEC8] bg-[#FDFBF7] hover:bg-[#FAF3E3] hover:border-[#C49A3A] transition flex items-center gap-2.5 text-left cursor-pointer group"
           >
             <span className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 border border-blue-200/70 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
