@@ -4509,9 +4509,9 @@ async function startServer() {
         const hashedNew = sha256(cleanNewPass);
         const cleanUserLower = cleanUser.toLowerCase();
 
-        if (cleanUserLower === "superadmin" || cleanUserLower === "raghunathpanigrahi4@gmail.com") {
-          const saEmail = String(currentState.superAdminEmail || "superadmin@hotelpms.com").toLowerCase();
-          if (cleanEmail && cleanEmail !== saEmail && cleanEmail !== "raghunathpanigrahi4@gmail.com" && cleanEmail !== cleanUserLower) {
+        if (cleanUserLower === "superadmin" || cleanUserLower === "contact@directstay.online" || cleanUserLower === "raghunathpanigrahi4@gmail.com") {
+          const saEmail = String(currentState.superAdminEmail || "contact@directstay.online").toLowerCase();
+          if (cleanEmail && cleanEmail !== saEmail && cleanEmail !== "contact@directstay.online" && cleanEmail !== "raghunathpanigrahi4@gmail.com" && cleanEmail !== cleanUserLower) {
             return { status: 400, body: { success: false, error: "Username and Email do not match our records." } };
           }
           currentState.superAdminPass = hashedNew;

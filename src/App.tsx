@@ -5105,11 +5105,11 @@ export default function App() {
                 <span className="p-1 bg-luxury-gold-500 text-luxury-brown-950 rounded font-bold text-[9px] shrink-0">DS</span>
               )}
               <span className="font-serif font-bold text-luxury-brown-950">{systemWebsite.businessName || 'DirectStay'}</span>
-              <span className="text-[10px] text-luxury-brown-400">SaaS Hub</span>
+              <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-luxury-gold-500/10 border border-luxury-gold-500/30 text-luxury-brown-700">Software Version 2.0</span>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
-              <a href={`mailto:${systemWebsite.supportEmail}`} className="hover:text-luxury-brown-900 transition-colors flex items-center gap-1">
-                <span>✉ {systemWebsite.supportEmail}</span>
+              <a href={`mailto:${systemWebsite.supportEmail || 'contact@directstay.online'}`} className="hover:text-luxury-brown-900 transition-colors flex items-center gap-1">
+                <span>✉ {systemWebsite.supportEmail || 'contact@directstay.online'}</span>
               </a>
               <a href={`tel:${systemWebsite.supportPhone}`} className="hover:text-luxury-brown-900 transition-colors flex items-center gap-1">
                 <span>📞 {systemWebsite.supportPhone}</span>
@@ -5125,8 +5125,8 @@ export default function App() {
                 </a>
               )}
             </div>
-            <div className="text-luxury-brown-400">
-              <span>© 2026 {systemWebsite.businessName}. Powered by DirectStay SaaS.</span>
+            <div className="flex flex-col sm:flex-row items-center gap-1.5 text-luxury-brown-400 text-center md:text-right">
+              <span>© 2026 DirectStay Luxury Cloud PMS. Powered by DirectStay SaaS.</span>
             </div>
           </div>
         </main>

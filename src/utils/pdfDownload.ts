@@ -652,7 +652,7 @@ export function downloadSubscriptionInvoicePdf(
   invoice: SubscriptionInvoice,
   businessName = 'DirectStay SaaS Hub',
   supportPhone = '+91 7978563771',
-  supportEmail = 'raghunathpanigrahi4@gmail.com'
+  supportEmail = 'contact@directstay.online'
 ) {
   try {
     const pdf = new PdfCanvasBuilder();

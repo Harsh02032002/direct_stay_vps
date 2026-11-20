@@ -404,7 +404,7 @@ export function buildStructuredDataJsonLd(
   const page = PUBLIC_SEO_PAGES[pageKey] || PUBLIC_SEO_PAGES.home;
   const orgName = options?.businessName || 'DirectStay';
   const phone = options?.supportPhone || '+91-7978563771';
-  const email = options?.supportEmail || 'raghunathpanigrahi4@gmail.com';
+  const email = options?.supportEmail || 'contact@directstay.online';
   const address = options?.contactAddress || 'Puri & Bhubaneswar, Odisha, India';
   const logo = options?.logoUrl
     ? options.logoUrl.startsWith('http')

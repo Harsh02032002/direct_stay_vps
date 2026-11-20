@@ -520,7 +520,7 @@ export default function LoginView({
     const { hotels = [], staff = [], auditLogs = [], notifications = [] } = getPmsData();
 
     // Check SuperAdmin reset
-    if (inputLower === 'superadmin' || inputLower === 'raghunathpanigrahi4@gmail.com') {
+    if (inputLower === 'superadmin' || inputLower === 'contact@directstay.online' || inputLower === 'raghunathpanigrahi4@gmail.com') {
       if (isBackendServerActive()) {
         await recoverPasswordApi({
           username: 'superadmin',

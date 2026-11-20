@@ -613,7 +613,7 @@ We process platform data solely to:
 • Provide onboarding assistance, technical support, and system security audit logs.
 
 5. Data Security & Retention
-All passwords are encrypted using SHA-256 cryptographic hashing, and API transmissions occur over HTTPS/TLS encryption. Hotel owners retain full ownership of their property data and may export their ledgers (CSV/PDF) or request account deletion at any time by contacting raghunathpanigrahi4@gmail.com or +91 79785 63771.`
+All passwords are encrypted using SHA-256 cryptographic hashing, and API transmissions occur over HTTPS/TLS encryption. Hotel owners retain full ownership of their property data and may export their ledgers (CSV/PDF) or request account deletion at any time by contacting contact@directstay.online or +91 79785 63771.`
   },
   terms: {
     id: 'legal-terms-of-service',
@@ -662,7 +662,7 @@ We strongly encourage every hotel owner and manager to start with our 7-Day Free
 • Initial 7-Day Satisfaction Window on Annual Plans: If you purchase an Annual plan directly and experience a critical technical issue that our engineering support team is unable to resolve within 7 days of activation, you may request a pro-rata refund.
 
 4. How to Request Billing Support
-For any subscription invoice, plan upgrade, or refund query, contact our Direct Desk at raghunathpanigrahi4@gmail.com or call/WhatsApp +91 79785 63771 with your Hotel Name and Invoice Reference.`
+For any subscription invoice, plan upgrade, or refund query, contact our Direct Desk at contact@directstay.online or call/WhatsApp +91 79785 63771 with your Hotel Name and Invoice Reference.`
   },
   security: {
     id: 'legal-data-security',
@@ -884,7 +884,7 @@ export default function FrontWebsite({
     applySeoHeadTags(activeSeoPage, {
       businessName: systemWebsite?.businessName || 'DirectStay',
       supportPhone: systemWebsite?.supportPhone || '+91-7978563771',
-      supportEmail: systemWebsite?.supportEmail || 'raghunathpanigrahi4@gmail.com',
+      supportEmail: systemWebsite?.supportEmail || 'contact@directstay.online',
       contactAddress: systemWebsite?.contactAddress || 'Puri & Bhubaneswar, Odisha, India',
       logoUrl: systemWebsite?.logoUrl || '',
       blogPost: (activeSeoPage === 'blog-article' && activeBlogArticle) ? activeBlogArticle : undefined
@@ -4038,7 +4038,7 @@ export default function FrontWebsite({
           <div className="pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-[#9E8D78] text-center md:text-left">
             <div className="space-y-1.5">
               <p className="font-mono text-[11px] sm:text-xs text-[#B7A691]">
-                {`© ${systemWebsite.businessName || 'DirectStay'}. All rights reserved. • Email: ${systemWebsite.supportEmail} • Support: ${formattedSupportPhone}`}
+                {`© 2026 DirectStay Luxury Cloud PMS. Powered by DirectStay SaaS. • Software Version 2.0 • Email: ${systemWebsite.supportEmail || 'contact@directstay.online'} • Support: ${formattedSupportPhone}`}
               </p>
               <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 text-[11px] text-[#C7B9A5]">
                 <a

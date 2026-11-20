@@ -201,7 +201,7 @@ export default function FrontWebsite({
     applySeoHeadTags(activeSeoPage, {
       businessName: systemWebsite?.businessName || 'DirectStay',
       supportPhone: systemWebsite?.supportPhone || '+91-7978563771',
-      supportEmail: systemWebsite?.supportEmail || 'raghunathpanigrahi4@gmail.com',
+      supportEmail: systemWebsite?.supportEmail || 'contact@directstay.online',
       contactAddress: systemWebsite?.contactAddress || 'Puri & Bhubaneswar, Odisha, India',
       logoUrl: systemWebsite?.logoUrl || ''
     });
@@ -2601,7 +2601,7 @@ export default function FrontWebsite({
           {/* Bottom Legal & Tax Disclaimer Bar */}
           <div className="pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-[#9E8D78] text-center md:text-left">
             <p className="font-mono text-[11px] sm:text-xs text-[#B7A691]">
-              {`© ${systemWebsite.businessName || 'DirectStay'}. All rights reserved. • Email: ${systemWebsite.supportEmail} • Support: ${formattedSupportPhone}`}
+              {`© 2026 DirectStay Luxury Cloud PMS. Powered by DirectStay SaaS. • Software Version 2.0 • Email: ${systemWebsite.supportEmail || 'contact@directstay.online'} • Support: ${formattedSupportPhone}`}
             </p>
             <p className="text-[11px] text-[#9E8D78]">
               {systemWebsite.footerGstDisclaimer ||

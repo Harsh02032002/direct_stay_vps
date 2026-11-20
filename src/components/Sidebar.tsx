@@ -766,6 +766,11 @@ export default function Sidebar({
               <LogOut className="w-3.5 h-3.5" />
             </button>
           </div>
+          {!isCollapsed && (
+            <div className="mt-1.5 text-center text-[10px] text-[#8C7355] font-mono tracking-wide select-none">
+              DirectStay Luxury Cloud PMS • v2.0
+            </div>
+          )}
         </div>
       </aside>
 
@@ -854,29 +859,34 @@ export default function Sidebar({
               {visiblePmsTree.map((node) => renderMenuNode(node, 0))}
             </nav>
 
-            <div className="p-3 border-t border-[#2B211A] flex items-center justify-between bg-[#201813]">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-7 h-7 rounded-full bg-[#DFB962] text-[#17120F] font-extrabold text-[11px] flex items-center justify-center shrink-0">
-                  {userInitials}
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-bold text-[#FBF4E0] truncate">
-                    {loggedInUser || currentRole}
+            <div className="p-3 border-t border-[#2B211A] bg-[#201813]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-7 h-7 rounded-full bg-[#DFB962] text-[#17120F] font-extrabold text-[11px] flex items-center justify-center shrink-0">
+                    {userInitials}
                   </div>
-                  <div className="text-[10px] text-[#C49A3A] truncate">{effectiveRoleForRbac}</div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-[#FBF4E0] truncate">
+                      {loggedInUser || currentRole}
+                    </div>
+                    <div className="text-[10px] text-[#C49A3A] truncate">{effectiveRoleForRbac}</div>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileDrawerOpen(false);
+                    onLogout();
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg bg-rose-950/60 text-rose-200 border border-rose-800/40 text-[11px] font-semibold flex items-center gap-1"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sign Out</span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileDrawerOpen(false);
-                  onLogout();
-                }}
-                className="px-2.5 py-1.5 rounded-lg bg-rose-950/60 text-rose-200 border border-rose-800/40 text-[11px] font-semibold flex items-center gap-1"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Sign Out</span>
-              </button>
+              <div className="mt-2 text-center text-[10px] text-[#8C7355] font-mono tracking-wide select-none">
+                DirectStay Luxury Cloud PMS • v2.0
+              </div>
             </div>
           </div>
         </div>

@@ -174,7 +174,7 @@ export const INITIAL_SYSTEM_WEBSITE: SystemWebsiteConfig = {
   supportPhone: '7978563771',
   whatsappNumber: '7978563771',
   whatsappDefaultMessage: 'Hello DirectStay Team, I would like to inquire about onboarding my hotel property.',
-  supportEmail: 'raghunathpanigrahi4@gmail.com',
+  supportEmail: 'contact@directstay.online',
   hasWhatsapp: true,
   logoUrl: '',
   navSignInText: 'Sign In',
@@ -443,7 +443,7 @@ export const INITIAL_SYSTEM_WEBSITE: SystemWebsiteConfig = {
   footerPlatformTitle: 'Platform',
   footerEnterpriseTitle: 'Enterprise & Portals',
   footerDirectDeskTitle: 'Direct Desk',
-  footerCopyrightText: 'All rights reserved.',
+  footerCopyrightText: '© 2026 DirectStay Luxury Cloud PMS. Powered by DirectStay SaaS. Software Version 2.0',
   footerGstDisclaimer: 'All listed premium plan packages are subject to 18% GST standard regulations.',
   customSections: []
 };

@@ -16,7 +16,7 @@ export default function SubscriptionInvoiceModal({
   onClose,
   businessName = 'DirectStay SaaS Hub',
   supportPhone = '+91 7978563771',
-  supportEmail = 'raghunathpanigrahi4@gmail.com',
+  supportEmail = 'contact@directstay.online',
 }: SubscriptionInvoiceModalProps) {
   if (!invoice) return null;
 
