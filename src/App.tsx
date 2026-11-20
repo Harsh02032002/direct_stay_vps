@@ -49,6 +49,13 @@ import FinanceView from './components/FinanceView';
 import FrontDeskView from './components/FrontDeskView';
 import { HousekeepingView } from './components/HousekeepingView';
 import IntegratedAdminPmsHub from './pms-integrated/IntegratedAdminPmsHub';
+import { StandalonePosLayout } from './pms-integrated/components/StandalonePosLayout';
+import {
+  mapPosPathToSubTab,
+  mapPosSubTabToPath,
+  prefetchPosHandoffCode,
+  resolvePosCapabilities,
+} from './utils/posConfigHelpers';
 
 import LoginView, { LoginPortalMode } from './components/LoginView';
 import FrontWebsite from './components/FrontWebsite';
@@ -71,7 +78,7 @@ const VALID_OWNER_SUBTABS = new Set<HotelOwnerSubTab>(['dashboard', 'property', 
 const VALID_ADMIN_TABS = new Set<string>([
   'dashboard', 'frontDesk', 'todayBookings', 'rooms', 'housekeeping',
   'calendar', 'bookings', 'checkin', 'invoice', 'pos', 'inventory',
-  'otaManager', 'finance', 'expenses', 'handover', 'staff', 'userList', 'policies',
+  'otaManager', 'bookingEngine', 'finance', 'expenses', 'handover', 'staff', 'userList', 'policies',
   'reports', 'dailyReport', 'auditLogs', 'notifications', 'profile'
 ]);
 
@@ -147,6 +154,9 @@ const ADMIN_ROUTE_ALIASES: Record<string, { tab: string; subTab?: string }> = {
   todaybookings: { tab: 'todayBookings' },
   housekeeping: { tab: 'housekeeping' },
   calendar: { tab: 'calendar' },
+  'stay-overview': { tab: 'calendar' },
+  stayoverview: { tab: 'calendar' },
+  stayOverview: { tab: 'calendar' },
   pos: { tab: 'pos' },
   inventory: { tab: 'inventory' },
   finance: { tab: 'finance' },
@@ -155,6 +165,10 @@ const ADMIN_ROUTE_ALIASES: Record<string, { tab: string; subTab?: string }> = {
   policies: { tab: 'policies' },
   otaManager: { tab: 'otaManager' },
   otamanager: { tab: 'otaManager' },
+  'channel-manager': { tab: 'otaManager' },
+  bookingEngine: { tab: 'bookingEngine' },
+  bookingengine: { tab: 'bookingEngine' },
+  'booking-engine': { tab: 'bookingEngine' },
   dailyReport: { tab: 'dailyReport' },
   dailyreport: { tab: 'dailyReport' },
   auditLogs: { tab: 'auditLogs' },
@@ -250,7 +264,22 @@ export default function App() {
   const [hotels, setHotels] = useState<Hotel[]>(() => (Array.isArray(bootSnap?.hotels) ? bootSnap.hotels : []));
   const [packages, setPackages] = useState<SaaSPackage[]>(() => (Array.isArray(bootSnap?.packages) ? bootSnap.packages : []));
   const [customPages, setCustomPages] = useState<CustomPage[]>(() => (Array.isArray(bootSnap?.customPages) ? bootSnap.customPages : []));
-  const [selectedHotelId, setSelectedHotelId] = useState<string>(() => sessionStorage.getItem('pms_hotel_id') || bootSnap?.hotels?.[0]?.id || '');
+  const [selectedHotelId, setSelectedHotelId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const qHotel = new URLSearchParams(window.location.search).get('hotelId');
+      if (qHotel) return qHotel;
+    }
+    return (
+      sessionStorage.getItem('pms_hotel_id') ||
+      localStorage.getItem('pms_hotel_id') ||
+      bootSnap?.hotels?.[0]?.id ||
+      ''
+    );
+  });
+  const [isStandalonePosMode, setIsStandalonePosMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.pathname.toLowerCase().startsWith('/pos');
+  });
   const [systemWebsite, setSystemWebsite] = useState<SystemWebsiteConfig>(() =>
     bootSnap?.systemWebsite ? { ...INITIAL_SYSTEM_WEBSITE, ...bootSnap.systemWebsite } : INITIAL_SYSTEM_WEBSITE
   );
@@ -336,6 +365,10 @@ export default function App() {
 
   // Authentication States
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => hasStoredValidAuth());
+  const [isRedeemingPosHandoff, setIsRedeemingPosHandoff] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || hasStoredValidAuth()) return false;
+    return Boolean(new URLSearchParams(window.location.search).get('posHandoff'));
+  });
   const [loggedInUser, setLoggedInUser] = useState<string>(() => sessionStorage.getItem('pms_user') || localStorage.getItem('pms_user') || '');
   const [unauthView, setUnauthView] = useState<'front-website' | 'login'>(() => {
     if (typeof window !== 'undefined') {
@@ -404,30 +437,85 @@ export default function App() {
   const [rawAgentCommissionPayments, setRawAgentCommissionPayments] = useState<AgentCommissionPayment[]>(() => (Array.isArray(bootSnap?.agentCommissionPayments) ? bootSnap.agentCommissionPayments : []));
   const [rawPosAdvanceBookings, setRawPosAdvanceBookings] = useState<FoodAdvanceBooking[]>(() => (Array.isArray(bootSnap?.posAdvanceBookings) ? bootSnap.posAdvanceBookings : []));
 
+  // Derive initial route tab/subtabs synchronously so deep-links & page reloads never flash or redirect to /admin
+  const initialRouteInfo = React.useMemo(() => {
+    if (typeof window === 'undefined') {
+      return { tab: '', sub: '' };
+    }
+    const cleanPath = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+    const segs = cleanPath.split('/').filter(Boolean);
+    const root = (segs[0] || '').toLowerCase();
+    if (root === 'pos') {
+      return { tab: 'pos', sub: mapPosPathToSubTab(cleanPath) };
+    }
+    if (root === 'admin') {
+      const rawTab = segs[1] || 'dashboard';
+      const mapped = ADMIN_ROUTE_ALIASES[rawTab] || ADMIN_ROUTE_ALIASES[rawTab.toLowerCase()];
+      if (mapped) {
+        const sub = segs[2] || mapped.subTab || '';
+        if (mapped.tab === 'frontDesk' && sub === 'billing') {
+          return { tab: 'invoice', sub: 'all' };
+        }
+        return { tab: mapped.tab, sub };
+      }
+    }
+    return { tab: '', sub: '' };
+  }, []);
+
   // Module Navigation SubTabs
-  const [financeSubTab, setFinanceSubTab] = useState<string>('dashboard');
-  const [frontDeskSubTab, setFrontDeskSubTab] = useState<string>('dashboard');
-  const [guestUserListSubTab, setGuestUserListSubTab] = useState<'directory' | 'documents'>('directory');
-  const [roomSubTab, setRoomSubTab] = useState<string>('dashboard');
-  const [housekeepingSubTab, setHousekeepingSubTab] = useState<string>('dashboard');
-  const [posSubTab, setPosSubTab] = useState<string>('terminal');
-  const [inventorySubTab, setInventorySubTab] = useState<string>('dashboard');
-  const [otaSubTab, setOtaSubTab] = useState<string>('channels');
-  const [reportsSubTab, setReportsSubTab] = useState<string>('daily_cash');
-  const [staffSubTab, setStaffSubTab] = useState<string>('directory');
-  const [invoiceSubTab, setInvoiceSubTab] = useState<string>('all');
+  const [financeSubTab, setFinanceSubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'finance' && initialRouteInfo.sub ? initialRouteInfo.sub : 'dashboard'
+  );
+  const [frontDeskSubTab, setFrontDeskSubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'frontDesk' && initialRouteInfo.sub ? initialRouteInfo.sub : 'dashboard'
+  );
+  const [guestUserListSubTab, setGuestUserListSubTab] = useState<'directory' | 'documents'>(() =>
+    initialRouteInfo.tab === 'userList' && initialRouteInfo.sub === 'documents' ? 'documents' : 'directory'
+  );
+  const [roomSubTab, setRoomSubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'rooms' && initialRouteInfo.sub ? initialRouteInfo.sub : 'dashboard'
+  );
+  const [housekeepingSubTab, setHousekeepingSubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'housekeeping' && initialRouteInfo.sub ? initialRouteInfo.sub : 'dashboard'
+  );
+  const [posSubTab, setPosSubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'pos' && initialRouteInfo.sub ? initialRouteInfo.sub : 'terminal'
+  );
+  const [inventorySubTab, setInventorySubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'inventory' && initialRouteInfo.sub ? initialRouteInfo.sub : 'dashboard'
+  );
+  const [otaSubTab, setOtaSubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'otaManager' && initialRouteInfo.sub ? initialRouteInfo.sub : 'channels'
+  );
+  const [reportsSubTab, setReportsSubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'reports' && initialRouteInfo.sub ? initialRouteInfo.sub : 'daily_cash'
+  );
+  const [staffSubTab, setStaffSubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'staff' && initialRouteInfo.sub ? initialRouteInfo.sub : 'directory'
+  );
+  const [invoiceSubTab, setInvoiceSubTab] = useState<string>(() =>
+    initialRouteInfo.tab === 'invoice' && initialRouteInfo.sub ? initialRouteInfo.sub : 'all'
+  );
 
   // Navigation and Role
-
   const [activeTab, setActiveTab] = useState(() => {
-    const savedRole = sessionStorage.getItem('pms_role');
+    if (initialRouteInfo.tab) return initialRouteInfo.tab;
+    const savedRole = sessionStorage.getItem('pms_role') || localStorage.getItem('pms_role');
     if (savedRole === 'SuperAdmin') return 'superAdminHub';
     if (savedRole === 'Owner') return 'hotelOwnerHub';
     if (savedRole === 'Housekeeping' || savedRole === 'Reception' || savedRole === 'Receptionist') return 'frontDesk';
     return 'dashboard';
   });
-  const [currentRole, setCurrentRole] = useState<UserRole>(() => (sessionStorage.getItem('pms_role') as UserRole) || 'SuperAdmin');
+  const [currentRole, setCurrentRole] = useState<UserRole>(() => {
+    const savedRole = (sessionStorage.getItem('pms_role') || localStorage.getItem('pms_role')) as UserRole;
+    if (typeof window !== 'undefined' && savedRole === 'SuperAdmin') {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get('hotelId') || sp.get('asAdmin') === 'true') return 'Admin';
+    }
+    return savedRole || 'SuperAdmin';
+  });
   const prevRoleRef = React.useRef<UserRole>(currentRole);
+  const hasSyncedInitialLocationRef = React.useRef<boolean>(false);
 
   // Deep Link States
   const [selectedBookingForCheckin, setSelectedBookingForCheckin] = useState<Booking | null>(null);
@@ -958,14 +1046,28 @@ export default function App() {
     }
 
     if (rootSeg === 'pos') {
-      const subSeg = segments[1] || 'terminal';
+      const mappedPosSub = mapPosPathToSubTab(cleanPath);
+      const queryHotelId = searchParams.get('hotelId');
+      const hasHandoffParam = Boolean(searchParams.get('posHandoff'));
+      if (queryHotelId) {
+        setSelectedHotelId(queryHotelId);
+        sessionStorage.setItem('pms_hotel_id', queryHotelId);
+        localStorage.setItem('pms_hotel_id', queryHotelId);
+      }
       setIsNotFoundRoute(false);
       setIsPublicWebsiteForced(false);
-      setPortalLoginMode(null);
+      setIsStandalonePosMode(true);
       setActiveTab('pos');
-      setPosSubTab(subSeg === 'billing' ? 'terminal' : subSeg);
+      setPosSubTab(mappedPosSub);
+      if (!isAuth && !hasHandoffParam) {
+        setPortalLoginMode('admin');
+        return;
+      }
+      setPortalLoginMode(null);
       return;
     }
+
+    setIsStandalonePosMode(false);
 
     if (rootSeg === 'admin') {
       if (segments.length > 3) {
@@ -1048,6 +1150,7 @@ export default function App() {
 
     const searchParams = new URLSearchParams(window.location.search);
     const queryHotelId = searchParams.get('hotelId');
+    const posHandoffParam = searchParams.get('posHandoff');
     if (queryHotelId) {
       setSelectedHotelId(queryHotelId);
       sessionStorage.setItem('pms_hotel_id', queryHotelId);
@@ -1062,11 +1165,18 @@ export default function App() {
       setCurrentRole(savedRole);
     }
 
-    syncStateFromLocation(undefined, validSession);
+    syncStateFromLocation(undefined, validSession || Boolean(posHandoffParam), savedRole);
+    hasSyncedInitialLocationRef.current = true;
 
     // Fetch remote data depending on whether an authenticated session token exists
     if (isBackendServerActive()) {
       if (validSession && token) {
+        if (posHandoffParam) {
+          searchParams.delete('posHandoff');
+          const cleanQs = searchParams.toString();
+          window.history.replaceState({}, '', `${window.location.pathname}${cleanQs ? `?${cleanQs}` : ''}`);
+        }
+        void prefetchPosHandoffCode(queryHotelId || selectedHotelId);
         fetchAllFromSupabase()
           .then(cloudData => {
             if (cloudData && Object.keys(cloudData).length > 0) {
@@ -1076,6 +1186,54 @@ export default function App() {
           })
           .catch(() => {})
           .finally(() => {
+            setIsInitialHydrating(false);
+          });
+      } else if (posHandoffParam) {
+        searchParams.delete('posHandoff');
+        const cleanQs = searchParams.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${cleanQs ? `?${cleanQs}` : ''}`);
+        fetch('/api/auth/pos-handoff/redeem', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ handoffCode: posHandoffParam }),
+        })
+          .then(r => (r.ok ? r.json() : null))
+          .then(redeemed => {
+            if (redeemed?.success && redeemed?.token) {
+              const rRole = (redeemed.role === 'SuperAdmin' && queryHotelId ? 'Admin' : redeemed.role || 'Admin') as UserRole;
+              const rHotel = queryHotelId || redeemed.hotelId || 'hotel-1';
+              const rUser = redeemed.username || 'Admin';
+              for (const store of [sessionStorage, localStorage]) {
+                store.setItem('pms_authenticated', 'true');
+                store.setItem('pms_session_token', redeemed.token);
+                store.setItem('pms_auth_token', redeemed.token);
+                store.setItem('pms_role', rRole);
+                store.setItem('pms_user', rUser);
+                store.setItem('pms_hotel_id', rHotel);
+              }
+              prevRoleRef.current = rRole;
+              setCurrentRole(rRole);
+              setLoggedInUser(rUser);
+              setSelectedHotelId(rHotel);
+              setIsAuthenticated(true);
+              setPortalLoginMode(null);
+              setIsInitialHydrating(true);
+              void prefetchPosHandoffCode(rHotel);
+              return fetchAllFromSupabase().then(cloudData => {
+                if (cloudData && Object.keys(cloudData).length > 0) {
+                  savePmsData(cloudData, true);
+                  applyAllPmsData(cloudData);
+                }
+              });
+            } else {
+              setPortalLoginMode('admin');
+            }
+          })
+          .catch(() => {
+            setPortalLoginMode('admin');
+          })
+          .finally(() => {
+            setIsRedeemingPosHandoff(false);
             setIsInitialHydrating(false);
           });
       } else {
@@ -1137,13 +1295,20 @@ export default function App() {
   // Keep browser URL synchronized with active dashboard navigation state
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (!hasSyncedInitialLocationRef.current) return;
     if (isNotFoundRoute || isPublicWebsiteForced || publicHotelBookingId !== null || portalLoginMode !== null) return;
 
     const currentCleanPath = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
     const firstSeg = currentCleanPath.split('/').filter(Boolean)[0]?.toLowerCase();
 
     if (!isAuthenticated) {
-      if (firstSeg === 'superadmin' || firstSeg === 'superamdin' || firstSeg === 'admin' || firstSeg === 'hotelowner') {
+      if (
+        firstSeg === 'superadmin' ||
+        firstSeg === 'superamdin' ||
+        firstSeg === 'admin' ||
+        firstSeg === 'hotelowner' ||
+        firstSeg === 'pos'
+      ) {
         return;
       }
       if (unauthView === 'login') {
@@ -1166,7 +1331,9 @@ export default function App() {
     }
 
     let targetPath = '/admin';
-    if (currentRole === 'SuperAdmin') {
+    if (isStandalonePosMode && activeTab === 'pos') {
+      targetPath = mapPosSubTabToPath(posSubTab);
+    } else if (currentRole === 'SuperAdmin') {
       if (activeTab === 'profile') {
         targetPath = '/superadmin/profile';
       } else if (activeTab === 'notifications') {
@@ -1229,7 +1396,7 @@ export default function App() {
     if (currentCleanPath !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
-  }, [isAuthenticated, unauthView, currentRole, activeTab, superAdminSubTab, ownerSubTab, frontDeskSubTab, financeSubTab, isNotFoundRoute, isPublicWebsiteForced, publicHotelBookingId, portalLoginMode]);
+  }, [isAuthenticated, unauthView, currentRole, activeTab, superAdminSubTab, ownerSubTab, frontDeskSubTab, financeSubTab, posSubTab, isStandalonePosMode, isNotFoundRoute, isPublicWebsiteForced, publicHotelBookingId, portalLoginMode]);
 
   const handleUpdatePackages = (updatedPackages: SaaSPackage[]) => {
     setPackages(updatedPackages);
@@ -1502,6 +1669,7 @@ export default function App() {
       sessionStorage.setItem('pms_auth_token', issuedToken);
       localStorage.setItem('pms_session_token', issuedToken);
       localStorage.setItem('pms_auth_token', issuedToken);
+      void prefetchPosHandoffCode(targetHotelId === 'SUPERADMIN' ? undefined : targetHotelId);
     }
 
     // Immediately hydrate authenticated state from backend using the verified session token (gate initial paint so 0s never flash)
@@ -1550,7 +1718,7 @@ export default function App() {
         window.history.pushState({}, '', '/hotelowner');
       }
     } else {
-      if (firstSeg === 'admin') {
+      if (firstSeg === 'admin' || firstSeg === 'pos') {
         syncStateFromLocation(currentPath, true, role);
       } else {
         setActiveTab(role === 'Housekeeping' ? 'housekeeping' : (role === 'Reception' || role === 'Receptionist') ? 'frontDesk' : 'dashboard');
@@ -2227,23 +2395,104 @@ export default function App() {
       });
       showToast('Guest checked in successfully', 'success');
     } else {
+      const checkedOutRoomNums = new Set<string>();
       updated.forEach(uc => {
         const oldC = checkins.find(c => c.id === uc.id);
-        if (oldC && !oldC.checkedOutBy && uc.checkedOutBy) {
-          emitNotification({
-            hotelId: selectedHotelId,
-            recipientRole: 'All',
-            title: `🧹 Room ${uc.roomNumber} Checked Out — Marked Dirty`,
-            message: `${uc.guestName} checked out from Room ${uc.roomNumber}. Housekeeping alert: please clean Room ${uc.roomNumber} immediately.`,
-            type: 'housekeeping',
-            severity: 'warning',
-            linkPath: '/admin/housekeeping/room_cleaning',
-            entityId: uc.id,
-            dedupeKey: `${selectedHotelId}:checkout:${uc.id}`,
-          });
-          showToast(`Room ${uc.roomNumber} checked out & marked Dirty for Housekeeping`, 'info');
+        const justCheckedOut =
+          oldC &&
+          ((!oldC.checkedOutBy && uc.checkedOutBy) ||
+            (oldC.status !== 'Checked Out' && uc.status === 'Checked Out'));
+        if (justCheckedOut) {
+          String(uc.roomNumber || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .forEach(rn => checkedOutRoomNums.add(rn));
+          if (Array.isArray(uc.bookedRooms)) {
+            uc.bookedRooms.forEach(br => {
+              if (br?.roomNumber) checkedOutRoomNums.add(String(br.roomNumber).trim());
+            });
+          }
+          if (hotelSettings?.autoMarkDirtyOnCheckout !== false) {
+            emitNotification({
+              hotelId: selectedHotelId,
+              recipientRole: 'All',
+              title: `🧹 Room ${uc.roomNumber} Checked Out — Marked Dirty`,
+              message: `${uc.guestName} checked out from Room ${uc.roomNumber}. Housekeeping alert: please clean Room ${uc.roomNumber} immediately.`,
+              type: 'housekeeping',
+              severity: 'warning',
+              linkPath: '/admin/housekeeping/dashboard',
+              entityId: uc.id,
+              dedupeKey: `${selectedHotelId}:checkout:${uc.id}`,
+            });
+            showToast(`Room ${uc.roomNumber} checked out & marked Dirty for Housekeeping`, 'info');
+          }
         }
       });
+
+      if (checkedOutRoomNums.size > 0 && hotelSettings?.autoMarkDirtyOnCheckout !== false) {
+        const targetHotelForHk = effectiveTenantHotelId || selectedHotelId || hotels[0]?.id || '';
+        const nextHotelRooms = rooms.map(r =>
+          checkedOutRoomNums.has(r.number)
+            ? {
+                ...r,
+                status: 'Dirty' as const,
+                cleaningStatus: 'Dirty' as const,
+                housekeepingPriority: r.housekeepingPriority || ('High' as const),
+                housekeepingNotes: r.housekeepingNotes || 'Post-checkout room turnaround required',
+              }
+            : r
+        );
+        const mergedRooms = [
+          ...rawRooms.filter(r => r.hotelId && r.hotelId !== targetHotelForHk),
+          ...nextHotelRooms.map(r => ({ ...r, hotelId: targetHotelForHk })),
+        ];
+        setRawRooms(mergedRooms);
+
+        const nowLabel = new Date().toLocaleString('en-IN');
+        const newHkLogs: HousekeepingCleaningLog[] = [];
+        checkedOutRoomNums.forEach(rn => {
+          const alreadyOpen = cleaningLogs.some(
+            cl =>
+              cl.roomNumber === rn &&
+              cl.status !== 'Cleaned' &&
+              cl.status !== 'Inspected'
+          );
+          if (!alreadyOpen) {
+            const rmMeta = rooms.find(rm => rm.number === rn);
+            newHkLogs.push({
+              id: `HK-CO-${Date.now()}-${rn}`,
+              hotelId: targetHotelForHk,
+              roomNumber: rn,
+              category: rmMeta?.category,
+              floor: rmMeta?.floor,
+              assignedStaff: rmMeta?.assignedStaff || 'Unassigned',
+              assignedAt: nowLabel,
+              priority: 'High',
+              status: 'Pending',
+              checklistCompleted: [],
+              notes: 'Auto-queued post-checkout room cleaning & sanitization',
+            });
+          }
+        });
+        if (newHkLogs.length > 0) {
+          const mergedLogs = [
+            ...newHkLogs,
+            ...rawCleaningLogs,
+          ];
+          setRawCleaningLogs(mergedLogs);
+          savePmsData({ checkins: [
+            ...rawCheckins.filter(c => c.hotelId && c.hotelId !== targetHotelForHk),
+            ...updated.map(c => ({ ...c, hotelId: targetHotelForHk }))
+          ], rooms: mergedRooms, cleaningLogs: mergedLogs });
+          setRawCheckins([
+            ...rawCheckins.filter(c => c.hotelId && c.hotelId !== targetHotelForHk),
+            ...updated.map(c => ({ ...c, hotelId: targetHotelForHk }))
+          ]);
+          return;
+        }
+        savePmsData({ rooms: mergedRooms });
+      }
     }
 
     const targetHotel = effectiveTenantHotelId || selectedHotelId || hotels[0]?.id || '';
@@ -2615,6 +2864,16 @@ export default function App() {
           isGstEnabled: updated.isGstEnabled !== undefined ? updated.isGstEnabled : h.isGstEnabled,
           defaultGstRate: updated.defaultGstRate !== undefined ? Number(updated.defaultGstRate) : h.defaultGstRate,
           foodGstRate: updated.foodGstRate !== undefined ? Number(updated.foodGstRate) : h.foodGstRate,
+          inHouseKitchenAvailable:
+            updated.inHouseKitchenAvailable !== undefined
+              ? Boolean(updated.inHouseKitchenAvailable)
+              : h.inHouseKitchenAvailable,
+          inHouseRestaurantAvailable:
+            updated.inHouseRestaurantAvailable !== undefined
+              ? Boolean(updated.inHouseRestaurantAvailable)
+              : h.inHouseRestaurantAvailable,
+          posOutletName:
+            updated.posOutletName !== undefined ? updated.posOutletName : h.posOutletName,
           gstSlabs: Array.isArray(updated.gstSlabs) && updated.gstSlabs.length > 0 ? updated.gstSlabs : h.gstSlabs,
           // Single Bill Calculator settings (My Profile Settings → Billing)
           invoicePrefix: updated.invoicePrefix !== undefined ? updated.invoicePrefix : h.invoicePrefix,
@@ -2901,7 +3160,7 @@ export default function App() {
     const posItems = rawPosItems.filter(i => i.hotelId === effectiveTenantHotelId);
     const posOrders = rawPosOrders.filter(o => o.hotelId === effectiveTenantHotelId);
 
-    if (currentRole === 'Owner' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'calendar') {
+    if (currentRole === 'Owner' && activeTab !== 'profile' && activeTab !== 'notifications' && activeTab !== 'calendar' && activeTab !== 'pos') {
       return (
         <HotelOwnerView
           activeSubTab={ownerSubTab}
@@ -2942,6 +3201,7 @@ export default function App() {
       'pos',
       'inventory',
       'otaManager',
+      'bookingEngine',
       'finance',
       'expenses',
       'reports',
@@ -2981,6 +3241,7 @@ export default function App() {
           hotelPhone={activeHotelObj?.phoneNumber || hotelSettings.phoneNumber}
           hotelEmail={activeHotelObj?.emailAddress || hotelSettings.emailAddress}
           hotelSettings={activeHotelObj ? { ...hotelSettings, ...activeHotelObj } : hotelSettings}
+          onUpdateHotelSettings={handleUpdateHotelSettings}
           currentRole={currentRole}
           loggedInUser={loggedInUser}
           onAddAuditLog={handleAddAuditLogDirectly}
@@ -3296,14 +3557,21 @@ export default function App() {
             onUpdateWaterBottles={handleUpdateWaterBottles}
             bookings={bookings}
             rooms={rooms}
+            checkins={checkins}
+            onUpdateCheckins={handleUpdateCheckins}
+            posOrders={posOrders}
+            loggedInUser={loggedInUser}
             currentRole={currentRole}
             onUpdateBookings={handleUpdateBookings}
             onUpdateRooms={handleUpdateRooms}
             onCheckIn={handleSetSelectedForCheckin}
+            onCheckOut={handleSetSelectedForInvoice}
+            onOpenCalendar={() => setActiveTab('calendar')}
             hotelSettings={hotelSettings}
             invoices={invoices}
             onUpdateInvoices={handleUpdateInvoices}
             onAddAuditLog={handleAddAuditLogDirectly}
+            onMoveToDeletedFolder={handleMoveToDeletedFolder}
             travelAgents={travelAgents}
             onUpdateTravelAgents={handleUpdateTravelAgents}
           />
@@ -4408,6 +4676,17 @@ export default function App() {
     );
   }
 
+  if (isRedeemingPosHandoff) {
+    return (
+      <div className="min-h-screen bg-[#FAF7F0] flex items-center justify-center">
+        <div className="text-center space-y-2">
+          <RefreshCw className="w-7 h-7 text-[#C49A3A] animate-spin mx-auto" />
+          <p className="text-xs font-bold text-[#17120F]">Opening DirectStay POS Terminal...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated || (isPublicWebsiteForced && publicHotelBookingId === null)) {
     if (unauthView === 'front-website' || isPublicWebsiteForced) {
       return (
@@ -4556,21 +4835,23 @@ export default function App() {
   };
 
   const adminSectionNames: Record<string, string> = {
-    dashboard: 'PMS Overview',
-    frontDesk: 'Front Desk Operations',
-    invoice: 'Invoice System',
-    rooms: 'Room Management',
-    housekeeping: 'Housekeeping & Laundry',
+    dashboard: 'Dashboard',
+    calendar: 'Stay Overview',
+    frontDesk: 'Front Office',
+    invoice: 'Invoices & Billing',
+    rooms: 'Property Setup',
+    housekeeping: 'Housekeeping',
     pos: 'POS Terminal & Food',
     inventory: 'Inventory Store',
-    otaManager: 'OTA Channel Manager',
+    otaManager: 'Channel Manager',
+    bookingEngine: 'Booking Engine',
     finance: 'Finance Hub',
-    reports: 'Audits & Reports',
-    staff: 'Staff Workspace',
-    userList: 'Guest & User List Directory',
+    reports: 'Reports & Graphs',
+    staff: 'Administration & Users',
+    userList: 'Guest Profiles',
     auditLogs: 'Audit Logs',
     notifications: 'Notifications Center',
-    profile: 'Profile Settings'
+    profile: 'Configuration & Profile'
   };
 
   const leavePublicBookingView = () => {
@@ -4601,6 +4882,67 @@ export default function App() {
     setPublicHotelBookingId(targetHotelId);
     window.history.pushState({}, '', `/?hotelBooking=${encodeURIComponent(targetHotelId)}`);
   };
+
+  if (isStandalonePosMode && activeTab === 'pos' && publicHotelBookingId === null) {
+    const activePosHotelObj = hotels.find((h) => h.id === selectedHotelId) || hotels[0];
+    const mergedPosHotelSettings = activePosHotelObj
+      ? { ...hotelSettings, ...activePosHotelObj }
+      : hotelSettings;
+    const posCaps = resolvePosCapabilities(mergedPosHotelSettings, selectedHotelId);
+    const scopedPosItems = rawPosItems.filter(
+      (i) => (i.hotelId || 'hotel-1') === (selectedHotelId || 'hotel-1')
+    );
+    const scopedPosOrders = rawPosOrders.filter(
+      (o) => (o.hotelId || 'hotel-1') === (selectedHotelId || 'hotel-1')
+    );
+
+    return (
+      <>
+        <StandalonePosLayout
+          activeSubTab={posSubTab}
+          onSelectSubTab={(sub) => setPosSubTab(sub)}
+          hotels={hotels}
+          selectedHotelId={selectedHotelId}
+          onSelectHotel={(id) => {
+            setSelectedHotelId(id);
+            sessionStorage.setItem('pms_hotel_id', id);
+            localStorage.setItem('pms_hotel_id', id);
+          }}
+          hotelName={activePosHotelObj?.name || hotelSettings.name || 'DirectStay Property'}
+          posCapabilities={posCaps}
+          posItems={scopedPosItems}
+          posOrders={scopedPosOrders}
+          loggedInUser={loggedInUser}
+          currentRole={currentRole}
+          onBackToPms={() => {
+            setIsStandalonePosMode(false);
+            setActiveTab('dashboard');
+            const dest = getRoleBasePath(currentRole);
+            window.history.pushState({}, '', dest);
+          }}
+          onLogout={handleLogout}
+          notificationBellNode={
+            <NotificationBellAndDrawer
+              notifications={rawNotifications}
+              currentRole={currentRole}
+              selectedHotelId={selectedHotelId}
+              onMarkAsRead={handleMarkNotificationAsRead}
+              onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+              onNavigateLink={handleNavigateNotificationLink}
+              onOpenNotification={handleOpenSingleNotification}
+              isLoading={isLoadingNotifications}
+              error={notificationError}
+              isRealtimeConnected={isRealtimeConnected}
+              onRefresh={refreshNotificationsFromServer}
+            />
+          }
+        >
+          {renderTabContent()}
+        </StandalonePosLayout>
+        {renderGlobalToastOverlay()}
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-luxury-beige-50 flex flex-col md:flex-row text-luxury-brown-950 font-sans selection:bg-luxury-gold-300 selection:text-luxury-brown-900">

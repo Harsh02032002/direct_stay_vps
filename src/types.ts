@@ -2,7 +2,7 @@ export type RoomCategory = string;
 
 export type RoomStatus = 'Available' | 'Occupied' | 'Reserved' | 'Maintenance' | 'Dirty' | 'Clean' | 'Inspection' | 'Out of Order' | 'Out of Service' | 'Blocked';
 
-export type CleaningStatus = 'Clean' | 'Dirty' | 'In Progress' | 'Ready For Guest' | 'Needs Inspection';
+export type CleaningStatus = 'Clean' | 'Dirty' | 'In Progress' | 'Ready For Guest' | 'Needs Inspection' | 'Inspection' | 'Inspected';
 
 export interface PackageModulePermissions {
   ota: boolean;            // OTA Channel Manager
@@ -124,11 +124,15 @@ export interface Hotel {
   isGstEnabled?: boolean;
   defaultGstRate?: number;
   foodGstRate?: number;
+  inHouseKitchenAvailable?: boolean;
+  inHouseRestaurantAvailable?: boolean;
+  posOutletName?: string;
   roomRateIncludesGst?: boolean;
   taxOnAncillary?: boolean;
   waterBottleRate?: number;
   grcPrefix?: string;
   nextGrcSequence?: number;
+  autoMarkDirtyOnCheckout?: boolean;
   grcTerms?: string[];
   placeOfSupply?: string;
   gstSlabs?: number[];
@@ -152,6 +156,9 @@ export interface Room {
   assignedStaff?: string;
   verifiedBy?: string;
   verificationTime?: string;
+  housekeepingPriority?: 'Low' | 'Normal' | 'High' | 'Urgent';
+  housekeepingNotes?: string;
+  cleaningCompletedAt?: string;
   maxOccupancy?: number;
   baseOccupancy?: number;
   extraPersonCharge?: number;
@@ -183,7 +190,22 @@ export interface RoomUpgradeRecord {
   reason?: string;
 }
 
-export type BookingStatus = 'Confirmed' | 'Pending' | 'Waiting' | 'In Process' | 'Advance' | 'Cancelled' | 'Checked In';
+export type BookingStatus =
+  | 'Draft'
+  | 'Confirmed'
+  | 'Upcoming'
+  | 'Pending'
+  | 'Waiting'
+  | 'In Process'
+  | 'Advance'
+  | 'Checked In'
+  | 'Checked-In'
+  | 'Checked Out'
+  | 'Checked-Out'
+  | 'CheckedOut'
+  | 'Cancelled'
+  | 'No-Show'
+  | 'No Show';
 
 export type BookingSource =
   | 'Direct'
@@ -241,6 +263,10 @@ export interface Booking {
   refundReference?: string;
   refundDate?: string;
   cancellationReason?: string;
+  noShowReason?: string;
+  noShowMarkedAt?: string;
+  payments?: any[];
+  createdAt?: string;
   paymentFailureReason?: string;
   isCompleted?: boolean;
   
@@ -260,11 +286,18 @@ export interface Booking {
   groupBookingId?: string;
   groupName?: string;
 
-  // Extra Bed
+  // Extra Bed & Extra Person (Independent Opt-In Charges)
+  roomSubtotal?: number;
   hasExtraBed?: boolean;
   extraBedCount?: number;
   extraBedRate?: number;
+  extraBedNights?: number;
   extraBedTotal?: number;
+  hasExtraPerson?: boolean;
+  extraPersonCount?: number;
+  extraPersonRate?: number;
+  extraPersonNights?: number;
+  extraPersonChargeApplied?: number;
 
   // C-Form
   cFormData?: CFormData;
@@ -325,11 +358,17 @@ export interface BookedRoom {
   extraPersonChargeApplied: number; // extraGuestsCount * extraPersonCharge
   totalRoomAmount: number; // (rate + extraPersonChargeApplied) * nights
 
-  // Extra Bed
+  // Extra Bed & Extra Person (Independent Opt-In Charges)
+  roomSubtotal?: number;
   hasExtraBed?: boolean;
   extraBedCount?: number;
   extraBedRate?: number;
+  extraBedNights?: number;
   extraBedTotal?: number;
+  hasExtraPerson?: boolean;
+  extraPersonCount?: number;
+  extraPersonRate?: number;
+  extraPersonNights?: number;
 
   // Group guest assignment
   guestName?: string;
@@ -436,11 +475,18 @@ export interface GuestCheckIn {
   groupBookingId?: string;
   groupName?: string;
 
-  // Extra Bed
+  // Extra Bed & Extra Person (Independent Opt-In Charges)
+  roomSubtotal?: number;
   hasExtraBed?: boolean;
   extraBedCount?: number;
   extraBedRate?: number;
+  extraBedNights?: number;
   extraBedTotal?: number;
+  hasExtraPerson?: boolean;
+  extraPersonCount?: number;
+  extraPersonRate?: number;
+  extraPersonNights?: number;
+  extraPersonChargeApplied?: number;
 
   // C-Form
   cFormData?: CFormData;
@@ -459,7 +505,6 @@ export interface GuestCheckIn {
   discountAmount?: number;
   discount?: number;
   bookingId?: string;
-  extraPersonChargeApplied?: number;
   extraPersonChargesApplied?: number;
   overriddenBy?: string;
   overrideReason?: string;
@@ -958,11 +1003,15 @@ export interface HotelSettings {
   isGstEnabled?: boolean;
   defaultGstRate?: number;
   foodGstRate?: number;
+  inHouseKitchenAvailable?: boolean;
+  inHouseRestaurantAvailable?: boolean;
+  posOutletName?: string;
   roomRateIncludesGst?: boolean;
   taxOnAncillary?: boolean;
   waterBottleRate?: number;
   grcPrefix?: string;
   nextGrcSequence?: number;
+  autoMarkDirtyOnCheckout?: boolean;
   grcTerms?: string[];
   placeOfSupply?: string;
   gstSlabs?: number[];
@@ -1607,13 +1656,17 @@ export interface HousekeepingCleaningLog {
   id: string;
   hotelId?: string;
   roomNumber: string;
+  category?: string;
+  floor?: string;
   assignedStaff: string;
   assignedAt: string;
   cleanedAt?: string;
+  completedAt?: string;
   inspectedAt?: string;
   inspectedBy?: string;
   inspectionResult?: 'Pass' | 'Fail' | 'Pending';
-  status: 'Assigned' | 'In Progress' | 'Cleaned' | 'Inspected' | 'Pending';
+  priority?: 'Low' | 'Normal' | 'High' | 'Urgent';
+  status: 'Assigned' | 'In Progress' | 'Inspection' | 'Cleaned' | 'Inspected' | 'Pending';
   checklistCompleted: string[];
   notes?: string;
 }

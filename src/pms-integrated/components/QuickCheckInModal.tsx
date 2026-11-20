@@ -1,15 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { X, Plus, Upload, UserCheck, Trash2, CheckCircle2, Lock } from 'lucide-react';
-import { BookingRecord, GuestPerson } from '../types';
+import { X, Plus, Upload, UserCheck, Trash2, CheckCircle2, Lock, AlertTriangle } from 'lucide-react';
+import { BookingRecord, GuestPerson, RoomAsset } from '../types';
+import { showToast } from '../../utils/toast';
 import { SAMPLE_AADHAAR_SVG_URL } from '../mock-data/initialData';
 import { useHotelTaxSettings } from '../utils/taxSettings';
 import { BillSettings, normalizeBillSettings } from '../../utils/billCalculator';
 
 interface QuickCheckInModalProps {
   booking: BookingRecord | null;
+  rooms?: RoomAsset[];
+  currentRole?: string;
+  loggedInUser?: string;
   hasExistingInvoice?: boolean;
   billSettings?: BillSettings;
   onClose: () => void;
+  onLogOverride?: (details: string) => void;
   onConfirmCheckIn: (
     bookingId: string,
     guests: GuestPerson[],
@@ -26,9 +31,13 @@ function getCurrentHHMM(): string {
 
 export default function QuickCheckInModal({
   booking,
+  rooms = [],
+  currentRole = 'Admin',
+  loggedInUser = 'Front Desk',
   hasExistingInvoice = false,
   billSettings,
   onClose,
+  onLogOverride,
   onConfirmCheckIn,
 }: QuickCheckInModalProps) {
   const [taxSettings] = useHotelTaxSettings();
@@ -42,6 +51,12 @@ export default function QuickCheckInModal({
   );
   const [checkInTimeInput, setCheckInTimeInput] = useState(() => getCurrentHHMM());
   const [withGst, setWithGst] = useState<boolean>(true);
+  const [overrideApproved, setOverrideApproved] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
+
+  const canAuthoriseOverride = ['SuperAdmin', 'Owner', 'Admin', 'Manager'].includes(
+    String(currentRole || '')
+  );
 
   useEffect(() => {
     if (!booking) return;
@@ -137,7 +152,42 @@ export default function QuickCheckInModal({
     ? configuredGstRate
     : 0;
 
+  const unreadyRooms = !booking.isCheckedIn
+    ? safeRooms
+        .map((rn) => rooms.find((r) => r.number === rn))
+        .filter((r): r is RoomAsset =>
+          Boolean(
+            r &&
+              (r.status === 'Out of Service' ||
+                r.status === 'Dirty' ||
+                r.cleaningStatus !== 'Clean')
+          )
+        )
+    : [];
+
   const handleConfirm = () => {
+    if (unreadyRooms.length > 0) {
+      const desc = unreadyRooms
+        .map((r) => `Room ${r.number} (${r.status === 'Out of Service' ? 'Out of Order' : r.cleaningStatus})`)
+        .join(', ');
+      if (!canAuthoriseOverride) {
+        showToast(
+          `Check-In Blocked: ${desc} is not Clean/Ready. Please mark it Clean in Housekeeping or request Manager/Admin override.`,
+          'error'
+        );
+        return;
+      }
+      if (!overrideApproved || !overrideReason.trim()) {
+        showToast(
+          `Authorised Override Required: Confirm override checkbox and enter a reason for ${desc}.`,
+          'warning'
+        );
+        return;
+      }
+      onLogOverride?.(
+        `${loggedInUser} (${currentRole}) authorised check-in override on ${desc} for Booking #${booking.bookingNo}. Reason: ${overrideReason.trim()}`
+      );
+    }
     const datePart = checkInDateInput || new Date().toISOString().slice(0, 10);
     const timePart = checkInTimeInput || getCurrentHHMM();
     const formattedTime = `${datePart}, ${timePart}`;
@@ -451,6 +501,49 @@ export default function QuickCheckInModal({
               />
             </div>
           </div>
+
+          {unreadyRooms.length > 0 && (
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 space-y-2 text-xs">
+              <div className="font-bold text-amber-950 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+                <span>
+                  Housekeeping / Readiness Alert:{' '}
+                  {unreadyRooms
+                    .map(
+                      (r) =>
+                        `Room ${r.number} (${r.status === 'Out of Service' ? 'Out of Order' : r.cleaningStatus})`
+                    )
+                    .join(', ')}
+                </span>
+              </div>
+              {canAuthoriseOverride ? (
+                <>
+                  <label className="flex items-center gap-2 font-semibold text-amber-900 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={overrideApproved}
+                      onChange={(e) => setOverrideApproved(e.target.checked)}
+                      className="accent-amber-600"
+                    />
+                    <span>Authorise Room Readiness Override ({currentRole})</span>
+                  </label>
+                  {overrideApproved && (
+                    <input
+                      type="text"
+                      value={overrideReason}
+                      onChange={(e) => setOverrideReason(e.target.value)}
+                      placeholder="Mandatory override reason..."
+                      className="w-full px-3 py-1.5 rounded-lg border border-amber-300 bg-white text-xs"
+                    />
+                  )}
+                </>
+              ) : (
+                <p className="text-[11px] text-rose-700 font-semibold">
+                  Check-in is blocked until Housekeeping marks the room Clean &amp; Ready, or a Manager/Admin authorises an override.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}

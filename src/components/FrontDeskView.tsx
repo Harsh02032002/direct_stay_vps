@@ -2704,34 +2704,41 @@ export default function FrontDeskView({
         </div>
       )}
 
-      {/* 2. ADVANCE BOOKINGS SUB-TAB */}
+      {/* 2. ADVANCE BOOKINGS & RESERVATION LIST SUB-TAB */}
       {currentSubTab === 'reservations' && (
         <div className="space-y-4 print:space-y-0">
-          <div className="flex justify-between items-center bg-white p-3.5 rounded-xl border border-luxury-brown-100 shadow-xs no-print">
-            <div className="flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-luxury-gold-600" />
-              <h3 className="font-serif font-bold text-luxury-brown-900">Advance Bookings & Reservation Ledger</h3>
-            </div>
-            <div className="flex items-center gap-2">
+          {roomSubView === 'calendar' && (
+            <div className="flex justify-between items-center bg-white p-3.5 rounded-xl border border-luxury-brown-100 shadow-xs no-print">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-luxury-gold-600" />
+                <h3 className="font-serif font-bold text-luxury-brown-900">Stay Overview & Matrix Calendar</h3>
+              </div>
               <button
-                onClick={() => setRoomSubView(roomSubView === 'inventory' ? 'calendar' : 'inventory')}
-                className="px-3 py-1.5 bg-luxury-beige-100 hover:bg-luxury-beige-200 text-luxury-brown-900 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors border border-luxury-brown-200"
+                onClick={() => setRoomSubView('inventory')}
+                className="px-3 py-1.5 bg-luxury-beige-100 hover:bg-luxury-beige-200 text-luxury-brown-900 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors border border-luxury-brown-200 cursor-pointer"
               >
                 <Calendar className="w-3.5 h-3.5 text-luxury-gold-600" />
-                {roomSubView === 'inventory' ? 'View Matrix Calendar' : 'View Advance Bookings Table'}
+                Back to Reservations List
               </button>
             </div>
-          </div>
+          )}
 
           {roomSubView === 'inventory' ? (
             <ReservationView
               waterBottles={waterBottles}
+              onUpdateWaterBottles={onUpdateWaterBottles}
               bookings={bookings}
               rooms={rooms}
+              checkins={checkins}
+              onUpdateCheckins={onUpdateCheckins}
+              posOrders={posOrders}
+              loggedInUser={loggedInUser}
               currentRole={currentRole}
               onUpdateBookings={onUpdateBookings}
               onUpdateRooms={onUpdateRooms}
               onCheckIn={handleTriggerCheckIn}
+              onCheckOut={handleTriggerCheckOut}
+              onOpenCalendar={() => setRoomSubView('calendar')}
               hotelSettings={hotelSettings}
               invoices={invoices}
               onUpdateInvoices={onUpdateInvoices}
@@ -2746,6 +2753,11 @@ export default function FrontDeskView({
             <CalendarBookingView
               rooms={rooms}
               bookings={bookings}
+              checkins={checkins}
+              onUpdateCheckins={onUpdateCheckins}
+              loggedInUser={loggedInUser}
+              autoMarkDirtyOnCheckout={hotelSettings?.autoMarkDirtyOnCheckout !== false}
+              currentRole={currentRole}
               setActiveTab={(tab) => onSelectSubTab(tab)}
               onUpdateBookings={onUpdateBookings}
               onUpdateRooms={onUpdateRooms}

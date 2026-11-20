@@ -18,8 +18,12 @@ interface QuickAddBookingModalProps {
     checkOutDate: string;
     isOpenStay?: boolean;
     numGuests: number;
-    extraBeds?: number;
+    hasExtraPerson?: boolean;
+    extraPersonCount?: number;
     extraPersonRate?: number;
+    hasExtraBed?: boolean;
+    extraBeds?: number;
+    extraBedRate?: number;
     requirements: BookedCategoryRequirement[];
     bookingMode: 'reservations' | 'walkin';
     withGst?: boolean;
@@ -50,12 +54,19 @@ export default function QuickAddBookingModal({
   });
   const [isOpenStay, setIsOpenStay] = useState(false);
   const [numGuests, setNumGuests] = useState(2);
-  const [extraBeds, setExtraBeds] = useState(0);
-  const [withGst, setWithGst] = useState(true);
+  const [hasExtraPerson, setHasExtraPerson] = useState(false);
+  const [extraPersonCount, setExtraPersonCount] = useState(1);
   const [extraPersonRate, setExtraPersonRate] = useState<number>(() => {
     const rmRate = Number(preselectedRoom?.extraPersonCharge || rooms[0]?.extraPersonCharge || 0);
     return rmRate > 0 ? rmRate : 500;
   });
+  const [hasExtraBed, setHasExtraBed] = useState(false);
+  const [extraBeds, setExtraBeds] = useState(1);
+  const [extraBedRate, setExtraBedRate] = useState<number>(() => {
+    const rmRate = Number(preselectedRoom?.extraPersonCharge || rooms[0]?.extraPersonCharge || 0);
+    return rmRate > 0 ? rmRate : 500;
+  });
+  const [withGst, setWithGst] = useState(true);
 
   const defaultCat = preselectedRoom?.category || assetGroups[0]?.name || 'Standard';
   const [selectedCategory, setSelectedCategory] = useState<string>(defaultCat);
@@ -97,8 +108,13 @@ export default function QuickAddBookingModal({
     if (isOpen) {
       setBookingMode(initialBookingMode);
       const defaultExtra = Number(preselectedRoom?.extraPersonCharge || rooms[0]?.extraPersonCharge || 0);
-      setExtraPersonRate(defaultExtra > 0 ? defaultExtra : 500);
-      setExtraBeds(0);
+      const fallbackRate = defaultExtra > 0 ? defaultExtra : 500;
+      setHasExtraPerson(false);
+      setExtraPersonCount(1);
+      setExtraPersonRate(fallbackRate);
+      setHasExtraBed(false);
+      setExtraBeds(1);
+      setExtraBedRate(fallbackRate);
       if (preselectedRoom) {
         setSelectedCategory(preselectedRoom.category);
         setRequirements([
@@ -190,11 +206,16 @@ export default function QuickAddBookingModal({
   );
   const baseOccupancyLimit = totalRoomsBooked * 2;
   const autoExtraPax = Math.max(0, numGuests - baseOccupancyLimit);
-  const effectiveExtraPaxOrBeds = Math.max(autoExtraPax, extraBeds);
-  const extraPaxTotal = effectiveExtraPaxOrBeds * Math.max(0, extraPersonRate) * nights;
+  const extraPersonTotal = hasExtraPerson
+    ? Math.max(1, extraPersonCount) * Math.max(0, extraPersonRate) * nights
+    : 0;
+  const extraBedTotal = hasExtraBed
+    ? Math.max(1, extraBeds) * Math.max(0, extraBedRate) * nights
+    : 0;
+  const extraPaxTotal = extraPersonTotal + extraBedTotal;
 
-  const approxRoomBase =
-    requirements.reduce((sum, r) => sum + r.unitPrice * r.qty * nights, 0) + extraPaxTotal;
+  const roomOnlyBase = requirements.reduce((sum, r) => sum + r.unitPrice * r.qty * nights, 0);
+  const approxRoomBase = roomOnlyBase + extraPaxTotal;
   const effectiveGstRate = withGst ? configuredRoomGst : 0;
   const approxGst = withGst ? r2((approxRoomBase * effectiveGstRate) / 100) : 0;
   const approxTotalCost = r2(approxRoomBase + approxGst);
@@ -379,12 +400,12 @@ export default function QuickAddBookingModal({
             </label>
           </div>
 
-          {/* Number of Guests & Extra Bed / Extra Person Charge */}
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Number of Guests + Separate Extra Person & Extra Bed/Mattress Checkboxes (Both OFF by default) */}
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
               <div>
                 <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1 mb-1">
-                  <Users className="w-3.5 h-3.5 text-[#C49A3A]" /> No. of Guests (Persons)
+                  <Users className="w-3.5 h-3.5 text-[#C49A3A]" /> No. of Guests
                 </label>
                 <input
                   type="number"
@@ -399,50 +420,98 @@ export default function QuickAddBookingModal({
                 />
               </div>
 
-              <div>
-                <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1 mb-1">
-                  <BedDouble className="w-3.5 h-3.5 text-[#C49A3A]" /> Extra Beds / Persons
-                </label>
+              <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-800 cursor-pointer select-none">
                 <input
-                  type="number"
-                  min={0}
-                  max={15}
-                  value={effectiveExtraPaxOrBeds}
+                  type="checkbox"
+                  checked={hasExtraPerson}
                   onChange={(e) => {
-                    const val = Math.max(0, Number(e.target.value));
-                    setExtraBeds(val);
-                    if (baseOccupancyLimit + val > numGuests) {
-                      setNumGuests(baseOccupancyLimit + val);
+                    const nextOn = e.target.checked;
+                    setHasExtraPerson(nextOn);
+                    if (nextOn) {
+                      setExtraPersonCount(Math.max(1, autoExtraPax || 1));
                     }
                   }}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 bg-white rounded-xl font-bold"
+                  className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
                 />
-              </div>
+                <Users className="w-3.5 h-3.5 text-[#C49A3A]" />
+                <span>Extra Person</span>
+              </label>
 
-              <div>
-                <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                  Extra Bed/Person ₹/Night
-                </label>
+              <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-800 cursor-pointer select-none">
                 <input
-                  type="number"
-                  min={0}
-                  step={50}
-                  value={extraPersonRate}
-                  onChange={(e) => setExtraPersonRate(Math.max(0, Number(e.target.value)))}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 bg-white rounded-xl font-mono font-bold"
+                  type="checkbox"
+                  checked={hasExtraBed}
+                  onChange={(e) => {
+                    const nextOn = e.target.checked;
+                    setHasExtraBed(nextOn);
+                    if (nextOn && extraBeds < 1) setExtraBeds(1);
+                  }}
+                  className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
                 />
+                <BedDouble className="w-3.5 h-3.5 text-[#C49A3A]" />
+                <span>Extra Bed / Mattress</span>
+              </label>
+            </div>
+
+            {hasExtraPerson && (
+              <div className="grid grid-cols-3 gap-2.5 p-2.5 rounded-xl bg-white border border-[#C49A3A]/50 text-xs">
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-[#8B691E] block mb-0.5">Extra Persons</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={15}
+                    value={extraPersonCount}
+                    onChange={(e) => setExtraPersonCount(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-[#8B691E] block mb-0.5">Price / Night (₹)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={extraPersonRate}
+                    onChange={(e) => setExtraPersonRate(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-mono font-bold"
+                  />
+                </div>
+                <div className="flex flex-col justify-end text-right font-mono pb-1">
+                  <span className="text-[10px] text-slate-400">{extraPersonCount} × ₹{extraPersonRate} × {nights}N</span>
+                  <strong className="text-xs font-extrabold text-[#8B691E]">{formatINR(extraPersonTotal)}</strong>
+                </div>
               </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-between text-[10px] text-slate-500">
-              <span>
-                Base Occupancy: <strong>{baseOccupancyLimit} Guests</strong> ({totalRoomsBooked} Room{totalRoomsBooked > 1 ? 's' : ''} × 2)
-              </span>
-              {effectiveExtraPaxOrBeds > 0 && (
-                <span className="font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
-                  + {effectiveExtraPaxOrBeds} Extra Person/Bed × {formatINR(extraPersonRate)} × {nights}N = + {formatINR(extraPaxTotal)}
-                </span>
-              )}
-            </div>
+            )}
+
+            {hasExtraBed && (
+              <div className="grid grid-cols-3 gap-2.5 p-2.5 rounded-xl bg-white border border-amber-300 text-xs">
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-amber-800 block mb-0.5">Beds / Mattresses</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={15}
+                    value={extraBeds}
+                    onChange={(e) => setExtraBeds(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-amber-800 block mb-0.5">Price / Night (₹)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={extraBedRate}
+                    onChange={(e) => setExtraBedRate(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg font-mono font-bold"
+                  />
+                </div>
+                <div className="flex flex-col justify-end text-right font-mono pb-1">
+                  <span className="text-[10px] text-slate-400">{extraBeds} × ₹{extraBedRate} × {nights}N</span>
+                  <strong className="text-xs font-extrabold text-amber-800">{formatINR(extraBedTotal)}</strong>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Requirements Selector */}
@@ -644,8 +713,9 @@ export default function QuickAddBookingModal({
                   Estimated Cost ({nights} {nights === 1 ? 'Night' : 'Nights'} {withGst ? `+ ${effectiveGstRate}% GST` : '• No GST'}) :
                 </span>
                 <div className="text-[10px] font-normal text-slate-500">
-                  Room Base: {formatINR(approxRoomBase - extraPaxTotal)}
-                  {extraPaxTotal > 0 ? ` + Extra Person/Bed: ${formatINR(extraPaxTotal)}` : ''}
+                  Room Base: {formatINR(roomOnlyBase)}
+                  {extraPersonTotal > 0 ? ` + Extra Person: ${formatINR(extraPersonTotal)}` : ''}
+                  {extraBedTotal > 0 ? ` + Extra Bed: ${formatINR(extraBedTotal)}` : ''}
                   {withGst ? ` + ${effectiveGstRate}% Tax (${formatINR(approxGst)})` : ' + ₹0 Tax (No GST)'}
                 </div>
               </div>
@@ -664,8 +734,12 @@ export default function QuickAddBookingModal({
                     checkOutDate,
                     isOpenStay,
                     numGuests,
-                    extraBeds: effectiveExtraPaxOrBeds,
-                    extraPersonRate,
+                    hasExtraPerson,
+                    extraPersonCount: hasExtraPerson ? extraPersonCount : 0,
+                    extraPersonRate: hasExtraPerson ? extraPersonRate : 0,
+                    hasExtraBed,
+                    extraBeds: hasExtraBed ? extraBeds : 0,
+                    extraBedRate: hasExtraBed ? extraBedRate : 0,
                     requirements,
                     bookingMode: 'reservations',
                     withGst,
@@ -692,8 +766,12 @@ export default function QuickAddBookingModal({
                     checkOutDate,
                     isOpenStay,
                     numGuests,
-                    extraBeds: effectiveExtraPaxOrBeds,
-                    extraPersonRate,
+                    hasExtraPerson,
+                    extraPersonCount: hasExtraPerson ? extraPersonCount : 0,
+                    extraPersonRate: hasExtraPerson ? extraPersonRate : 0,
+                    hasExtraBed,
+                    extraBeds: hasExtraBed ? extraBeds : 0,
+                    extraBedRate: hasExtraBed ? extraBedRate : 0,
                     requirements,
                     bookingMode: 'walkin',
                     withGst,

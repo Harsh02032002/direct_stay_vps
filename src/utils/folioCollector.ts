@@ -136,18 +136,48 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
     if (n(ch.amount) > 0) charges.push({ ...ch, amount: r2(ch.amount) });
   };
 
-  // ---------------------------------------------------------------- 1. ROOM CHARGES
+  // ---------------------------------------------------------------- 1. ROOM CHARGES & EXTRA PERSON / EXTRA BED
   const reqs: AnyRec[] = Array.isArray(b?.requirements) ? b!.requirements : [];
   if (c && Array.isArray(c.bookedRooms) && c.bookedRooms.length > 0 && c.isGroupCheckIn) {
+    let groupRoomLevelExtraBedSum = 0;
+    let groupRoomLevelExtraPaxSum = 0;
     c.bookedRooms.forEach((br: AnyRec, i: number) => {
       const rate = n(br.rate) || roomRateOf(String(br.roomNumber));
       push({ id: `room-${br.roomNumber || i}`, kind: 'room', description: 'Room Charges', amount: rate * nights, rate, nights, roomNumber: String(br.roomNumber || primaryRoom), sourceKey: `room:${br.roomNumber || i}` });
       if (br.hasExtraBed) {
-        const cnt = n(br.extraBedCount) || 1;
+        const cnt = Math.max(1, n(br.extraBedCount) || 1);
         const er = n(br.extraBedRate);
-        push({ id: `xbed-${br.roomNumber || i}`, kind: 'extra_bed', description: `Extra Bed (${cnt} x ${er} x ${nights}N)`, amount: cnt * er * nights, roomNumber: String(br.roomNumber || primaryRoom), sourceKey: `xbed:${br.roomNumber || i}` });
+        const ebNights = Math.max(1, n(br.extraBedNights) || nights);
+        const ebAmt = cnt * er * ebNights;
+        groupRoomLevelExtraBedSum += ebAmt;
+        push({ id: `xbed-${br.roomNumber || i}`, kind: 'extra_bed', description: `Extra Bed / Mattress (${cnt} × ₹${er} × ${ebNights}N)`, amount: ebAmt, roomNumber: String(br.roomNumber || primaryRoom), sourceKey: `xbed:${br.roomNumber || i}` });
+      }
+      if (br.hasExtraPerson || n(br.extraPersonChargeApplied) > 0) {
+        const epAmt = n(br.extraPersonChargeApplied) > 0
+          ? n(br.extraPersonChargeApplied)
+          : Math.max(1, n(br.extraPersonCount) || 1) * n(br.extraPersonRate) * Math.max(1, n(br.extraPersonNights) || nights);
+        if (epAmt > 0 && n(c.extraPersonChargeApplied) <= 0) {
+          groupRoomLevelExtraPaxSum += epAmt;
+          push({ id: `xpax-${br.roomNumber || i}`, kind: 'extra_person', description: 'Extra Person Charges', amount: epAmt, roomNumber: String(br.roomNumber || primaryRoom), sourceKey: `xpax:${br.roomNumber || i}` });
+        }
       }
     });
+    // Top-level group Extra Bed / Extra Person (only if not already emitted per room — prevents duplicate charges!)
+    if (groupRoomLevelExtraBedSum <= 0 && c.hasExtraBed) {
+      const cnt = Math.max(1, n(c.extraBedCount) || 1);
+      const er = n(c.extraBedRate);
+      const ebNights = Math.max(1, n(c.extraBedNights) || nights);
+      push({ id: `xbed-${c.id}`, kind: 'extra_bed', description: `Extra Bed / Mattress (${cnt} × ₹${er} × ${ebNights}N)`, amount: cnt * er * ebNights, roomNumber: primaryRoom, sourceKey: `xbed:${c.id}` });
+    }
+    if (groupRoomLevelExtraPaxSum <= 0 && n(c.extraPersonChargeApplied) > 0) {
+      const epCnt = n(c.extraPersonCount);
+      const epRate = n(c.extraPersonRate);
+      const epNights = n(c.extraPersonNights) || nights;
+      const desc = epCnt > 0 && epRate > 0
+        ? `Extra Person (${epCnt} × ₹${epRate} × ${epNights}N)`
+        : 'Extra Person Charges';
+      push({ id: `xpax-${c.id}`, kind: 'extra_person', description: desc, amount: n(c.extraPersonChargeApplied), roomNumber: primaryRoom, sourceKey: `xpax:${c.id}` });
+    }
   } else if (c && n(c.roomRate) > 0) {
     const rate = n(c.roomRate);
     push({ id: `room-${primaryRoom}`, kind: 'room', description: 'Room Charges', amount: rate * nights, rate, nights, roomNumber: primaryRoom, sourceKey: `room:${primaryRoom}` });
@@ -162,34 +192,93 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
         push({ id: `room-${rn || i}`, kind: 'room', description: 'Room Charges', amount: rate * nights, rate, nights, roomNumber: String(rn || primaryRoom), sourceKey: `room:${rn || i}` });
       });
     });
-    const recorded = n(b?.roomSubtotal);
-    if (recorded > r2(base) + 0.5) {
-      push({ id: `xpax-${b?.id}`, kind: 'extra_person', description: 'Extra Person / Extra Bed Charges', amount: recorded - base, roomNumber: primaryRoom, sourceKey: `xpax:${b?.id}` });
+    const hasExplicitExtras = Boolean(b?.hasExtraBed) || Boolean(b?.hasExtraPerson) || n(b?.extraPersonChargeApplied) > 0;
+    if (hasExplicitExtras) {
+      if (b?.hasExtraPerson || n(b?.extraPersonChargeApplied) > 0) {
+        const epCnt = Math.max(1, n(b?.extraPersonCount) || 1);
+        const epRate = n(b?.extraPersonRate);
+        const epNights = Math.max(1, n(b?.extraPersonNights) || nights);
+        const epAmt = n(b?.extraPersonChargeApplied) > 0 ? n(b?.extraPersonChargeApplied) : epCnt * epRate * epNights;
+        push({ id: `xpax-${b?.id}`, kind: 'extra_person', description: epRate > 0 ? `Extra Person (${epCnt} × ₹${epRate} × ${epNights}N)` : 'Extra Person Charges', amount: epAmt, roomNumber: primaryRoom, sourceKey: `xpax:${b?.id}` });
+      }
+      if (b?.hasExtraBed) {
+        const ebCnt = Math.max(1, n(b?.extraBedCount) || 1);
+        const ebRate = n(b?.extraBedRate);
+        const ebNights = Math.max(1, n(b?.extraBedNights) || nights);
+        const ebAmt = n(b?.extraBedTotal) > 0 ? n(b?.extraBedTotal) : ebCnt * ebRate * ebNights;
+        push({ id: `xbed-${b?.id}`, kind: 'extra_bed', description: ebRate > 0 ? `Extra Bed / Mattress (${ebCnt} × ₹${ebRate} × ${ebNights}N)` : 'Extra Bed Charges', amount: ebAmt, roomNumber: primaryRoom, sourceKey: `xbed:${b?.id}` });
+      }
+    } else {
+      const recorded = n(b?.roomSubtotal);
+      if (recorded > r2(base) + 0.5) {
+        push({ id: `xpax-${b?.id}`, kind: 'extra_person', description: 'Extra Person / Extra Bed Charges', amount: recorded - base, roomNumber: primaryRoom, sourceKey: `xpax:${b?.id}` });
+      }
     }
   } else if (b && Array.isArray(b.bookedRooms) && b.bookedRooms.length > 0) {
+    let brExtraBedEmitted = 0;
     b.bookedRooms.forEach((br: AnyRec, i: number) => {
       const rate = n(br.rate) || roomRateOf(String(br.roomNumber));
       push({ id: `room-${br.roomNumber || i}`, kind: 'room', description: 'Room Charges', amount: rate * nights, rate, nights, roomNumber: String(br.roomNumber || primaryRoom), sourceKey: `room:${br.roomNumber || i}` });
+      if (br.hasExtraBed) {
+        const cnt = Math.max(1, n(br.extraBedCount) || 1);
+        const er = n(br.extraBedRate);
+        const ebNights = Math.max(1, n(br.extraBedNights) || nights);
+        const ebAmt = cnt * er * ebNights;
+        brExtraBedEmitted += ebAmt;
+        push({ id: `xbed-${br.roomNumber || i}`, kind: 'extra_bed', description: `Extra Bed / Mattress (${cnt} × ₹${er} × ${ebNights}N)`, amount: ebAmt, roomNumber: String(br.roomNumber || primaryRoom), sourceKey: `xbed:${br.roomNumber || i}` });
+      }
     });
+    if (brExtraBedEmitted <= 0 && b.hasExtraBed) {
+      const cnt = Math.max(1, n(b.extraBedCount) || 1);
+      const er = n(b.extraBedRate);
+      const ebNights = Math.max(1, n(b.extraBedNights) || nights);
+      push({ id: `xbed-${b.id}`, kind: 'extra_bed', description: `Extra Bed / Mattress (${cnt} × ₹${er} × ${ebNights}N)`, amount: cnt * er * ebNights, roomNumber: primaryRoom, sourceKey: `xbed:${primaryRoom}` });
+    }
+    if (b.hasExtraPerson || n(b.extraPersonChargeApplied) > 0) {
+      const epCnt = n(b.extraPersonCount);
+      const epRate = n(b.extraPersonRate);
+      const epNights = n(b.extraPersonNights) || nights;
+      const epAmt = n(b.extraPersonChargeApplied) > 0 ? n(b.extraPersonChargeApplied) : Math.max(1, epCnt || 1) * epRate * epNights;
+      push({ id: `xpax-${b.id}`, kind: 'extra_person', description: epCnt > 0 && epRate > 0 ? `Extra Person (${epCnt} × ₹${epRate} × ${epNights}N)` : 'Extra Person Charges', amount: epAmt, roomNumber: primaryRoom, sourceKey: `xpax:${b.id}` });
+    }
   } else if (b) {
     const total = n(b.roomSubtotal ?? b.bookingAmount) || roomRateOf(primaryRoom) * nights;
     push({ id: `room-${primaryRoom}`, kind: 'room', description: 'Room Charges', amount: total, rate: r2(total / nights), nights, roomNumber: primaryRoom, sourceKey: `room:${primaryRoom}` });
   }
 
-  // Extra bed / extra person / early check-in (single-room check-in or legacy booking)
+  // Extra bed / extra person / early check-in (single-room check-in or pre-arrival single booking without bookedRooms)
   if (c && !c.isGroupCheckIn) {
     if (c.hasExtraBed) {
-      const cnt = n(c.extraBedCount) || 1;
+      const cnt = Math.max(1, n(c.extraBedCount) || 1);
       const er = n(c.extraBedRate);
-      push({ id: `xbed-${c.id}`, kind: 'extra_bed', description: `Extra Bed (${cnt} x ${er} x ${nights}N)`, amount: cnt * er * nights, roomNumber: primaryRoom, sourceKey: `xbed:${primaryRoom}` });
+      const ebNights = Math.max(1, n(c.extraBedNights) || nights);
+      push({ id: `xbed-${c.id}`, kind: 'extra_bed', description: `Extra Bed / Mattress (${cnt} × ₹${er} × ${ebNights}N)`, amount: cnt * er * ebNights, roomNumber: primaryRoom, sourceKey: `xbed:${primaryRoom}` });
     }
-    if (n(c.extraPersonChargeApplied) > 0) {
-      push({ id: `xpax-${c.id}`, kind: 'extra_person', description: 'Extra Person Charges', amount: n(c.extraPersonChargeApplied), roomNumber: primaryRoom, sourceKey: `xpax:${c.id}` });
+    if (c.hasExtraPerson !== false && n(c.extraPersonChargeApplied) > 0) {
+      const epCnt = n(c.extraPersonCount);
+      const epRate = n(c.extraPersonRate);
+      const epNights = n(c.extraPersonNights) || nights;
+      const desc = epCnt > 0 && epRate > 0
+        ? `Extra Person (${epCnt} × ₹${epRate} × ${epNights}N)`
+        : 'Extra Person Charges';
+      push({ id: `xpax-${c.id}`, kind: 'extra_person', description: desc, amount: n(c.extraPersonChargeApplied), roomNumber: primaryRoom, sourceKey: `xpax:${c.id}` });
     }
-  } else if (!c && b && b.hasExtraBed && reqs.length === 0) {
-    const cnt = n(b.extraBedCount) || 1;
-    const er = n(b.extraBedRate);
-    push({ id: `xbed-${b.id}`, kind: 'extra_bed', description: `Extra Bed (${cnt} x ${er} x ${nights}N)`, amount: cnt * er * nights, roomNumber: primaryRoom, sourceKey: `xbed:${primaryRoom}` });
+  } else if (!c && b && (!Array.isArray(b.bookedRooms) || b.bookedRooms.length === 0) && reqs.length === 0) {
+    if (b.hasExtraBed) {
+      const cnt = Math.max(1, n(b.extraBedCount) || 1);
+      const er = n(b.extraBedRate);
+      const ebNights = Math.max(1, n(b.extraBedNights) || nights);
+      push({ id: `xbed-${b.id}`, kind: 'extra_bed', description: `Extra Bed / Mattress (${cnt} × ₹${er} × ${ebNights}N)`, amount: cnt * er * ebNights, roomNumber: primaryRoom, sourceKey: `xbed:${primaryRoom}` });
+    }
+    if (b.hasExtraPerson !== false && n(b.extraPersonChargeApplied) > 0) {
+      const epCnt = n(b.extraPersonCount);
+      const epRate = n(b.extraPersonRate);
+      const epNights = n(b.extraPersonNights) || nights;
+      const desc = epCnt > 0 && epRate > 0
+        ? `Extra Person (${epCnt} × ₹${epRate} × ${epNights}N)`
+        : 'Extra Person Charges';
+      push({ id: `xpax-${b.id}`, kind: 'extra_person', description: desc, amount: n(b.extraPersonChargeApplied), roomNumber: primaryRoom, sourceKey: `xpax:${b.id}` });
+    }
   }
   const early = n(c?.earlyCheckInCharge ?? b?.earlyCheckInCharge);
   if (early > 0) {

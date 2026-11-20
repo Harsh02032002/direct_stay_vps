@@ -1,5 +1,5 @@
 export type RoomStatus = 'Available' | 'Confirmed' | 'Occupied' | 'Dirty' | 'Out of Service';
-export type CleaningStatus = 'Clean' | 'Dirty' | 'In Progress' | 'Inspected';
+export type CleaningStatus = 'Clean' | 'Dirty' | 'In Progress' | 'Inspection' | 'Inspected';
 export type PaymentMethod = 'Cash' | 'UPI' | 'Card' | 'Bank Transfer' | 'Room Charge' | 'Split Payment' | 'OTA Prepaid';
 export type BookingSource = 'WALK-IN' | 'Website' | 'MakeMyTrip' | 'Booking.com' | 'Goibibo' | 'Agoda' | 'OYO' | 'Corporate';
 export type BookingStatus = 'Confirmed' | 'Checked In' | 'Checked Out' | 'Pending' | 'Cancelled' | 'No-Show';
@@ -46,6 +46,12 @@ export interface RoomAsset {
   currentGuestName?: string;
   currentNights?: number;
   blockedReason?: string;
+  assignedStaff?: string;
+  verifiedBy?: string;
+  verificationTime?: string;
+  housekeepingPriority?: 'Low' | 'Normal' | 'High' | 'Urgent';
+  housekeepingNotes?: string;
+  cleaningCompletedAt?: string;
 }
 
 export interface RoomBlockRecord {
@@ -263,11 +269,17 @@ export interface HousekeepingTask {
   roomName: string;
   roomNumber: string;
   category: string;
+  floor?: string;
   description: string;
   taskType: 'Cleaning' | 'SheetChange' | 'Inspection' | 'Maintenance';
   assignedTo: string;
   timing: string;
-  status: 'Pending' | 'In Progress' | 'Completed';
+  priority?: 'Low' | 'Normal' | 'High' | 'Urgent';
+  notes?: string;
+  completedAt?: string;
+  inspectedBy?: string;
+  inspectedAt?: string;
+  status: 'Pending' | 'In Progress' | 'Inspection' | 'Completed';
   checklist: string[];
   autoCreatedFromBookingId?: string;
 }

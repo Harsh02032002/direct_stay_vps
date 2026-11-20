@@ -1122,50 +1122,6 @@ async function startServer() {
       };
     }
 
-    if (
-      token &&
-      !revokedSessionTokens.has(token) &&
-      (token.startsWith("ds_sess_") || token.startsWith("tok_"))
-    ) {
-      const rawHintRole = String(
-        req.headers["x-user-role"] || req.body?.role || req.query?.role || "Admin"
-      ).trim();
-      const normHintRole = normalizeRole(rawHintRole) || "Admin";
-      const hintHotelId = String(
-        req.headers["x-hotel-id"] ||
-          req.body?.hotelId ||
-          req.query?.hotelId ||
-          (normHintRole === "SuperAdmin" ? "SUPERADMIN" : "")
-      ).trim();
-      const hintUser = String(
-        req.headers["x-user-name"] || req.body?.username || normHintRole
-      ).trim();
-      const isSuper =
-        normHintRole === "SuperAdmin" ||
-        hintUser.toLowerCase().includes("super");
-      const now = Date.now();
-      const recoveredSess = {
-        username: hintUser,
-        role: normHintRole,
-        rawRole: rawHintRole || normHintRole,
-        hotelId: hintHotelId,
-        isSuperAdmin: isSuper,
-        issuedAt: now,
-        expiresAt: now + 12 * 60 * 60 * 1000,
-      };
-      activeSessions.set(token, recoveredSess);
-      persistSessionFromMongoSafe(token, recoveredSess);
-      return {
-        authenticated: true,
-        fromSession: true,
-        role: normHintRole,
-        rawRole: rawHintRole || normHintRole,
-        hotelId: hintHotelId,
-        username: hintUser,
-        isSuperAdmin: isSuper,
-      };
-    }
-
     return {
       authenticated: false,
       fromSession: false,
@@ -1174,6 +1130,23 @@ async function startServer() {
       hotelId: "",
       username: "",
     };
+  }
+
+  function isCallerAuthorizedForHotel(
+    caller: {
+      authenticated: boolean;
+      role: string;
+      hotelId: string;
+      isSuperAdmin?: boolean;
+    },
+    targetHotelId: string
+  ): boolean {
+    if (!caller.authenticated) return false;
+    if (caller.isSuperAdmin || caller.role === "SuperAdmin") return true;
+    const cleanTarget = String(targetHotelId || "").trim();
+    const cleanCaller = String(caller.hotelId || "").trim();
+    if (!cleanTarget || !cleanCaller) return false;
+    return cleanCaller === cleanTarget;
   }
 
   function persistSessionFromMongoSafe(token: string, sess: any) {
@@ -2073,14 +2046,32 @@ async function startServer() {
   const sentEmailDedupeKeys = new Set<string>();
   const emailDispatchHistory: Array<{
     id: string;
+    hotelId?: string;
+    bookingId?: string;
+    guestName?: string;
+    roomNumber?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+    totalAmount?: number;
     eventType: string;
     recipientEmail: string;
     subject: string;
+    bodyPreview?: string;
     delivered: boolean;
-    status: "delivered" | "skipped_unconfigured" | "skipped_duplicate" | "failed";
+    dryRun?: boolean;
+    status: "delivered" | "logged_dry_run" | "skipped_unconfigured" | "skipped_duplicate" | "failed";
     reason?: string;
     timestamp: string;
   }> = [];
+
+  function isReservedSafeTestEmail(email: string): boolean {
+    const lower = String(email || "").trim().toLowerCase();
+    return (
+      /@(example\.(com|org|net)|localhost|test\.local)$/.test(lower) ||
+      /\.(test|invalid|example)$/.test(lower) ||
+      lower.startsWith("qa-test")
+    );
+  }
 
   function getEmailProviderConfig() {
     const webhookUrl = String(process.env.EMAIL_WEBHOOK_URL || "").trim();
@@ -2099,36 +2090,82 @@ async function startServer() {
   }
 
   async function dispatchEmailNotification(params: {
+    hotelId?: string;
+    bookingId?: string;
+    guestName?: string;
+    roomNumber?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+    totalAmount?: number;
     eventType: string;
     recipientEmail: string;
     subject: string;
     textBody: string;
     dedupeKey?: string;
-  }): Promise<{ delivered: boolean; status: string; reason?: string }> {
+    dryRun?: boolean;
+    forceResend?: boolean;
+  }): Promise<{ delivered: boolean; dryRun?: boolean; status: string; reason?: string; entry?: any }> {
     const email = String(params.recipientEmail || "").trim();
     if (!email) {
       return { delivered: false, status: "skipped_unconfigured", reason: "No recipient email address" };
     }
-    const key = params.dedupeKey || `${params.eventType}:${email}:${params.subject}`;
-    if (sentEmailDedupeKeys.has(key)) {
+    const key = params.dedupeKey || `${params.hotelId || "global"}:${params.eventType}:${email}:${params.bookingId || params.subject}`;
+    if (!params.forceResend && sentEmailDedupeKeys.has(key)) {
       return { delivered: false, status: "skipped_duplicate", reason: "Duplicate email suppressed" };
+    }
+
+    const effectiveDryRun = Boolean(params.dryRun || isReservedSafeTestEmail(email));
+    if (effectiveDryRun) {
+      sentEmailDedupeKeys.add(key);
+      const entry = {
+        id: `EML-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        hotelId: params.hotelId,
+        bookingId: params.bookingId,
+        guestName: params.guestName,
+        roomNumber: params.roomNumber,
+        checkInDate: params.checkInDate,
+        checkOutDate: params.checkOutDate,
+        totalAmount: params.totalAmount,
+        eventType: params.eventType,
+        recipientEmail: email,
+        subject: params.subject,
+        bodyPreview: String(params.textBody || "").slice(0, 500),
+        delivered: false,
+        dryRun: true,
+        status: "logged_dry_run" as const,
+        reason: "Dry-run / non-production safe mode active — external customer email suppressed",
+        timestamp: new Date().toISOString(),
+      };
+      emailDispatchHistory.unshift(entry);
+      if (emailDispatchHistory.length > 200) emailDispatchHistory.pop();
+      return { delivered: false, dryRun: true, status: entry.status, reason: entry.reason, entry };
     }
 
     const cfg = getEmailProviderConfig();
     if (!cfg.configured) {
+      sentEmailDedupeKeys.add(key);
       const entry = {
         id: `EML-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        hotelId: params.hotelId,
+        bookingId: params.bookingId,
+        guestName: params.guestName,
+        roomNumber: params.roomNumber,
+        checkInDate: params.checkInDate,
+        checkOutDate: params.checkOutDate,
+        totalAmount: params.totalAmount,
         eventType: params.eventType,
         recipientEmail: email,
         subject: params.subject,
+        bodyPreview: String(params.textBody || "").slice(0, 500),
         delivered: false,
+        dryRun: false,
         status: "skipped_unconfigured" as const,
         reason: "SMTP_HOST/SMTP_USER/SMTP_PASS or EMAIL_WEBHOOK_URL env vars not configured",
         timestamp: new Date().toISOString(),
       };
       emailDispatchHistory.unshift(entry);
-      if (emailDispatchHistory.length > 100) emailDispatchHistory.pop();
-      return { delivered: false, status: entry.status, reason: entry.reason };
+      if (emailDispatchHistory.length > 200) emailDispatchHistory.pop();
+      return { delivered: false, status: entry.status, reason: entry.reason, entry };
     }
 
     try {
@@ -2142,6 +2179,8 @@ async function startServer() {
             subject: params.subject,
             text: params.textBody,
             eventType: params.eventType,
+            bookingId: params.bookingId,
+            hotelId: params.hotelId,
           }),
         });
         if (!resp.ok) {
@@ -2150,16 +2189,25 @@ async function startServer() {
         sentEmailDedupeKeys.add(key);
         const entry = {
           id: `EML-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          hotelId: params.hotelId,
+          bookingId: params.bookingId,
+          guestName: params.guestName,
+          roomNumber: params.roomNumber,
+          checkInDate: params.checkInDate,
+          checkOutDate: params.checkOutDate,
+          totalAmount: params.totalAmount,
           eventType: params.eventType,
           recipientEmail: email,
           subject: params.subject,
+          bodyPreview: String(params.textBody || "").slice(0, 500),
           delivered: true,
+          dryRun: false,
           status: "delivered" as const,
           timestamp: new Date().toISOString(),
         };
         emailDispatchHistory.unshift(entry);
-        if (emailDispatchHistory.length > 100) emailDispatchHistory.pop();
-        return { delivered: true, status: "delivered" };
+        if (emailDispatchHistory.length > 200) emailDispatchHistory.pop();
+        return { delivered: true, status: "delivered", entry };
       }
       return {
         delivered: false,
@@ -2169,17 +2217,26 @@ async function startServer() {
     } catch (err: any) {
       const entry = {
         id: `EML-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        hotelId: params.hotelId,
+        bookingId: params.bookingId,
+        guestName: params.guestName,
+        roomNumber: params.roomNumber,
+        checkInDate: params.checkInDate,
+        checkOutDate: params.checkOutDate,
+        totalAmount: params.totalAmount,
         eventType: params.eventType,
         recipientEmail: email,
         subject: params.subject,
+        bodyPreview: String(params.textBody || "").slice(0, 500),
         delivered: false,
+        dryRun: false,
         status: "failed" as const,
         reason: err?.message || "Email provider error",
         timestamp: new Date().toISOString(),
       };
       emailDispatchHistory.unshift(entry);
-      if (emailDispatchHistory.length > 100) emailDispatchHistory.pop();
-      return { delivered: false, status: "failed", reason: entry.reason };
+      if (emailDispatchHistory.length > 200) emailDispatchHistory.pop();
+      return { delivered: false, status: "failed", reason: entry.reason, entry };
     }
   }
 
@@ -3988,10 +4045,9 @@ async function startServer() {
 
     const existingCaller = resolveCallerIdentity(req);
     const hasPassword = password !== undefined && password !== null && String(password).trim() !== "";
-    const isSilentSessionSync = recordAuditLog === false || Boolean(extractSessionToken(req));
 
-    // Require password unless caller already holds a session token or is performing a silent role/session sync
-    if (!hasPassword && !existingCaller.authenticated && !isSilentSessionSync) {
+    // Require password unless caller already holds a verified active server-side session
+    if (!hasPassword && !existingCaller.authenticated) {
       return res.status(401).json({
         success: false,
         error: "Unauthorized: Password is required to authenticate.",
@@ -4231,21 +4287,31 @@ async function startServer() {
             });
           }
         }
-      } else if (existingCaller.authenticated || isSilentSessionSync) {
+      } else if (existingCaller.authenticated) {
         // Already authenticated caller switching portal view (e.g., SuperAdmin <-> Admin/Owner, or Owner <-> Admin for their own hotel)
         const requestedNormRole = (normalizeRole(String(role || existingCaller.role || "Admin")) || "Admin") as "SuperAdmin" | "Owner" | "Admin";
         const callerIsSuper = Boolean(
-          existingCaller.role === "SuperAdmin" ||
-            existingCaller.isSuperAdmin ||
-            requestedNormRole === "SuperAdmin"
+          existingCaller.role === "SuperAdmin" || existingCaller.isSuperAdmin
         );
+        if (!callerIsSuper && requestedNormRole === "SuperAdmin") {
+          return res.status(403).json({
+            success: false,
+            error: "Forbidden: Cannot escalate non-SuperAdmin session to SuperAdmin.",
+          });
+        }
+        if (!callerIsSuper && hotelId && existingCaller.hotelId && String(hotelId).trim() !== existingCaller.hotelId) {
+          return res.status(403).json({
+            success: false,
+            error: `Forbidden: Cannot switch session to foreign hotel "${hotelId}".`,
+          });
+        }
         resolvedRole = requestedNormRole;
         resolvedRawRole = String(role || existingCaller.rawRole || resolvedRole).trim();
         resolvedHotelId = callerIsSuper
           ? requestedNormRole === "SuperAdmin"
             ? "SUPERADMIN"
             : String(hotelId || existingCaller.hotelId || hotelsList[0]?.id || "hotel-1")
-          : String(hotelId || existingCaller.hotelId || hotelsList[0]?.id || "hotel-1");
+          : String(existingCaller.hotelId || hotelsList[0]?.id || "hotel-1");
         matchedHotel = hotelsList.find((h: any) => h && h.id === resolvedHotelId) || null;
       }
     } catch (err: any) {
@@ -4359,6 +4425,56 @@ async function startServer() {
           ? "/hotelowner"
           : "/admin",
       expiresAt,
+    });
+  });
+
+  // Single-use POS New-Tab Session Handoff (allows opening /pos in a new tab or partitioned webview without re-login)
+  const posHandoffNonces = new Map<
+    string,
+    { token: string; username: string; role: string; hotelId: string; expiresAt: number }
+  >();
+
+  app.post("/api/auth/pos-handoff", (req, res) => {
+    const caller = resolveCallerIdentity(req);
+    const token = extractSessionToken(req);
+    if (!caller.authenticated || !token || !activeSessions.has(token)) {
+      return res.status(401).json({ success: false, error: "Unauthorized session" });
+    }
+    const targetHotelId = String(req.body?.hotelId || caller.hotelId || "hotel-1").trim();
+    if (!isCallerAuthorizedForHotel(caller, targetHotelId)) {
+      return res.status(403).json({ success: false, error: "Forbidden hotelId" });
+    }
+    const now = Date.now();
+    for (const [k, v] of posHandoffNonces.entries()) {
+      if (now > v.expiresAt) posHandoffNonces.delete(k);
+    }
+    const handoffCode = `otk_${now}_${crypto.randomBytes(12).toString("hex")}`;
+    posHandoffNonces.set(handoffCode, {
+      token,
+      username: caller.username,
+      role: caller.role,
+      hotelId: targetHotelId,
+      expiresAt: now + 5 * 60 * 1000,
+    });
+    return res.json({ success: true, handoffCode });
+  });
+
+  app.post("/api/auth/pos-handoff/redeem", (req, res) => {
+    const code = String(req.body?.handoffCode || "").trim();
+    if (!code || !posHandoffNonces.has(code)) {
+      return res.status(401).json({ success: false, error: "Invalid or expired POS handoff code" });
+    }
+    const entry = posHandoffNonces.get(code)!;
+    posHandoffNonces.delete(code); // Strictly single-use
+    if (Date.now() > entry.expiresAt || !activeSessions.has(entry.token)) {
+      return res.status(401).json({ success: false, error: "Expired POS handoff session" });
+    }
+    return res.json({
+      success: true,
+      token: entry.token,
+      username: entry.username,
+      role: entry.role,
+      hotelId: entry.hotelId,
     });
   });
 
@@ -5231,6 +5347,167 @@ async function startServer() {
         error: "Failed to persist notification",
       });
     }
+  });
+
+  // 3B. Dedicated Booking Email Dispatch & Tenant-Isolated Email Audit Logs
+  app.post("/api/bookings/send-email", async (req, res) => {
+    const caller = resolveCallerIdentity(req);
+    if (!caller.authenticated || !caller.role) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized: Authentication is required to dispatch booking emails.",
+      });
+    }
+
+    const {
+      hotelId,
+      hotelName,
+      eventType = "booking_confirmation",
+      bookingId,
+      guestName,
+      recipientEmail,
+      roomNumber,
+      roomType,
+      checkInDate,
+      checkOutDate,
+      nights,
+      totalAmount,
+      advanceAmount,
+      pendingAmount,
+      status,
+      cancellationReason,
+      dryRun,
+      forceResend,
+    } = req.body || {};
+
+    const cleanBookingId = String(bookingId || "").trim();
+    const cleanGuestName = String(guestName || "").trim();
+    const cleanEmail = String(recipientEmail || "").trim();
+
+    if (!cleanBookingId || !cleanGuestName || !cleanEmail) {
+      return res.status(400).json({
+        success: false,
+        error: "bookingId, guestName, and recipientEmail are required.",
+      });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid recipientEmail format.",
+      });
+    }
+
+    const targetHotelId = String(hotelId || req.headers["x-target-hotel-id"] || caller.hotelId || "").trim();
+    if (!targetHotelId) {
+      return res.status(400).json({
+        success: false,
+        error: "Target hotelId is required.",
+      });
+    }
+
+    if (!isCallerAuthorizedForHotel(caller, targetHotelId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: Role "${caller.role}" (${caller.hotelId}) cannot send booking emails for hotel "${targetHotelId}".`,
+      });
+    }
+
+    const resolvedHotelName = String(hotelName || "DirectStay Partner Hotel").trim();
+    const eventLabel =
+      eventType === "booking_cancelled"
+        ? "Booking Cancellation"
+        : eventType === "booking_updated"
+        ? "Booking Updated"
+        : eventType === "checkin_confirmation"
+        ? "Check-In Confirmation"
+        : "Booking Confirmation";
+
+    const subject = `${resolvedHotelName} — ${eventLabel} (#${cleanBookingId})`;
+    const textBody = [
+      `Dear ${cleanGuestName},`,
+      ``,
+      `Your reservation details with ${resolvedHotelName} (${eventLabel}):`,
+      `• Booking ID: ${cleanBookingId}`,
+      `• Guest Name: ${cleanGuestName}`,
+      `• Room: ${roomNumber || "Assigned at Check-In"}${roomType ? ` (${roomType})` : ""}`,
+      `• Check-In: ${checkInDate || "TBD"}`,
+      `• Check-Out: ${checkOutDate || "Open Stay"}${nights ? ` (${nights} night(s))` : ""}`,
+      `• Total Amount: ₹${Number(totalAmount || 0).toLocaleString("en-IN")}`,
+      `• Paid / Advance: ₹${Number(advanceAmount || 0).toLocaleString("en-IN")}`,
+      `• Pending Balance: ₹${Number(pendingAmount || 0).toLocaleString("en-IN")}`,
+      status ? `• Status: ${status}` : "",
+      cancellationReason ? `• Cancellation Note: ${cancellationReason}` : "",
+      ``,
+      `Thank you for choosing ${resolvedHotelName}.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const headerDryRun =
+      String(req.headers["x-email-dry-run"] || "").toLowerCase() === "true" ||
+      String(req.headers["x-email-dry-run"] || "") === "1";
+
+    const result = await dispatchEmailNotification({
+      hotelId: targetHotelId,
+      bookingId: cleanBookingId,
+      guestName: cleanGuestName,
+      roomNumber: roomNumber ? String(roomNumber) : undefined,
+      checkInDate: checkInDate ? String(checkInDate) : undefined,
+      checkOutDate: checkOutDate ? String(checkOutDate) : undefined,
+      totalAmount: totalAmount !== undefined ? Number(totalAmount) : undefined,
+      eventType: String(eventType),
+      recipientEmail: cleanEmail,
+      subject,
+      textBody,
+      dedupeKey: `bkg-email:${targetHotelId}:${cleanBookingId}:${eventType}:${cleanEmail}`,
+      dryRun: Boolean(dryRun || headerDryRun),
+      forceResend: Boolean(forceResend),
+    });
+
+    return res.status(200).json({
+      success: true,
+      delivered: result.delivered,
+      dryRun: Boolean(result.dryRun),
+      status: result.status,
+      reason: result.reason,
+      log: result.entry || null,
+    });
+  });
+
+  app.get("/api/email/logs", (req, res) => {
+    const caller = resolveCallerIdentity(req);
+    if (!caller.authenticated || !caller.role) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized: Authentication is required to view email logs.",
+      });
+    }
+
+    const reqHotelId = String(req.query.hotelId || req.headers["x-target-hotel-id"] || "").trim();
+    if (reqHotelId && !isCallerAuthorizedForHotel(caller, reqHotelId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: Cannot view email logs for hotel "${reqHotelId}".`,
+      });
+    }
+
+    const effectiveHotelFilter =
+      caller.isSuperAdmin || caller.role === "SuperAdmin"
+        ? reqHotelId
+        : caller.hotelId;
+
+    const filteredLogs = effectiveHotelFilter
+      ? emailDispatchHistory.filter((e) => e.hotelId === effectiveHotelFilter)
+      : emailDispatchHistory;
+
+    return res.json({
+      success: true,
+      provider: getEmailProviderConfig().provider,
+      configured: getEmailProviderConfig().configured,
+      count: filteredLogs.length,
+      logs: filteredLogs,
+    });
   });
 
   // 4. Mark All Authorized Notifications as Read
@@ -7272,6 +7549,12 @@ async function startServer() {
       return res.status(401).json({ success: false, error: "Unauthorized session" });
     }
     const targetHotelId = String(req.query.hotelId || req.headers["x-target-hotel-id"] || caller.hotelId || "hotel-1").trim();
+    if (!isCallerAuthorizedForHotel(caller, targetHotelId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: Cannot access bookings for hotel "${targetHotelId}".`,
+      });
+    }
     const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "10"), 10) || 10));
     const tab = String(req.query.tab || "all").toLowerCase();
@@ -7361,6 +7644,12 @@ async function startServer() {
       return res.status(400).json({ success: false, error: `Unsupported module collection: ${colKey}` });
     }
     const targetHotelId = String(req.query.hotelId || req.headers["x-target-hotel-id"] || caller.hotelId || "hotel-1").trim();
+    if (!isCallerAuthorizedForHotel(caller, targetHotelId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: Cannot read module "${colKey}" for hotel "${targetHotelId}".`,
+      });
+    }
     try {
       const db = await getMongoDatabase();
       const doc = await db.collection("pms_app_state").findOne({ _id: "FULL_PMS_BACKUP" as any });
@@ -7413,6 +7702,12 @@ async function startServer() {
       return res.status(400).json({ success: false, error: `Unsupported module collection: ${colKey}` });
     }
     const targetHotelId = String(req.body?.hotelId || req.headers["x-target-hotel-id"] || caller.hotelId || "hotel-1").trim();
+    if (!isCallerAuthorizedForHotel(caller, targetHotelId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: Cannot modify module "${colKey}" for hotel "${targetHotelId}".`,
+      });
+    }
     const incomingItems = Array.isArray(req.body?.items)
       ? req.body.items
       : req.body?.item
@@ -7434,12 +7729,16 @@ async function startServer() {
         if (Array.isArray(req.body?.items)) {
           // Full hotel-scoped replacement for this collection
           const otherHotelItems = prevArr.filter((i: any) => i && i.hotelId && i.hotelId !== targetHotelId);
-          const ownItems = incomingItems.map((i: any) => ({ ...i, hotelId: i.hotelId || targetHotelId }));
+          const ownItems = incomingItems.map((i: any) => ({ ...i, hotelId: targetHotelId }));
           updatedHotelItems = ownItems;
           prevData[colKey] = [...otherHotelItems, ...ownItems];
         } else {
-          // Upsert single item
-          const item = { ...req.body.item, hotelId: req.body.item.hotelId || targetHotelId };
+          // Upsert single item (force targetHotelId to prevent cross-tenant spoofing)
+          const existingForeign = prevArr.find((i: any) => i && i.id === req.body.item?.id && i.hotelId && i.hotelId !== targetHotelId);
+          if (existingForeign) {
+            throw new Error("Forbidden: Item ID belongs to another property.");
+          }
+          const item = { ...req.body.item, hotelId: targetHotelId };
           const exists = prevArr.some((i: any) => i && i.id === item.id);
           prevData[colKey] = exists
             ? prevArr.map((i: any) => (i && i.id === item.id ? item : i))
@@ -7784,6 +8083,12 @@ async function startServer() {
     const targetHotelId = String(
       req.query.hotelId || req.headers["x-target-hotel-id"] || caller.hotelId || ""
     ).trim();
+    if (targetHotelId && !isCallerAuthorizedForHotel(caller, targetHotelId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: Cannot access OTA state for hotel "${targetHotelId}".`,
+      });
+    }
     const startDate = String(req.query.startDate || "").trim();
 
     try {
@@ -7907,6 +8212,13 @@ async function startServer() {
       return res.status(400).json({
         success: false,
         error: "OTA Hotel ID / Hotel Code is required.",
+      });
+    }
+
+    if (reqHotelId && !isCallerAuthorizedForHotel(caller, String(reqHotelId).trim())) {
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: Cannot modify OTA credentials for hotel "${reqHotelId}".`,
       });
     }
 
@@ -9879,6 +10191,12 @@ async function startServer() {
     const prevDoc = await db.collection("pms_app_state").findOne({ _id: "FULL_PMS_BACKUP" as any });
     const prevData = prevDoc?.data || {};
     const targetHotelId = String(req.query.hotelId || caller.hotelId || prevData.hotels?.[0]?.id || "hotel-1").trim();
+    if (!isCallerAuthorizedForHotel(caller, targetHotelId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: Cannot access Aiosell config for hotel "${targetHotelId}".`,
+      });
+    }
     const cfg = resolveHotelAiosellConfig(prevData, targetHotelId);
     return res.json({
       success: true,

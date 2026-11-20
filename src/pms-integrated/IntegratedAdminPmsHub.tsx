@@ -13,7 +13,7 @@ import { DashboardModule } from './modules/DashboardModule';
 import { FrontDeskModule } from './modules/FrontDeskModule';
 import { InvoiceModule } from './modules/InvoiceModule';
 import { RoomManagementModule } from './modules/RoomManagementModule';
-import { HousekeepingModule } from './modules/HousekeepingModule';
+import { HousekeepingModule, RoomHousekeepingPatch } from './modules/HousekeepingModule';
 import { PosModule } from './modules/PosModule';
 import { InventoryModule } from './modules/InventoryModule';
 import { OtaManagerModule } from './modules/OtaManagerModule';
@@ -21,7 +21,10 @@ import { FinanceModule } from './modules/FinanceModule';
 import { ReportsModule } from './modules/ReportsModule';
 import { StaffModule } from './modules/StaffModule';
 import { AuditLogsModule } from './modules/AuditLogsModule';
+import { PublicBookingModule } from './modules/PublicBookingModule';
 import CalendarBookingView from '../components/CalendarBookingView';
+import { openStandalonePosInNewTab } from '../utils/posConfigHelpers';
+import { triggerBookingEmail, isValidEmailAddress } from '../utils/bookingEmailService';
 import RoomManagementView from '../components/RoomManagementView';
 import {
   useRbacMatrix,
@@ -153,6 +156,7 @@ interface IntegratedAdminPmsHubProps {
   hotelPhone?: string;
   hotelEmail?: string;
   hotelSettings?: Record<string, any>;
+  onUpdateHotelSettings?: (settings: any) => void;
   currentRole?: string;
   loggedInUser?: string;
   onAddAuditLog?: (action: string, details: string) => void;
@@ -238,12 +242,27 @@ function mapAppRoomToAsset(r: Room, bookings: BookingRecord[]): RoomAsset {
       )
     : undefined;
   const activeBkg = checkedInBkg || todayReservedBkg;
+  const normalizedCleanSt: RoomAsset['cleaningStatus'] =
+    r.cleaningStatus === 'In Progress'
+      ? 'In Progress'
+      : r.cleaningStatus === 'Inspection' || r.cleaningStatus === 'Needs Inspection'
+      ? 'Inspection'
+      : r.cleaningStatus === 'Dirty' || r.status === 'Dirty'
+      ? 'Dirty'
+      : 'Clean';
+
   let status: RoomAsset['status'] = 'Available';
   if (activeBkg?.isCheckedIn) status = 'Occupied';
   else if (activeBkg) status = 'Confirmed';
-  else if (r.status === 'Dirty' || r.cleaningStatus === 'Dirty') status = 'Dirty';
-  else if (r.status === 'Maintenance' || r.status === 'Out of Order' || r.status === 'Out of Service' || r.status === 'Blocked') {
+  else if (
+    r.status === 'Maintenance' ||
+    r.status === 'Out of Order' ||
+    r.status === 'Out of Service' ||
+    r.status === 'Blocked'
+  ) {
     status = 'Out of Service';
+  } else if (normalizedCleanSt !== 'Clean') {
+    status = 'Dirty';
   }
 
   return {
@@ -255,12 +274,7 @@ function mapAppRoomToAsset(r: Room, bookings: BookingRecord[]): RoomAsset {
     rate: Number(r.rate) || 2000,
     mealsRate: (Number(r.rate) || 2000) + 500,
     status,
-    cleaningStatus:
-      r.cleaningStatus === 'Dirty' || status === 'Dirty'
-        ? 'Dirty'
-        : r.cleaningStatus === 'In Progress'
-        ? 'In Progress'
-        : 'Clean',
+    cleaningStatus: normalizedCleanSt,
     floor: r.floor || '1st Floor',
     bedType: r.bedType || 'King Bed',
     maxOccupancy: r.maxOccupancy ?? 3,
@@ -273,6 +287,12 @@ function mapAppRoomToAsset(r: Room, bookings: BookingRecord[]): RoomAsset {
     currentGuestName: activeBkg?.customerName,
     currentNights: activeBkg?.nights,
     blockedReason: r.outOfOrderReason,
+    assignedStaff: r.assignedStaff,
+    verifiedBy: r.verifiedBy,
+    verificationTime: r.verificationTime,
+    housekeepingPriority: r.housekeepingPriority,
+    housekeepingNotes: r.housekeepingNotes,
+    cleaningCompletedAt: r.cleaningCompletedAt || r.verificationTime,
   };
 }
 
@@ -280,8 +300,17 @@ function mapAssetToAppRoom(rm: RoomAsset, hotelId: string): Room {
   let status: Room['status'] = 'Available';
   if (rm.status === 'Occupied') status = 'Occupied';
   else if (rm.status === 'Confirmed') status = 'Reserved';
-  else if (rm.status === 'Dirty') status = 'Dirty';
   else if (rm.status === 'Out of Service') status = 'Out of Service';
+  else if (rm.status === 'Dirty' || (rm.cleaningStatus && rm.cleaningStatus !== 'Clean')) status = 'Dirty';
+
+  const mappedCleaning: Room['cleaningStatus'] =
+    rm.cleaningStatus === 'In Progress'
+      ? 'In Progress'
+      : rm.cleaningStatus === 'Inspection'
+      ? 'Needs Inspection'
+      : rm.cleaningStatus === 'Dirty'
+      ? 'Dirty'
+      : 'Clean';
 
   return {
     id: rm.id,
@@ -290,7 +319,13 @@ function mapAssetToAppRoom(rm: RoomAsset, hotelId: string): Room {
     category: rm.category,
     rate: rm.rate,
     status,
-    cleaningStatus: rm.cleaningStatus === 'Dirty' ? 'Dirty' : 'Clean',
+    cleaningStatus: mappedCleaning,
+    assignedStaff: rm.assignedStaff,
+    verifiedBy: rm.verifiedBy,
+    verificationTime: rm.verificationTime,
+    housekeepingPriority: rm.housekeepingPriority,
+    housekeepingNotes: rm.housekeepingNotes,
+    cleaningCompletedAt: rm.cleaningCompletedAt,
     floor: rm.floor,
     bedType: rm.bedType,
     maxOccupancy: rm.maxOccupancy,
@@ -866,7 +901,9 @@ function mapRecordToAppBooking(rec: BookingRecord, hotelId: string, existing?: B
     status:
       rec.status === 'Checked In'
         ? 'Checked In'
-        : rec.status === 'Cancelled' || rec.status === 'No-Show'
+        : rec.status === 'No-Show'
+        ? ('No-Show' as any)
+        : rec.status === 'Cancelled'
         ? 'Cancelled'
         : rec.status === 'Pending'
         ? (existing?.status === 'Advance' || existing?.status === 'In Process' || existing?.status === 'Waiting' ? existing.status : 'Pending')
@@ -979,6 +1016,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   hotelPhone,
   hotelEmail,
   hotelSettings,
+  onUpdateHotelSettings,
   currentRole = 'Admin',
   loggedInUser,
   onAddAuditLog,
@@ -1679,24 +1717,35 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     setInvoices(mappedInvoices);
 
     // Map housekeeping tasks from cleaningLogs
-    const mappedTasks: HousekeepingTask[] = appCleaningLogs.map((cl) => ({
-      id: cl.id,
-      roomId: `rm-${cl.roomNumber}`,
-      roomName: `Room ${cl.roomNumber}`,
-      roomNumber: cl.roomNumber,
-      category: mappedRooms.find((r) => r.number === cl.roomNumber)?.category || 'Standard',
-      description: cl.notes || 'Room Cleaning & Sanitization',
-      taskType: 'Cleaning',
-      assignedTo: cl.assignedStaff || 'Housekeeping',
-      timing: cl.assignedAt || (cl as any).date || '',
-      status:
-        cl.status === 'Cleaned' || cl.status === 'Inspected' || (cl.status as any) === 'Completed'
-          ? 'Completed'
-          : cl.status === 'In Progress'
-          ? 'In Progress'
-          : 'Pending',
-      checklist: cl.checklistCompleted || ['Change bedsheets', 'Sanitize bathroom', 'Restock amenities'],
-    }));
+    const mappedTasks: HousekeepingTask[] = appCleaningLogs.map((cl) => {
+      const matchedRm = mappedRooms.find((r) => r.number === cl.roomNumber);
+      return {
+        id: cl.id,
+        roomId: `rm-${cl.roomNumber}`,
+        roomName: `Room ${cl.roomNumber}`,
+        roomNumber: cl.roomNumber,
+        category: cl.category || matchedRm?.category || 'Standard',
+        floor: cl.floor || matchedRm?.floor || '1st Floor',
+        description: cl.notes || 'Room Cleaning & Sanitization',
+        notes: cl.notes,
+        priority: cl.priority || 'Normal',
+        completedAt: cl.completedAt || cl.inspectedAt || cl.cleanedAt,
+        inspectedBy: cl.inspectedBy,
+        inspectedAt: cl.inspectedAt,
+        taskType: cl.status === 'Inspection' ? 'Inspection' : 'Cleaning',
+        assignedTo: cl.assignedStaff || 'Unassigned',
+        timing: cl.assignedAt || (cl as any).date || '',
+        status:
+          cl.status === 'Cleaned' || cl.status === 'Inspected' || (cl.status as any) === 'Completed'
+            ? 'Completed'
+            : cl.status === 'Inspection'
+            ? 'Inspection'
+            : cl.status === 'In Progress'
+            ? 'In Progress'
+            : 'Pending',
+        checklist: cl.checklistCompleted || ['Change bedsheets', 'Sanitize bathroom', 'Restock amenities'],
+      };
+    });
     setTasks(mappedTasks);
 
     // Map laundry
@@ -2313,13 +2362,24 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
 
   const handleNavigate = (mod: string, subTab?: string) => {
     const normalized = mod === 'front_desk' ? 'frontDesk' : mod;
+    if (normalized === 'pos') {
+      const isAlreadyInStandalonePos =
+        typeof window !== 'undefined' &&
+        window.location.pathname.toLowerCase().startsWith('/pos');
+      if (!isAlreadyInStandalonePos) {
+        openStandalonePosInNewTab(subTab || 'terminal', selectedHotelId);
+        return;
+      }
+      setActiveTab('pos');
+      if (subTab) setPosSubTab(subTab);
+      return;
+    }
     setActiveTab(normalized);
     if (normalized === 'frontDesk' && subTab) setFrontDeskSubTab(subTab);
     if (normalized === 'finance' && subTab) setFinanceSubTab(subTab);
     if (normalized === 'rooms' && subTab) setRoomSubTab(subTab);
     if (normalized === 'housekeeping' && subTab) setHousekeepingSubTab(subTab);
     if (normalized === 'reports' && subTab) setReportsSubTab(subTab);
-    if (normalized === 'pos' && subTab) setPosSubTab(subTab);
   };
 
   // 1. Save or Update Full Booking (Step 1 / Step 2)
@@ -2357,6 +2417,15 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         `Created Booking ${newBooking.bookingNo} (${newBooking.customerName}) for Room(s) ${newBooking.roomNumbers.join(', ')} with ${newBooking.taxRate}% GST.`,
         'success'
       );
+    }
+
+    if (isValidEmailAddress(newBooking.email)) {
+      const mappedForEmail = mapRecordToAppBooking(newBooking, selectedHotelId);
+      void triggerBookingEmail(mappedForEmail, {
+        hotelId: selectedHotelId,
+        hotelName: hotelName || hotelSettings?.name || 'DirectStay Hotel',
+        eventType: isEdit ? 'booking_updated' : 'booking_confirmation',
+      });
     }
   };
 
@@ -3037,12 +3106,17 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       }
     }
 
+    const shouldAutoDirty = hotelSettings?.autoMarkDirtyOnCheckout !== false;
     const nextRooms = rooms.map((rm) =>
       safeRoomNums.includes(rm.number)
         ? {
             ...rm,
-            status: 'Dirty' as RoomAsset['status'],
-            cleaningStatus: 'Dirty' as RoomAsset['cleaningStatus'],
+            status: (shouldAutoDirty ? 'Dirty' : 'Available') as RoomAsset['status'],
+            cleaningStatus: (shouldAutoDirty ? 'Dirty' : 'Clean') as RoomAsset['cleaningStatus'],
+            housekeepingPriority: shouldAutoDirty ? ('High' as const) : rm.housekeepingPriority,
+            housekeepingNotes: shouldAutoDirty
+              ? `Post-Checkout Turnaround (${updatedBooking.customerName})`
+              : rm.housekeepingNotes,
             currentBookingId: undefined,
             currentGuestName: undefined,
           }
@@ -3050,41 +3124,49 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     );
     syncRoomsToDb(nextRooms);
 
-    const newAutoTasks: HousekeepingTask[] = safeRoomNums.map((rn) => {
-      const rmObj = rooms.find((r) => r.number === rn);
-      return {
-        id: `HK-${Date.now()}-${rn}`,
-        roomId: rmObj?.id || `rm-${rn}`,
-        roomName: rmObj?.name || `Room ${rn}`,
-        roomNumber: rn,
-        category: rmObj?.category || 'Standard',
-        description: `Post-Checkout Turnaround Cleaning & Inspection for Booking ${updatedBooking.bookingNo} (${updatedBooking.customerName})`,
-        taskType: 'Cleaning',
-        assignedTo: 'Housekeeping Staff',
-        timing: `${todayStr} (Auto-Triggered on Checkout)`,
-        status: 'Pending',
-        checklist: [
-          'Strip & replace bedsheets',
-          'Sanitize bathroom & floor',
-          'Inspect mini-bar & restock water bottles',
-        ],
-        autoCreatedFromBookingId: updatedBooking.id,
-      };
-    });
+    if (shouldAutoDirty) {
+      const newAutoTasks: HousekeepingTask[] = safeRoomNums.map((rn) => {
+        const rmObj = rooms.find((r) => r.number === rn);
+        return {
+          id: `HK-${Date.now()}-${rn}`,
+          roomId: rmObj?.id || `rm-${rn}`,
+          roomName: rmObj?.name || `Room ${rn}`,
+          roomNumber: rn,
+          category: rmObj?.category || 'Standard',
+          floor: rmObj?.floor || '1st Floor',
+          priority: 'High',
+          notes: `Post-Checkout Turnaround Cleaning & Inspection for Booking ${updatedBooking.bookingNo} (${updatedBooking.customerName})`,
+          description: `Post-Checkout Turnaround Cleaning & Inspection for Booking ${updatedBooking.bookingNo} (${updatedBooking.customerName})`,
+          taskType: 'Cleaning',
+          assignedTo: rmObj?.assignedStaff || 'Unassigned',
+          timing: `${todayStr} ${nowTimeStr}`,
+          status: 'Pending',
+          checklist: [
+            'Strip & replace bedsheets',
+            'Sanitize bathroom & floor',
+            'Inspect mini-bar & restock water bottles',
+          ],
+          autoCreatedFromBookingId: updatedBooking.id,
+        };
+      });
 
-    setTasks((prev) => [...newAutoTasks, ...prev]);
-    if (onUpdateCleaningLogs) {
-      const newLogs: HousekeepingCleaningLog[] = newAutoTasks.map((t) => ({
-        id: t.id,
-        hotelId: selectedHotelId,
-        roomNumber: t.roomNumber,
-        assignedStaff: t.assignedTo,
-        assignedAt: `${todayStr} ${nowTimeStr}`,
-        status: 'Assigned',
-        checklistCompleted: [],
-        notes: t.description,
-      }));
-      onUpdateCleaningLogs([...newLogs, ...appCleaningLogs]);
+      setTasks((prev) => [...newAutoTasks, ...prev]);
+      if (onUpdateCleaningLogs) {
+        const newLogs: HousekeepingCleaningLog[] = newAutoTasks.map((t) => ({
+          id: t.id,
+          hotelId: selectedHotelId,
+          roomNumber: t.roomNumber,
+          category: t.category,
+          floor: t.floor,
+          priority: 'High',
+          assignedStaff: t.assignedTo,
+          assignedAt: `${todayStr} ${nowTimeStr}`,
+          status: 'Pending',
+          checklistCompleted: [],
+          notes: t.description,
+        }));
+        onUpdateCleaningLogs([...newLogs, ...appCleaningLogs]);
+      }
     }
 
     setCheckoutClearanceBooking(null);
@@ -3511,15 +3593,27 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     }
   };
 
-  // 8. Complete Housekeeping Task
+  // 8. Complete Housekeeping Task & Full Room Housekeeping Sync
   const handleCompleteTask = (taskId: string) => {
     const targetTask = tasks.find((t) => t.id === taskId);
+    const nowStr = new Date().toLocaleString('en-IN');
     setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, status: 'Completed' } : t))
+      prev.map((t) => (t.id === taskId ? { ...t, status: 'Completed', completedAt: nowStr } : t))
     );
     if (onUpdateCleaningLogs) {
       onUpdateCleaningLogs(
-        appCleaningLogs.map((cl) => (cl.id === taskId ? { ...cl, status: 'Cleaned' } : cl))
+        appCleaningLogs.map((cl) =>
+          cl.id === taskId
+            ? {
+                ...cl,
+                status: 'Cleaned',
+                cleanedAt: nowStr,
+                completedAt: nowStr,
+                inspectedAt: nowStr,
+                inspectedBy: loggedInUser || 'Supervisor',
+              }
+            : cl
+        )
       );
     }
     if (targetTask) {
@@ -3529,6 +3623,10 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
               ...rm,
               status: (rm.currentBookingId ? rm.status : 'Available') as RoomAsset['status'],
               cleaningStatus: 'Clean' as RoomAsset['cleaningStatus'],
+              cleaningCompletedAt: nowStr,
+              verifiedBy: loggedInUser || 'Supervisor',
+              verificationTime: nowStr,
+              housekeepingNotes: '',
             }
           : rm
       );
@@ -3540,6 +3638,180 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         'success'
       );
     }
+  };
+
+  // 8b. Unified Room Housekeeping Update (Board / Table / By Attendant / Bulk Staff Assignment)
+  const handleUpdateRoomHousekeeping = (roomNumbers: string[], patch: RoomHousekeepingPatch) => {
+    if (!Array.isArray(roomNumbers) || roomNumbers.length === 0) return;
+    const roomSet = new Set(roomNumbers);
+    const nowStr = new Date().toLocaleString('en-IN');
+
+    const nextRooms = rooms.map((rm) => {
+      if (!roomSet.has(rm.number)) return rm;
+      const nextClean: RoomAsset['cleaningStatus'] = patch.cleaningStatus ?? rm.cleaningStatus;
+      const nextStaff =
+        patch.assignedStaff !== undefined
+          ? patch.assignedStaff === 'Unassigned'
+            ? ''
+            : patch.assignedStaff
+          : rm.assignedStaff;
+      const nextPrio = patch.priority ?? rm.housekeepingPriority ?? 'Normal';
+      const nextNotes =
+        patch.notes !== undefined
+          ? patch.notes
+          : nextClean === 'Clean'
+          ? ''
+          : rm.housekeepingNotes;
+
+      let nextStatus: RoomAsset['status'] = rm.status;
+      if (patch.markOutOfOrder === true) {
+        nextStatus = 'Out of Service';
+      } else if (patch.markOutOfOrder === false && rm.status === 'Out of Service') {
+        nextStatus = nextClean === 'Clean' ? 'Available' : 'Dirty';
+      } else if (rm.status !== 'Occupied' && rm.status !== 'Confirmed' && rm.status !== 'Out of Service') {
+        nextStatus = nextClean === 'Clean' ? 'Available' : 'Dirty';
+      }
+
+      return {
+        ...rm,
+        status: nextStatus,
+        cleaningStatus: nextClean,
+        assignedStaff: nextStaff,
+        housekeepingPriority: nextPrio,
+        housekeepingNotes: nextNotes,
+        blockedReason:
+          patch.markOutOfOrder === true
+            ? patch.outOfOrderReason || rm.blockedReason || 'Maintenance / Out of Order'
+            : patch.markOutOfOrder === false
+            ? undefined
+            : rm.blockedReason,
+        cleaningCompletedAt: nextClean === 'Clean' ? nowStr : rm.cleaningCompletedAt,
+        verifiedBy: nextClean === 'Clean' ? loggedInUser || 'Supervisor' : rm.verifiedBy,
+        verificationTime: nextClean === 'Clean' ? nowStr : rm.verificationTime,
+      };
+    });
+    syncRoomsToDb(nextRooms);
+
+    // Sync Housekeeping Task Queue & MongoDB `appCleaningLogs`
+    const nextTasksList = [...tasks];
+    const nextDbLogs = [...appCleaningLogs];
+
+    roomNumbers.forEach((rn, idx) => {
+      const rmMeta = nextRooms.find((r) => r.number === rn);
+      const targetStage = patch.cleaningStatus ?? rmMeta?.cleaningStatus ?? 'Dirty';
+      const taskStatus: HousekeepingTask['status'] =
+        targetStage === 'Clean'
+          ? 'Completed'
+          : targetStage === 'Inspection'
+          ? 'Inspection'
+          : targetStage === 'In Progress'
+          ? 'In Progress'
+          : 'Pending';
+      const dbStatus: HousekeepingCleaningLog['status'] =
+        targetStage === 'Clean'
+          ? 'Cleaned'
+          : targetStage === 'Inspection'
+          ? 'Inspection'
+          : targetStage === 'In Progress'
+          ? 'In Progress'
+          : 'Pending';
+
+      const openTaskIdx = nextTasksList.findIndex(
+        (t) => t.roomNumber === rn && t.status !== 'Completed'
+      );
+      if (openTaskIdx >= 0) {
+        const existingT = nextTasksList[openTaskIdx];
+        nextTasksList[openTaskIdx] = {
+          ...existingT,
+          assignedTo:
+            patch.assignedStaff !== undefined ? patch.assignedStaff : existingT.assignedTo,
+          priority: patch.priority ?? existingT.priority,
+          notes: patch.notes !== undefined ? patch.notes : existingT.notes,
+          description:
+            patch.notes !== undefined && patch.notes.trim()
+              ? patch.notes.trim()
+              : existingT.description,
+          status: taskStatus,
+          completedAt: taskStatus === 'Completed' ? nowStr : existingT.completedAt,
+          inspectedAt:
+            taskStatus === 'Completed' || taskStatus === 'Inspection'
+              ? nowStr
+              : existingT.inspectedAt,
+          inspectedBy:
+            taskStatus === 'Completed' ? loggedInUser || 'Supervisor' : existingT.inspectedBy,
+          checklist: patch.checklist || existingT.checklist,
+        };
+      } else if (taskStatus !== 'Completed') {
+        const newId = `HK-${Date.now()}-${idx}-${rn}`;
+        nextTasksList.unshift({
+          id: newId,
+          roomId: rmMeta?.id || `rm-${rn}`,
+          roomName: rmMeta?.name || `Room ${rn}`,
+          roomNumber: rn,
+          category: rmMeta?.category || 'Standard',
+          floor: rmMeta?.floor || '1st Floor',
+          description: patch.notes?.trim() || `Housekeeping (${targetStage})`,
+          notes: patch.notes,
+          priority: patch.priority || 'Normal',
+          taskType: targetStage === 'Inspection' ? 'Inspection' : 'Cleaning',
+          assignedTo: patch.assignedStaff || rmMeta?.assignedStaff || 'Unassigned',
+          timing: nowStr,
+          status: taskStatus,
+          checklist: patch.checklist || ['Strip & replace bedsheets', 'Sanitize bathroom', 'Restock amenities'],
+        });
+        nextDbLogs.unshift({
+          id: newId,
+          hotelId: selectedHotelId,
+          roomNumber: rn,
+          category: rmMeta?.category,
+          floor: rmMeta?.floor,
+          priority: patch.priority || 'Normal',
+          assignedStaff: patch.assignedStaff || rmMeta?.assignedStaff || 'Unassigned',
+          assignedAt: nowStr,
+          status: dbStatus,
+          checklistCompleted: patch.checklist || [],
+          notes: patch.notes?.trim() || `Housekeeping (${targetStage})`,
+        });
+      }
+
+      const openDbIdx = nextDbLogs.findIndex(
+        (cl) => cl.roomNumber === rn && cl.status !== 'Cleaned' && cl.status !== 'Inspected'
+      );
+      if (openDbIdx >= 0) {
+        const existingCl = nextDbLogs[openDbIdx];
+        nextDbLogs[openDbIdx] = {
+          ...existingCl,
+          assignedStaff:
+            patch.assignedStaff !== undefined ? patch.assignedStaff : existingCl.assignedStaff,
+          priority: patch.priority ?? existingCl.priority,
+          notes: patch.notes !== undefined && patch.notes.trim() ? patch.notes : existingCl.notes,
+          status: dbStatus,
+          cleanedAt: dbStatus === 'Cleaned' ? nowStr : existingCl.cleanedAt,
+          completedAt: dbStatus === 'Cleaned' ? nowStr : existingCl.completedAt,
+          inspectedAt:
+            dbStatus === 'Cleaned' || dbStatus === 'Inspection' ? nowStr : existingCl.inspectedAt,
+          inspectedBy:
+            dbStatus === 'Cleaned' ? loggedInUser || 'Supervisor' : existingCl.inspectedBy,
+          checklistCompleted: patch.checklist || existingCl.checklistCompleted,
+        };
+      }
+    });
+
+    setTasks(nextTasksList);
+    if (onUpdateCleaningLogs) {
+      onUpdateCleaningLogs(nextDbLogs);
+    }
+
+    logAudit(
+      'Housekeeping',
+      'Room Housekeeping Updated',
+      `Updated Room(s) ${roomNumbers.join(', ')} -> Status: ${
+        patch.markOutOfOrder ? 'Out of Order' : patch.cleaningStatus || 'Updated'
+      }${patch.assignedStaff ? `, Staff: ${patch.assignedStaff}` : ''}${
+        patch.priority ? `, Priority: ${patch.priority}` : ''
+      }.`,
+      'info'
+    );
   };
 
   // 9b. Apply payments to existing open POS checks (consolidated table bill). Updates both the live POS ledger and the persisted orders.
@@ -3597,6 +3869,95 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         })
       );
     }
+  };
+
+  const reconcileBookingIdsWithPosOrders = (
+    bookingIdsToSync: Array<string | undefined>,
+    nextAppPosOrders: PosOrder[]
+  ) => {
+    const validIds = new Set(bookingIdsToSync.filter(Boolean) as string[]);
+    if (validIds.size === 0) return;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const roomStayKinds = new Set<string>([
+      'room',
+      'extra_bed',
+      'extra_person',
+      'early_checkin',
+      'late_checkout',
+    ]);
+
+    const nextBookings = bookings.map((b) => {
+      if (!validIds.has(b.id)) return b;
+      const rawAppBkg = appBookings.find((ab) => ab.id === b.id);
+      const linkedCheckin = appCheckins.find(
+        (c) => c.id === b.id || (c as any).bookingId === b.id
+      );
+      const { bill } = buildStayBill({
+        booking: rawAppBkg || b,
+        checkin: linkedCheckin || null,
+        posOrders: nextAppPosOrders,
+        laundryOrders: appLaundryOrders,
+        waterBottles: appWaterBottles,
+        rooms: appRooms,
+        settings: billSettings,
+        gstEnabledOverride: b.gstInvoice,
+      });
+
+      const deDupedServices: OtherServiceItem[] = bill.chargeLines
+        .filter((cl) => !roomStayKinds.has(cl.kind || ''))
+        .map((cl, idx) => ({
+          id: cl.sourceId || `srv-${b.id}-${idx}`,
+          bookingId: b.id,
+          orderNumber: cl.sourceId || `ORD-${idx + 1}`,
+          roomNumber: cl.roomNumber || b.roomNumbers[0] || '',
+          roomName: `Room ${cl.roomNumber || b.roomNumbers[0] || ''}`,
+          serviceType:
+            cl.kind === 'food'
+              ? 'ROOM SERVICE'
+              : cl.kind === 'laundry'
+              ? 'LAUNDRY'
+              : cl.kind === 'water'
+              ? 'WATER BOTTLE'
+              : cl.kind === 'fine'
+              ? 'DAMAGE / FINE'
+              : 'SPA / OTHER',
+          description: cl.description,
+          itemsSummary: cl.description,
+          quantity: 1,
+          amount: cl.charges,
+          taxAmount: 0,
+          dateTime: cl.dateLabel || todayIso,
+          isPaid: false,
+        }));
+
+      const roomSubtotal = r2(
+        bill.legacy.roomCharges +
+          bill.legacy.extraBedCharges +
+          bill.legacy.extraPersonCharges +
+          bill.legacy.earlyCheckInCharges +
+          bill.legacy.lateCheckOutCharges
+      );
+      const otherServicesTotal = r2(bill.subtotal - roomSubtotal);
+
+      const updated: BookingRecord = {
+        ...b,
+        roomSubtotal,
+        otherServices: deDupedServices,
+        otherServicesTotal,
+        taxRate: bill.headlineGstRate,
+        taxAmount: bill.totalTax,
+        totalPayable: bill.grandTotal,
+        amountPaid: bill.receipts,
+        dueAmount: bill.balance,
+        paymentStatus: bill.paymentStatus === 'Paid' ? 'Fully Paid' : bill.paymentStatus,
+      };
+      if (selectedBookingForDrawer?.id === b.id) {
+        setSelectedBookingForDrawer(updated);
+      }
+      return updated;
+    });
+
+    syncBookingsToDb(nextBookings);
   };
 
   // 9. Create POS Order (Uses billSettings.foodGstRate; excludes counter-paid Dine-In/Takeaway from room folio; recalculates Room Service via buildStayBill so F&B GST is NEVER taxed twice!)
@@ -4093,8 +4454,15 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           hotelName={effectiveHotelProfile.name}
           appRooms={appRooms}
           appBookings={appBookings}
+          appCheckins={appCheckins}
+          appPosOrders={appPosOrders}
+          appInvoices={appInvoices}
+          roomBlocks={roomBlocks}
+          hotelSettings={hotelSettings}
           onUpdateBookings={onUpdateBookings}
           onUpdateRooms={onUpdateRooms}
+          onUpdateCheckins={onUpdateCheckins}
+          onChangeRoom={handleChangeRoom}
           onOpenQuickAddBooking={(rm, mode) => {
             setPreselectedRoom(rm || null);
             if (mode) {
@@ -4161,16 +4529,13 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
 
       {(activeTab === 'frontDesk' ||
         activeTab === 'bookings' ||
-        activeTab === 'checkin' ||
-        activeTab === 'calendar') && (
+        activeTab === 'checkin') && (
         <FrontDeskModule
           activeSubTab={
             activeTab === 'bookings'
               ? 'reservations'
               : activeTab === 'checkin'
               ? 'checkin'
-              : activeTab === 'calendar'
-              ? 'calendar'
               : frontDeskSubTab
           }
           onSubTabChange={(sub) => {
@@ -4284,10 +4649,21 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         <CalendarBookingView
           rooms={appRooms}
           bookings={appBookings}
+          checkins={appCheckins}
+          roomBlocks={roomBlocks}
+          hubBookings={bookings}
+          currentRole={currentRole}
+          loggedInUser={loggedInUser}
+          autoMarkDirtyOnCheckout={hotelSettings?.autoMarkDirtyOnCheckout !== false}
           setActiveTab={setActiveTab}
           onUpdateBookings={(b) => onUpdateBookings && onUpdateBookings(b)}
           onUpdateRooms={(r) => onUpdateRooms && onUpdateRooms(r)}
+          onUpdateCheckins={(c) => onUpdateCheckins && onUpdateCheckins(c)}
           onAddAuditLog={onAddAuditLog}
+          onSelectHubBooking={(b) => setSelectedBookingForDrawer(b)}
+          onOpenCheckInHub={(b) => handleRedirectToFullCheckInPage(b)}
+          onOpenCheckOutHub={(b) => setCheckoutClearanceBooking(b)}
+          onCancelOrNoShowHub={handleCancelOrNoShowBooking}
         />
       )}
 
@@ -4351,6 +4727,19 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           tasks={tasks}
           laundryOrders={laundryOrders}
           lostFound={lostFound}
+          autoMarkDirtyOnCheckout={hotelSettings?.autoMarkDirtyOnCheckout !== false}
+          onToggleAutoMarkDirty={(enabled) => {
+            if (onUpdateHotelSettings) {
+              onUpdateHotelSettings({ ...(hotelSettings || {}), autoMarkDirtyOnCheckout: enabled });
+            }
+            logAudit(
+              'Housekeeping Settings',
+              'Auto-Dirty on Checkout Updated',
+              `Set automatic post-checkout room Dirty status to ${enabled ? 'ENABLED' : 'DISABLED'}.`,
+              'info'
+            );
+          }}
+          onUpdateRoomHousekeeping={handleUpdateRoomHousekeeping}
           onCompleteTask={handleCompleteTask}
           onAddTask={(t) => {
             const newId = `HK-${Date.now()}`;
@@ -4461,7 +4850,8 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           loggedInUser={loggedInUser}
           foodGstRate={billSettings.foodGstRate}
           inventoryItems={inventoryItems}
-          hotelSettings={effectiveHotelProfile}
+          hotelSettings={{ ...effectiveHotelProfile, ...(hotelSettings || {}) }}
+          onUpdateHotelSettings={onUpdateHotelSettings}
           onRecordStockMovement={recordWarehouseStockMovement}
           posAdvanceBookings={appPosAdvanceBookings}
           onUpdatePosAdvanceBookings={onUpdatePosAdvanceBookings}
@@ -4473,115 +4863,127 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
             setPosOrders((prev) =>
               prev.map((o) => (o.id === ordId ? { ...o, kotStatus: status } : o))
             );
+            const nextAppOrders = appPosOrders.map((po) =>
+              po.id === ordId
+                ? ({
+                    ...po,
+                    status: status === 'Cancelled' ? 'Cancelled' : po.status,
+                    kitchenStatus: status as any,
+                    kotStatus: status,
+                  } as any)
+                : po
+            );
             if (onUpdatePosOrders) {
-              onUpdatePosOrders(
-                appPosOrders.map((po) =>
-                  po.id === ordId
-                    ? ({
-                        ...po,
-                        status: status === 'Cancelled' ? 'Cancelled' : po.status,
-                        kitchenStatus: status as any,
-                        kotStatus: status,
-                      } as any)
-                    : po
-                )
-              );
+              onUpdatePosOrders(nextAppOrders);
+            }
+            const targetOrd = appPosOrders.find((po) => po.id === ordId);
+            if (targetOrd?.bookingId) {
+              reconcileBookingIdsWithPosOrders([targetOrd.bookingId], nextAppOrders);
             }
           }}
           onUpdatePosOrder={(updatedOrd) => {
+            const prevOrd = posOrders.find((o) => o.id === updatedOrd.id);
             setPosOrders((prev) => prev.map((o) => (o.id === updatedOrd.id ? updatedOrd : o)));
+            const nextAppOrders = appPosOrders.map((po) =>
+              po.id === updatedOrd.id
+                ? ({
+                    ...po,
+                    orderType:
+                      updatedOrd.orderType === 'Room Service'
+                        ? 'Room Service'
+                        : updatedOrd.orderType === 'Takeaway'
+                        ? 'Takeaway'
+                        : 'Dine In',
+                    roomNumber: updatedOrd.roomNumber,
+                    roomName: updatedOrd.roomName,
+                    bookingId: updatedOrd.bookingId,
+                    tableNo: updatedOrd.tableNumber,
+                    tableNumber: updatedOrd.tableNumber,
+                    pax: updatedOrd.pax,
+                    waiterName: updatedOrd.waiterName,
+                    guestName: updatedOrd.customerName,
+                    customerName: updatedOrd.customerName,
+                    customerPhone: updatedOrd.customerPhone,
+                    subtotal: updatedOrd.subtotal,
+                    discount: updatedOrd.discount,
+                    packagingCharge: updatedOrd.packagingCharge,
+                    taxAmount: updatedOrd.taxAmount,
+                    gstAmount: updatedOrd.taxAmount,
+                    grandTotal: updatedOrd.grandTotal,
+                    totalAmount: updatedOrd.grandTotal,
+                    notes: updatedOrd.instructions,
+                    instructions: updatedOrd.instructions,
+                    pickupTime: updatedOrd.pickupTime,
+                    isWithoutGst: updatedOrd.isWithoutGst,
+                    gstRate: updatedOrd.gstRate,
+                    customerGstin: updatedOrd.customerGstin,
+                    companyName: updatedOrd.companyName,
+                    discountMeta: updatedOrd.discountMeta,
+                    settlement: updatedOrd.settlement,
+                    priceOverrides: updatedOrd.priceOverrides,
+                    bomDeducted: updatedOrd.bomDeducted,
+                    bomReversed: updatedOrd.bomReversed,
+                    bomDeductionSnapshot: updatedOrd.bomDeductionSnapshot,
+                    postToRoomBill:
+                      updatedOrd.paymentMethod === 'Room Charge' ||
+                      updatedOrd.paymentStatus === 'Unpaid (Room Folio)',
+                    status: updatedOrd.isHeld
+                      ? 'Held'
+                      : updatedOrd.kotStatus === 'Cancelled'
+                      ? 'Cancelled'
+                      : updatedOrd.paymentStatus === 'Paid'
+                      ? 'Settled'
+                      : 'KOT Sent',
+                    kitchenStatus: updatedOrd.kotStatus as any,
+                    kotStatus: updatedOrd.kotStatus,
+                    paymentMethod: updatedOrd.paymentMethod as any,
+                    paymentStatus: updatedOrd.paymentStatus === 'Paid' ? 'Paid' : 'Unpaid',
+                    paymentStatusDetail: updatedOrd.paymentStatus,
+                    payments: updatedOrd.payments,
+                    amountPaid: updatedOrd.amountPaid,
+                    balanceDue: updatedOrd.balanceDue,
+                    paymentSummary: updatedOrd.paymentSummary,
+                    isOpenCheck: updatedOrd.isOpenCheck,
+                    isHeld: updatedOrd.isHeld,
+                    holdNote: updatedOrd.holdNote,
+                    reprintCount: updatedOrd.reprintCount,
+                    pickupStatus: updatedOrd.pickupStatus,
+                    voidedAt: updatedOrd.voidedAt,
+                    voidReason: updatedOrd.voidReason,
+                    voidedBy: updatedOrd.voidedBy,
+                    refundAmount: updatedOrd.refundAmount,
+                    items: updatedOrd.items.map((it) => ({
+                      itemId: it.itemId,
+                      itemName: it.name,
+                      itemCode: it.itemId.slice(-5).toUpperCase(),
+                      quantity: it.qty,
+                      price: it.price,
+                      taxRate: updatedOrd.isWithoutGst
+                        ? 0
+                        : (updatedOrd.gstRate ?? billSettings.foodGstRate),
+                      total: it.total,
+                      menuPrice: it.menuPrice,
+                      overrideReason: it.overrideReason,
+                      selectedVariant: it.variant,
+                      variant: it.variant,
+                      selectedAddons: it.addons,
+                      addons: it.addons,
+                      addonPriceTotal: it.addonPriceTotal,
+                      kitchenStation: it.kitchenStation,
+                      itemNotes: it.itemNotes,
+                      itemDiscount: it.itemDiscount,
+                      itemStatus: it.itemStatus,
+                    })),
+                  } as any)
+                : po
+            );
             if (onUpdatePosOrders) {
-              onUpdatePosOrders(
-                appPosOrders.map((po) =>
-                  po.id === updatedOrd.id
-                    ? ({
-                        ...po,
-                        orderType:
-                          updatedOrd.orderType === 'Room Service'
-                            ? 'Room Service'
-                            : updatedOrd.orderType === 'Takeaway'
-                            ? 'Takeaway'
-                            : 'Dine In',
-                        roomNumber: updatedOrd.roomNumber,
-                        roomName: updatedOrd.roomName,
-                        bookingId: updatedOrd.bookingId,
-                        tableNo: updatedOrd.tableNumber,
-                        tableNumber: updatedOrd.tableNumber,
-                        pax: updatedOrd.pax,
-                        waiterName: updatedOrd.waiterName,
-                        guestName: updatedOrd.customerName,
-                        customerName: updatedOrd.customerName,
-                        customerPhone: updatedOrd.customerPhone,
-                        subtotal: updatedOrd.subtotal,
-                        discount: updatedOrd.discount,
-                        packagingCharge: updatedOrd.packagingCharge,
-                        taxAmount: updatedOrd.taxAmount,
-                        gstAmount: updatedOrd.taxAmount,
-                        grandTotal: updatedOrd.grandTotal,
-                        totalAmount: updatedOrd.grandTotal,
-                        notes: updatedOrd.instructions,
-                        instructions: updatedOrd.instructions,
-                        pickupTime: updatedOrd.pickupTime,
-                        isWithoutGst: updatedOrd.isWithoutGst,
-                        gstRate: updatedOrd.gstRate,
-                        customerGstin: updatedOrd.customerGstin,
-                        companyName: updatedOrd.companyName,
-                        discountMeta: updatedOrd.discountMeta,
-                        settlement: updatedOrd.settlement,
-                        priceOverrides: updatedOrd.priceOverrides,
-                        bomDeducted: updatedOrd.bomDeducted,
-                        bomReversed: updatedOrd.bomReversed,
-                        bomDeductionSnapshot: updatedOrd.bomDeductionSnapshot,
-                        status: updatedOrd.isHeld
-                          ? 'Held'
-                          : updatedOrd.kotStatus === 'Cancelled'
-                          ? 'Cancelled'
-                          : updatedOrd.paymentStatus === 'Paid'
-                          ? 'Settled'
-                          : 'KOT Sent',
-                        kitchenStatus: updatedOrd.kotStatus as any,
-                        kotStatus: updatedOrd.kotStatus,
-                        paymentMethod: updatedOrd.paymentMethod as any,
-                        paymentStatus: updatedOrd.paymentStatus === 'Paid' ? 'Paid' : 'Unpaid',
-                        paymentStatusDetail: updatedOrd.paymentStatus,
-                        payments: updatedOrd.payments,
-                        amountPaid: updatedOrd.amountPaid,
-                        balanceDue: updatedOrd.balanceDue,
-                        paymentSummary: updatedOrd.paymentSummary,
-                        isOpenCheck: updatedOrd.isOpenCheck,
-                        isHeld: updatedOrd.isHeld,
-                        holdNote: updatedOrd.holdNote,
-                        reprintCount: updatedOrd.reprintCount,
-                        pickupStatus: updatedOrd.pickupStatus,
-                        voidedAt: updatedOrd.voidedAt,
-                        voidReason: updatedOrd.voidReason,
-                        voidedBy: updatedOrd.voidedBy,
-                        refundAmount: updatedOrd.refundAmount,
-                        items: updatedOrd.items.map((it) => ({
-                          itemId: it.itemId,
-                          itemName: it.name,
-                          itemCode: it.itemId.slice(-5).toUpperCase(),
-                          quantity: it.qty,
-                          price: it.price,
-                          taxRate: updatedOrd.isWithoutGst ? 0 : (updatedOrd.gstRate ?? billSettings.foodGstRate),
-                          total: it.total,
-                          menuPrice: it.menuPrice,
-                          overrideReason: it.overrideReason,
-                          selectedVariant: it.variant,
-                          variant: it.variant,
-                          selectedAddons: it.addons,
-                          addons: it.addons,
-                          addonPriceTotal: it.addonPriceTotal,
-                          kitchenStation: it.kitchenStation,
-                          itemNotes: it.itemNotes,
-                          itemDiscount: it.itemDiscount,
-                          itemStatus: it.itemStatus,
-                        })),
-                      } as any)
-                    : po
-                )
-              );
+              onUpdatePosOrders(nextAppOrders);
             }
+            reconcileBookingIdsWithPosOrders(
+              [prevOrd?.bookingId, updatedOrd.bookingId],
+              nextAppOrders
+            );
           }}
           onAddMenuItem={(item) => {
             setPosMenu((prev) => [...prev, item]);
@@ -5343,6 +5745,21 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
 
       {activeTab === 'auditLogs' && <AuditLogsModule logs={auditLogs} />}
 
+      {activeTab === 'bookingEngine' && (
+        <PublicBookingModule
+          assetGroups={assetGroups}
+          rooms={rooms}
+          hotelId={selectedHotelId}
+          hotelName={effectiveHotelProfile.name}
+          hotelAddress={effectiveHotelProfile.address}
+          onBookFromWebsite={(rm) => {
+            setPreselectedRoom(rm || null);
+            setQuickAddMode('reservations');
+            setQuickAddOpen(true);
+          }}
+        />
+      )}
+
       {/* SHARED GLOBAL MODALS & RIGHT-SIDE DRAWERS */}
       <QuickAddBookingModal
         isOpen={quickAddOpen}
@@ -5426,9 +5843,15 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
 
       <QuickCheckInModal
         booking={checkInBooking}
+        rooms={rooms}
+        currentRole={currentRole}
+        loggedInUser={loggedInUser}
         hasExistingInvoice={Boolean(findPrimaryInvoiceForBooking(checkInBooking))}
         billSettings={billSettings}
         onClose={() => setCheckInBooking(null)}
+        onLogOverride={(details) =>
+          logAudit('Front Desk', 'Authorised Room Check-In Override', details, 'warning')
+        }
         onConfirmCheckIn={handleConfirmCheckIn}
       />
 

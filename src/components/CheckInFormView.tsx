@@ -4,7 +4,7 @@ import {
   Contact, Printer, Check, Receipt, RefreshCw, FileCheck, Users, 
   Sparkles, DollarSign, Plus, Trash2, Landmark, Send, Download, 
   ClipboardList, Settings, Sliders, Hotel, Calendar, UserCheck, Inbox, ShieldCheck,
-  Globe, Building, FileSpreadsheet, ShieldAlert, FileText, Layers, Eye, Search, Filter, Clock, PenTool, X, ChevronDown, ChevronUp
+  Globe, Building, FileSpreadsheet, ShieldAlert, FileText, Layers, Eye, Search, Filter, Clock, PenTool, X, ChevronDown, ChevronUp, BedDouble
 } from 'lucide-react';
 import { showToast } from '../utils/toast';
 import QuickDateInput from './QuickDateInput';
@@ -15,6 +15,7 @@ import {
   calculateBill,
   normalizeBillSettings,
 } from '../utils/billCalculator';
+import { calculateCheckInExtraCharges } from '../utils/checkInExtraCharges';
 import { allocateGrcNumber, toGrcPrintData } from '../utils/stayBilling';
 import { collectStayCharges } from '../utils/folioCollector';
 import { defaultGrcTerms, renderGrcHtml } from '../utils/printTemplates';
@@ -195,6 +196,30 @@ export default function CheckInFormView({
     setComplimentaryWaterBottles(prev => (prev > avail ? avail : prev));
   }, [waterBottleInventoryProduct?.currentStock]);
   const [resSearchQuery, setResSearchQuery] = useState('');
+  const [hkOverrideApproved, setHkOverrideApproved] = useState(false);
+  const [hkOverrideReason, setHkOverrideReason] = useState('');
+  const canAuthoriseHkOverride = ['SuperAdmin', 'Owner', 'Admin', 'Manager'].includes(
+    String(currentRole || '')
+  );
+  const isRoomDirtyForCheckIn = (r: Room): boolean => {
+    const cs = String(r.cleaningStatus || '').toLowerCase();
+    return (
+      r.status === 'Dirty' ||
+      cs === 'dirty' ||
+      cs === 'in progress' ||
+      cs === 'needs inspection' ||
+      cs === 'inspection'
+    );
+  };
+  const isRoomOutOfOrderForCheckIn = (r: Room): boolean => {
+    const st = String(r.status || '').toLowerCase();
+    return (
+      st === 'maintenance' ||
+      st === 'out of order' ||
+      st === 'out of service' ||
+      st === 'blocked'
+    );
+  };
   const [arrivalQueueFilter, setArrivalQueueFilter] = useState<'today' | 'all' | 'date'>('today');
   const [filterArrivalDate, setFilterArrivalDate] = useState<string>(getTodayDateStr());
   const [localMode, setLocalMode] = useState<'walkin' | 'checkin'>(mode);
@@ -457,9 +482,27 @@ export default function CheckInFormView({
           setCheckOutDate(getFutureDateStr(1, String(parsed.checkInDate)));
         }
       }
+      const savedCat = sessionStorage.getItem('pms_booking_category');
+      if (savedCat) {
+        sessionStorage.removeItem('pms_booking_category');
+        if (savedCat === 'event') {
+          setPurposeOfVisit('Event / Banquet Booking');
+        }
+      }
     } catch {
       // ignore storage errors
     }
+
+    const handleSidebarCheckInNav = (evt: Event) => {
+      const cat = (evt as CustomEvent)?.detail?.bookingCategory;
+      if (cat === 'event') {
+        setPurposeOfVisit('Event / Banquet Booking');
+      } else if (cat === 'room') {
+        setPurposeOfVisit('Leisure');
+      }
+    };
+    window.addEventListener('directstay:checkin-nav', handleSidebarCheckInNav);
+    return () => window.removeEventListener('directstay:checkin-nav', handleSidebarCheckInNav);
   }, []);
 
   // Sync pricing upon room selection (only when selectedRoomNumber or booking identity changes — never wipe manual edits on background polls)
@@ -486,16 +529,36 @@ export default function CheckInFormView({
     setStandardRate(selectedRoom.rate);
     if (editingCheckIn && editingCheckIn.roomNumber === selectedRoomNumber && editingCheckIn.roomRate) {
       setRoomRate(editingCheckIn.roomRate);
-    } else if (selectedBooking && selectedBooking.roomNumber === selectedRoomNumber && selectedBooking.bookingAmount) {
-      const bNights = selectedBooking.nights || 1;
-      setRoomRate(Math.round(selectedBooking.bookingAmount / Math.max(1, bNights)));
+    } else if (selectedBooking && selectedBooking.roomNumber === selectedRoomNumber && (selectedBooking.roomSubtotal || selectedBooking.bookingAmount)) {
+      const bNights = Math.max(1, Number(selectedBooking.nights) || 1);
+      if (Number(selectedBooking.roomSubtotal) > 0) {
+        setRoomRate(Math.round(Number(selectedBooking.roomSubtotal) / bNights));
+      } else if (selectedBooking.bookedRooms?.[0]?.rate) {
+        setRoomRate(Number(selectedBooking.bookedRooms[0].rate));
+      } else {
+        const embeddedBed =
+          selectedBooking.hasExtraBed && (!selectedBooking.bookedRooms || selectedBooking.bookedRooms.length === 0)
+            ? (Number(selectedBooking.extraBedCount) || 1) * (Number(selectedBooking.extraBedRate) || 500) * bNights
+            : 0;
+        const embeddedPax = Number(selectedBooking.extraPersonChargeApplied || 0);
+        const embeddedEarly = Number(selectedBooking.earlyCheckInCharge || 0);
+        const pureRoomTotal = Math.max(
+          0,
+          Number(selectedBooking.bookingAmount || 0) - embeddedBed - embeddedPax - embeddedEarly
+        );
+        setRoomRate(pureRoomTotal > 0 ? Math.round(pureRoomTotal / bNights) : selectedRoom.rate);
+      }
     } else {
       setRoomRate(selectedRoom.rate);
     }
     const configuredExtra =
-      selectedRoom.extraPersonCharge !== undefined && selectedRoom.extraPersonCharge !== null
+      selectedRoom.extraPersonCharge !== undefined &&
+      selectedRoom.extraPersonCharge !== null &&
+      Number(selectedRoom.extraPersonCharge) > 0
         ? Math.max(0, Number(selectedRoom.extraPersonCharge) || 0)
-        : 0;
+        : Number((hotelSettings as any)?.defaultExtraPersonCharge) > 0
+        ? Number((hotelSettings as any).defaultExtraPersonCharge)
+        : 500;
     setExtraPersonCharge(configuredExtra);
     if (!selectedBooking?.extraBedRate && !editingCheckIn?.extraBedRate) {
       setExtraBedRate(configuredExtra > 0 ? configuredExtra : 500);
@@ -665,8 +728,10 @@ export default function CheckInFormView({
     }
   };
 
-  // 7. Extra Guest Charges Calculation (Strictly Opt-In so agreed Room Tariff is NEVER silently inflated!)
+  // 7. Extra Person & Extra Bed/Mattress State (Both strictly OFF by default — independent checkboxes!)
   const [applyExtraPersonCharge, setApplyExtraPersonCharge] = useState<boolean>(false);
+  const [extraPersonQty, setExtraPersonQty] = useState<number>(1);
+  const [extraPersonNightsOverride, setExtraPersonNightsOverride] = useState<number | ''>('');
   const [manualExtraPaxCount, setManualExtraPaxCount] = useState<number | ''>('');
   const activeSelectedRoomObj = rooms.find(r => r.number === selectedRoomNumber);
   const selectedRoomMaxOccupancy = activeSelectedRoomObj?.maxOccupancy ?? Math.max(baseOccupancy, 2);
@@ -676,11 +741,10 @@ export default function CheckInFormView({
     manualExtraPaxCount !== ''
       ? Math.max(0, Number(manualExtraPaxCount) || 0)
       : secondaryGuests.length;
-  const resolvedSingleExtraPaxCount = extraGuestsCount;
-  const effectiveExtraPaxRate = extraPersonRateOverride !== '' ? Math.max(0, Number(extraPersonRateOverride) || 0) : extraPersonCharge;
-  const extraPersonChargesTotal = applyExtraPersonCharge
-    ? resolvedSingleExtraPaxCount * effectiveExtraPaxRate * stayNights
-    : 0;
+  const effectiveExtraPaxRate =
+    extraPersonRateOverride !== '' ? Math.max(0, Number(extraPersonRateOverride) || 0) : extraPersonCharge;
+  const effectiveExtraPaxNights =
+    extraPersonNightsOverride !== '' ? Math.max(1, Math.floor(Number(extraPersonNightsOverride) || 1)) : stayNights;
 
   // --- SUB-NAVIGATION TABS ---
   const [activeSubTab, setActiveSubTab] = useState<'form' | 'folios' | 'cform'>('form');
@@ -688,10 +752,31 @@ export default function CheckInFormView({
   // --- CHECK-IN MODE (SINGLE vs GROUP) ---
   const [checkInMode, setCheckInMode] = useState<'single' | 'group'>('single');
 
-  // --- EXTRA BED STATE (SINGLE ROOM) ---
+  // --- EXTRA BED / MATTRESS STATE (OFF BY DEFAULT) ---
   const [hasExtraBed, setHasExtraBed] = useState<boolean>(false);
   const [extraBedCount, setExtraBedCount] = useState<number>(1);
   const [extraBedRate, setExtraBedRate] = useState<number>(500);
+  const [extraBedNightsOverride, setExtraBedNightsOverride] = useState<number | ''>('');
+  const effectiveExtraBedNights =
+    extraBedNightsOverride !== '' ? Math.max(1, Math.floor(Number(extraBedNightsOverride) || 1)) : stayNights;
+
+  const singleExtraCalc = calculateCheckInExtraCharges({
+    extraPerson: {
+      enabled: applyExtraPersonCharge,
+      quantity: extraPersonQty,
+      ratePerNight: effectiveExtraPaxRate,
+      applicableNights: effectiveExtraPaxNights,
+    },
+    extraBed: {
+      enabled: hasExtraBed && activeSelectedRoomObj?.allowExtraBed !== false,
+      quantity: extraBedCount,
+      ratePerNight: extraBedRate,
+      applicableNights: effectiveExtraBedNights,
+    },
+    roomNumber: selectedRoomNumber || '101',
+  });
+  const resolvedSingleExtraPaxCount = singleExtraCalc.extraPersonQty;
+  const extraPersonChargesTotal = singleExtraCalc.extraPersonTotal;
 
   // --- C-FORM STATE (FOREIGN GUEST REGISTRATION) ---
   const [isCFormRequired, setIsCFormRequired] = useState<boolean>(false);
@@ -801,18 +886,17 @@ export default function CheckInFormView({
         (selectedBooking.roomNumber === r.number ||
           (selectedBooking.bookedRooms || []).some(br => br.roomNumber === r.number))
     );
-    if (isCurrentEditedRoom || isSelectedReservationRoom) return true;
-
-    const isMaint =
-      r.status === 'Maintenance' ||
-      (r.status as string) === 'Out of Order' ||
-      (r.status as string) === 'Out of Service' ||
-      (r.status as string) === 'Blocked';
-    if (isMaint) return false;
+    if (isCurrentEditedRoom) return true;
 
     const todayStr = getTodayDateStr();
     const effStart = rangeStart || todayStr;
     const effEnd = rangeEnd && rangeEnd > effStart ? rangeEnd : getFutureDateStr(1, effStart);
+
+    const isMaint = isRoomOutOfOrderForCheckIn(r);
+    const isDirtyNow = effStart <= todayStr && isRoomDirtyForCheckIn(r);
+    if ((isMaint || isDirtyNow) && !canAuthoriseHkOverride) return false;
+
+    if (isSelectedReservationRoom) return true;
 
     // Validate active in-house occupant overlap against the FULL selected date range [effStart, effEnd)
     const hasOverlappingOccupant = checkins.some(c => {
@@ -927,13 +1011,16 @@ export default function CheckInFormView({
   const [paymentNotes, setPaymentNotes] = useState('');
 
   const roomChargesTotal = roomRate * stayNights;
-  const extraBedTotal = hasExtraBed ? (Number(extraBedCount) || 0) * (Number(extraBedRate) || 0) * stayNights : 0;
+  const extraBedTotal = singleExtraCalc.extraBedTotal;
 
   // Group mode totals
   const groupRoomChargesPerNight = groupRooms.reduce((sum, r) => sum + Number(r.rate || 0), 0);
-  const groupExtraBedPerNight = groupRooms.reduce((sum, r) => sum + (r.hasExtraBed ? (Number(r.extraBedCount) || 0) * (Number(r.extraBedRate) || 0) : 0), 0);
+  const groupExtraBedPerNight = groupRooms.reduce(
+    (sum, r) => sum + (r.hasExtraBed ? Math.max(1, Number(r.extraBedCount) || 1) * Math.max(0, Number(r.extraBedRate) || 0) : 0),
+    0
+  );
   const groupRoomChargesTotal = groupRoomChargesPerNight * stayNights;
-  const groupExtraBedChargesTotal = groupExtraBedPerNight * stayNights;
+  const groupExtraBedChargesTotal = groupExtraBedPerNight * effectiveExtraBedNights;
   const groupTotalGuests = groupRooms.reduce((sum, r) => sum + Number(r.adults || 0) + Number(r.children || 0), 0);
   const groupBaseOccupancy = groupRooms.reduce((sum, r) => {
     const rmObj = rooms.find(rm => rm.number === r.roomNumber);
@@ -944,15 +1031,9 @@ export default function CheckInFormView({
     const base = rmObj?.baseOccupancy ?? 2;
     return sum + Math.max(0, Number(r.adults || 0) + Number(r.children || 0) - base);
   }, 0);
-  const groupExtraPersonChargesPerNight = groupRooms.reduce((sum, r) => {
-    const rmObj = rooms.find(rm => rm.number === r.roomNumber);
-    const base = rmObj?.baseOccupancy ?? 2;
-    const extraPax = Math.max(0, Number(r.adults || 0) + Number(r.children || 0) - base);
-    const paxRate = extraPersonRateOverride !== '' ? Math.max(0, Number(extraPersonRateOverride) || 0) : Number(rmObj?.extraPersonCharge) > 0 ? Number(rmObj?.extraPersonCharge) : extraPersonCharge;
-    return sum + extraPax * paxRate;
-  }, 0);
-  const groupExtraPersonChargesTotal =
-    applyExtraPersonCharge && groupExtraGuestsCount > 0 ? groupExtraPersonChargesPerNight * stayNights : 0;
+  const groupExtraPersonChargesTotal = applyExtraPersonCharge
+    ? Math.max(1, Number(extraPersonQty) || 1) * effectiveExtraPaxRate * effectiveExtraPaxNights
+    : 0;
 
   const effectiveTotalOccupants = checkInMode === 'single' ? totalOccupants : groupTotalGuests;
   const effectiveBaseOccupancy = checkInMode === 'single' ? baseOccupancy : Math.max(2, groupBaseOccupancy);
@@ -965,13 +1046,6 @@ export default function CheckInFormView({
   const effectiveRoomChargesTotal = checkInMode === 'single' ? roomChargesTotal : groupRoomChargesTotal;
   const effectiveExtraBedTotal = checkInMode === 'single' ? extraBedTotal : groupExtraBedChargesTotal;
 
-  // Auto-apply extra-person charge when the user increases guest count beyond base occupancy (user can still untick / override)
-  useEffect(() => {
-    if (editingCheckIn) return;
-    if (!userCountTouchedRef.current || extraChargeTouchedRef.current) return;
-    setApplyExtraPersonCharge(effectiveExtraGuestsCount > 0);
-  }, [effectiveExtraGuestsCount, editingCheckIn]);
-
   // Ticked optional hotel services (exclude any service already billed on a separate invoice)
   const separatelyBilledServiceNames = React.useMemo(() => {
     const targetId = editingCheckIn?.id || selectedBooking?.id || '';
@@ -983,7 +1057,7 @@ export default function CheckInFormView({
         inv.invoiceStatus !== 'Cancelled' &&
         (inv.bookingId === targetId || inv.checkInId === targetId)
       ) {
-        (inv.items || (inv as any).ledgerLines || []).forEach((ln: any) => {
+        (((inv as any).items || (inv as any).ledgerLines || []) as any[]).forEach((ln: any) => {
           const desc = String(ln?.description || ln?.name || '').toLowerCase().trim();
           if (desc) names.add(desc);
         });
@@ -1129,6 +1203,20 @@ export default function CheckInFormView({
         } else {
           setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
         }
+        setApplyExtraPersonCharge(Boolean(parsedDraft.hasExtraPerson));
+        if (parsedDraft.hasExtraPerson) {
+          setExtraPersonQty(Math.max(1, Number(parsedDraft.extraPersonCount) || 1));
+          if (parsedDraft.extraPersonRate !== undefined) {
+            setExtraPersonRateOverride(Math.max(0, Number(parsedDraft.extraPersonRate) || 0));
+          }
+        }
+        setHasExtraBed(Boolean(parsedDraft.hasExtraBed));
+        if (parsedDraft.hasExtraBed) {
+          setExtraBedCount(Math.max(1, Number(parsedDraft.extraBeds) || 1));
+          if (parsedDraft.extraBedRate !== undefined) {
+            setExtraBedRate(Math.max(0, Number(parsedDraft.extraBedRate) || 0));
+          }
+        }
       }
     } catch {
       // ignore storage errors
@@ -1162,23 +1250,23 @@ export default function CheckInFormView({
                 },
               ]
             : []),
-          ...(extraPersonChargesTotal > 0
+          ...(applyExtraPersonCharge && extraPersonChargesTotal > 0
             ? [
                 {
                   id: 'ci-xpax',
                   kind: 'extra_person' as const,
-                  description: 'Extra Person Charges',
+                  description: `Extra Person (${singleExtraCalc.extraPersonQty} × ₹${singleExtraCalc.extraPersonRate} × ${singleExtraCalc.extraPersonNights}N)`,
                   amount: extraPersonChargesTotal,
                   roomNumber: selectedRoomNumber || '101',
                 },
               ]
             : []),
-          ...(extraBedTotal > 0
+          ...(hasExtraBed && extraBedTotal > 0
             ? [
                 {
                   id: 'ci-xbed',
                   kind: 'extra_bed' as const,
-                  description: 'Extra Bed Charges',
+                  description: `Extra Bed / Mattress (${singleExtraCalc.extraBedQty} × ₹${singleExtraCalc.extraBedRate} × ${singleExtraCalc.extraBedNights}N)`,
                   amount: extraBedTotal,
                   roomNumber: selectedRoomNumber || '101',
                 },
@@ -1240,12 +1328,12 @@ export default function CheckInFormView({
             rate: Number(gr.rate || 0),
             roomNumber: gr.roomNumber,
           })),
-          ...(groupExtraPersonChargesTotal > 0
+          ...(applyExtraPersonCharge && groupExtraPersonChargesTotal > 0
             ? [
                 {
                   id: 'ci-gr-xpax',
                   kind: 'extra_person' as const,
-                  description: 'Extra Person Charges',
+                  description: `Extra Person (${Math.max(1, Number(extraPersonQty) || 1)} × ₹${effectiveExtraPaxRate} × ${effectiveExtraPaxNights}N)`,
                   amount: groupExtraPersonChargesTotal,
                 },
               ]
@@ -1255,8 +1343,8 @@ export default function CheckInFormView({
             .map((gr, idx) => ({
               id: `ci-gr-xbed-${idx}`,
               kind: 'extra_bed' as const,
-              description: 'Extra Bed Charges',
-              amount: (Number(gr.extraBedCount) || 1) * Number(gr.extraBedRate || 0) * stayNights,
+              description: `Extra Bed / Mattress (${Number(gr.extraBedCount) || 1} × ₹${Number(gr.extraBedRate) || 0} × ${effectiveExtraBedNights}N)`,
+              amount: (Number(gr.extraBedCount) || 1) * Number(gr.extraBedRate || 0) * effectiveExtraBedNights,
               roomNumber: gr.roomNumber,
             })),
           ...tickedServices.map((s, idx) => {
@@ -1304,7 +1392,7 @@ export default function CheckInFormView({
 
   // Compute v3 Discount (On/Off: % or Fixed) + Negotiated Settlement Adjustment (Subtract or Exact GST-inclusive Target)
   const rawChargesSubtotal = liveCheckInCharges.reduce((sum, ch) => sum + (Number(ch.amount) || 0), 0);
-  const computedBaseDiscount = (effectiveMode !== 'walkin' && discountEnabled)
+  const computedBaseDiscount = discountEnabled
     ? Math.min(
         rawChargesSubtotal,
         discountMode === 'percent'
@@ -1315,7 +1403,7 @@ export default function CheckInFormView({
   const afterBaseDiscount = Math.max(0, rawChargesSubtotal - computedBaseDiscount);
   const gstFactorForTarget = gstPercent > 0 ? 1 + gstPercent / 100 : 1;
   const standardPayableAfterDisc = Math.round(afterBaseDiscount * gstFactorForTarget * 100) / 100;
-  const computedNegotiatedAdjustment = (effectiveMode !== 'walkin' && settlementEnabled)
+  const computedNegotiatedAdjustment = settlementEnabled
     ? settlementMode === 'exact' && settlementTargetInput !== ''
       ? Math.max(
           0,
@@ -1631,12 +1719,36 @@ export default function CheckInFormView({
     setCompanyName(b.companyName || '');
     setGstNumber(b.gstNumber || '');
     setHasExtraBed(Boolean(b.hasExtraBed));
-    setExtraBedCount(b.extraBedCount || 1);
-    setExtraBedRate(b.extraBedRate || 500);
-    setApplyExtraPersonCharge(
-      Boolean(
-        Number((b as any).extraPersonChargeApplied || existingActiveCheckIn?.extraPersonChargeApplied || 0) > 0
+    setExtraBedCount(Math.max(1, Number(b.extraBedCount) || 1));
+    setExtraBedRate(b.extraBedRate !== undefined ? Number(b.extraBedRate) : 500);
+    setExtraBedNightsOverride(b.extraBedNights ? Number(b.extraBedNights) : '');
+    const savedExtraPaxAmt = Number(
+      b.extraPersonChargeApplied || existingActiveCheckIn?.extraPersonChargeApplied || 0
+    );
+    const hasSavedExtraPerson = Boolean(
+      b.hasExtraPerson || existingActiveCheckIn?.hasExtraPerson || savedExtraPaxAmt > 0
+    );
+    setApplyExtraPersonCharge(hasSavedExtraPerson);
+    setExtraPersonQty(
+      Math.max(
+        1,
+        Number(b.extraPersonCount || existingActiveCheckIn?.extraPersonCount) ||
+          Math.max(1, (Number(b.adults) || 2) + (Number(b.children) || 0) - 2)
       )
+    );
+    if (b.extraPersonRate !== undefined && Number(b.extraPersonRate) >= 0) {
+      setExtraPersonRateOverride(Number(b.extraPersonRate));
+    } else if (existingActiveCheckIn?.extraPersonRate !== undefined) {
+      setExtraPersonRateOverride(Number(existingActiveCheckIn.extraPersonRate));
+    } else {
+      setExtraPersonRateOverride('');
+    }
+    setExtraPersonNightsOverride(
+      b.extraPersonNights
+        ? Number(b.extraPersonNights)
+        : existingActiveCheckIn?.extraPersonNights
+        ? Number(existingActiveCheckIn.extraPersonNights)
+        : ''
     );
     setManualExtraPaxCount('');
     setGuestSignatureData(existingActiveCheckIn?.guestSignatureData || b.guestSignatureData || '');
@@ -1730,8 +1842,17 @@ export default function CheckInFormView({
 
       if (b.bookedRooms && b.bookedRooms.length > 0 && Number(b.bookedRooms[0].rate) > 0) {
         setRoomRate(Number(b.bookedRooms[0].rate));
+      } else if (Number(b.roomSubtotal) > 0 && parsedCsvRoomNumbers.length <= 1) {
+        setRoomRate(Math.round(Number(b.roomSubtotal) / bNights));
       } else if (b.bookingAmount && parsedCsvRoomNumbers.length <= 1) {
-        setRoomRate(Math.round(b.bookingAmount / bNights));
+        const embeddedBed =
+          b.hasExtraBed && (!b.bookedRooms || b.bookedRooms.length === 0)
+            ? (Number(b.extraBedCount) || 1) * (Number(b.extraBedRate) || 500) * bNights
+            : 0;
+        const embeddedPax = Number(b.extraPersonChargeApplied || 0);
+        const embeddedEarly = Number(b.earlyCheckInCharge || 0);
+        const pureRoomTotal = Math.max(0, Number(b.bookingAmount) - embeddedBed - embeddedPax - embeddedEarly);
+        setRoomRate(pureRoomTotal > 0 ? Math.round(pureRoomTotal / bNights) : matchingRoom.rate);
       } else {
         setRoomRate(matchingRoom.rate);
       }
@@ -1929,9 +2050,9 @@ export default function CheckInFormView({
       setCheckInSplitRows(
         existingDeskSplits.map((p, idx) => ({
           id: `chk-split-edit-${idx + 1}`,
-          method: (p.method as any) || 'Cash',
+          method: ((p as any).method || p.paymentMethod || 'Cash') as any,
           amount: Number(p.amount) || 0,
-          reference: p.referenceId || '',
+          reference: (p as any).referenceId || p.referenceNo || '',
         }))
       );
       setPaidAmount(existingDeskSplits.reduce((s, p) => s + (Number(p.amount) || 0), 0));
@@ -1960,9 +2081,16 @@ export default function CheckInFormView({
       setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : Number(c.gstRate) || 5);
     }
     setHasExtraBed(Boolean(c.hasExtraBed));
-    setExtraBedCount(c.extraBedCount || 1);
-    setExtraBedRate(c.extraBedRate || 500);
-    setApplyExtraPersonCharge(Boolean(Number(c.extraPersonChargeApplied || c.extraPersonChargesApplied || 0) > 0));
+    setExtraBedCount(Math.max(1, Number(c.extraBedCount) || 1));
+    setExtraBedRate(c.extraBedRate !== undefined ? Number(c.extraBedRate) : 500);
+    setExtraBedNightsOverride(c.extraBedNights ? Number(c.extraBedNights) : '');
+    const cSavedExtraPax = Number(c.extraPersonChargeApplied || c.extraPersonChargesApplied || 0);
+    setApplyExtraPersonCharge(Boolean(c.hasExtraPerson || cSavedExtraPax > 0));
+    setExtraPersonQty(Math.max(1, Number(c.extraPersonCount) || 1));
+    setExtraPersonRateOverride(
+      c.extraPersonRate !== undefined && Number(c.extraPersonRate) >= 0 ? Number(c.extraPersonRate) : ''
+    );
+    setExtraPersonNightsOverride(c.extraPersonNights ? Number(c.extraPersonNights) : '');
     setManualExtraPaxCount('');
     setCheckedInBy(c.checkedInBy || loggedInUser || 'Front Desk Executive');
     setGuestSignatureData(c.guestSignatureData || '');
@@ -2032,8 +2160,12 @@ export default function CheckInFormView({
     setWizardStep(1);
     setHasExtraBed(false);
     setExtraBedCount(1);
-    setExtraBedRate(0);
+    setExtraBedRate(500);
+    setExtraBedNightsOverride('');
     setApplyExtraPersonCharge(false);
+    setExtraPersonQty(1);
+    setExtraPersonRateOverride('');
+    setExtraPersonNightsOverride('');
     setManualExtraPaxCount('');
     setIsCFormRequired(false);
     setGroupRooms([]);
@@ -2381,6 +2513,7 @@ export default function CheckInFormView({
         status: targetStatus as BookingStatus,
         isCheckedIn: false,
         isCompleted: false,
+        roomSubtotal: effectiveRoomChargesTotal,
         bookingAmount: effectiveRoomChargesTotal,
         discount: totalEffectiveDiscount,
         advanceAmount: totalCollectedNow,
@@ -2400,9 +2533,15 @@ export default function CheckInFormView({
         payments: reservationPayments,
         bookedRooms: bookedRoomsPayload,
         bookedServices: bookedServicesPayload.length > 0 ? bookedServicesPayload : undefined,
-        hasExtraBed: !isMulti ? hasExtraBed : undefined,
-        extraBedCount: !isMulti && hasExtraBed ? extraBedCount : undefined,
-        extraBedRate: !isMulti && hasExtraBed ? extraBedRate : undefined,
+        hasExtraBed: !isMulti ? Boolean(hasExtraBed) : groupRooms.some(g => g.hasExtraBed),
+        extraBedCount: !isMulti && hasExtraBed ? singleExtraCalc.extraBedQty : 0,
+        extraBedRate: !isMulti && hasExtraBed ? singleExtraCalc.extraBedRate : 0,
+        extraBedNights: !isMulti && hasExtraBed ? singleExtraCalc.extraBedNights : undefined,
+        extraBedTotal: effectiveExtraBedTotal,
+        hasExtraPerson: Boolean(applyExtraPersonCharge),
+        extraPersonCount: applyExtraPersonCharge ? Math.max(1, Number(extraPersonQty) || 1) : 0,
+        extraPersonRate: applyExtraPersonCharge ? effectiveExtraPaxRate : 0,
+        extraPersonNights: applyExtraPersonCharge ? effectiveExtraPaxNights : undefined,
         extraPersonChargeApplied: effectiveExtraPersonChargesTotal,
         groupBookingId: isMulti ? newResId : undefined,
         specialRequests: notesPieces.join(' | ') || undefined,
@@ -2598,13 +2737,29 @@ export default function CheckInFormView({
       }
       if (
         !prevEditingRooms.includes(rNum) &&
-        (roomObj.status === 'Maintenance' || (roomObj.status as string) === 'Out of Order')
+        (isRoomOutOfOrderForCheckIn(roomObj) || isRoomDirtyForCheckIn(roomObj))
       ) {
-        showToast(
-          `Room ${rNum} is currently marked as ${roomObj.status} and cannot be checked into until ready.`,
-          'error'
+        const stateLabel = isRoomOutOfOrderForCheckIn(roomObj)
+          ? roomObj.status
+          : roomObj.cleaningStatus || 'Dirty';
+        if (!canAuthoriseHkOverride) {
+          showToast(
+            `Check-In Blocked: Room ${rNum} is currently marked "${stateLabel}" in Housekeeping. Please clean/inspect the room first or request a Manager/Admin override.`,
+            'error'
+          );
+          return;
+        }
+        if (!hkOverrideApproved || !hkOverrideReason.trim()) {
+          showToast(
+            `Authorised Override Required: Room ${rNum} is marked "${stateLabel}". Confirm the override checkbox and enter an override reason before checking in.`,
+            'warning'
+          );
+          return;
+        }
+        onAddAuditLog(
+          'Authorised Room Check-In Override',
+          `${loggedInUser || currentRole} authorised check-in to Room ${rNum} (${stateLabel}). Reason: ${hkOverrideReason.trim()}`
         );
-        return;
       }
       const conflictingAdvBooking = getRoomOverlappingBooking(rNum, checkInDate, checkOutDate);
       if (
@@ -3026,6 +3181,11 @@ export default function CheckInFormView({
         : editingCheckIn?.overrideReason,
       extraPersonChargeApplied: effectiveExtraPersonChargesTotal,
       extraPersonChargesApplied: effectiveExtraPersonChargesTotal,
+      hasExtraPerson: Boolean(applyExtraPersonCharge),
+      extraPersonCount: applyExtraPersonCharge ? Math.max(1, Number(extraPersonQty) || 1) : 0,
+      extraPersonRate: applyExtraPersonCharge ? effectiveExtraPaxRate : 0,
+      extraPersonNights: applyExtraPersonCharge ? effectiveExtraPaxNights : 0,
+      roomSubtotal: effectiveRoomChargesTotal,
       totalAmount: finalAmount,
       gstRate: gstPercent,
       gstAmount: gstTax,
@@ -3052,11 +3212,12 @@ export default function CheckInFormView({
       isGroupCheckIn: checkInMode === 'group',
       groupBookingId: checkInMode === 'group' ? groupBookingId : undefined,
       groupName: checkInMode === 'group' ? (groupName || `${guestName} Group`) : undefined,
-      // Extra Bed Details
-      hasExtraBed: checkInMode === 'single' ? hasExtraBed : undefined,
-      extraBedCount: checkInMode === 'single' && hasExtraBed ? extraBedCount : undefined,
-      extraBedRate: checkInMode === 'single' && hasExtraBed ? extraBedRate : undefined,
-      extraBedTotal: checkInMode === 'single' && hasExtraBed ? extraBedTotal : undefined,
+      // Extra Bed Details (explicitly zeroed when unchecked so previous values never linger)
+      hasExtraBed: checkInMode === 'single' ? Boolean(hasExtraBed) : groupRooms.some(g => g.hasExtraBed),
+      extraBedCount: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedQty : 0,
+      extraBedRate: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedRate : 0,
+      extraBedNights: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedNights : 0,
+      extraBedTotal: effectiveExtraBedTotal,
       // C-Form Details
       cFormData: cFormDataObj,
       isCFormRequired: !!cFormDataObj,
@@ -3125,7 +3286,19 @@ export default function CheckInFormView({
               roomType: (roomType || b.roomType) as any,
               bookedRooms: finalBookedRooms,
               isGroupCheckIn: checkInMode === 'group',
-              bookingAmount: effectiveRoomChargesTotal + effectiveExtraPersonChargesTotal + effectiveExtraBedTotal + earlyCheckInCharge,
+              roomSubtotal: effectiveRoomChargesTotal,
+              bookingAmount: effectiveRoomChargesTotal,
+              hasExtraBed: checkInMode === 'single' ? Boolean(hasExtraBed) : groupRooms.some(g => g.hasExtraBed),
+              extraBedCount: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedQty : 0,
+              extraBedRate: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedRate : 0,
+              extraBedNights: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedNights : 0,
+              extraBedTotal: effectiveExtraBedTotal,
+              hasExtraPerson: Boolean(applyExtraPersonCharge),
+              extraPersonCount: applyExtraPersonCharge ? Math.max(1, Number(extraPersonQty) || 1) : 0,
+              extraPersonRate: applyExtraPersonCharge ? effectiveExtraPaxRate : 0,
+              extraPersonNights: applyExtraPersonCharge ? effectiveExtraPaxNights : 0,
+              extraPersonChargeApplied: effectiveExtraPersonChargesTotal,
+              earlyCheckInCharge: earlyCheckInCharge,
               gstRate: gstPercent,
               gstAmount: gstTax,
               isWithoutGst: gstPercent <= 0,
@@ -3142,12 +3315,13 @@ export default function CheckInFormView({
                 date: (p as any).date || getTodayDateStr(),
                 notes: p.notes,
               })),
-              paymentStatus:
+              paymentStatus: (
                 effectivePendingBalance <= 0
                   ? 'Fully Paid'
                   : advanceAmount + effectiveDeskReceivedNow > 0
                   ? 'Partially Paid'
-                  : 'Unpaid',
+                  : 'Unpaid'
+              ) as Booking['paymentStatus'],
               companyName: companyName || undefined, 
               gstNumber: gstNumber || undefined,
               checkedInBy: autoDetectedCheckedInBy,
@@ -3195,7 +3369,19 @@ export default function CheckInFormView({
         bookedRooms: finalBookedRooms,
         isGroupCheckIn: checkInMode === 'group',
         bookingDate: walkInBookingDate || getTodayDateStr(),
-        bookingAmount: effectiveRoomChargesTotal + effectiveExtraPersonChargesTotal + effectiveExtraBedTotal + earlyCheckInCharge,
+        roomSubtotal: effectiveRoomChargesTotal,
+        bookingAmount: effectiveRoomChargesTotal,
+        hasExtraBed: checkInMode === 'single' ? Boolean(hasExtraBed) : groupRooms.some(g => g.hasExtraBed),
+        extraBedCount: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedQty : 0,
+        extraBedRate: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedRate : 0,
+        extraBedNights: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedNights : 0,
+        extraBedTotal: effectiveExtraBedTotal,
+        hasExtraPerson: Boolean(applyExtraPersonCharge),
+        extraPersonCount: applyExtraPersonCharge ? Math.max(1, Number(extraPersonQty) || 1) : 0,
+        extraPersonRate: applyExtraPersonCharge ? effectiveExtraPaxRate : 0,
+        extraPersonNights: applyExtraPersonCharge ? effectiveExtraPaxNights : 0,
+        extraPersonChargeApplied: effectiveExtraPersonChargesTotal,
+        earlyCheckInCharge: earlyCheckInCharge,
         gstRate: gstPercent,
         gstAmount: gstTax,
         isWithoutGst: gstPercent <= 0,
@@ -3375,8 +3561,7 @@ export default function CheckInFormView({
             date: checkInDate,
             dateTime: `${checkInDate} ${arrivalTime}`,
             deliveredBy: autoDetectedCheckedInBy,
-            status: 'Delivered',
-          };
+          } as WaterBottleRecord;
           onUpdateWaterBottles([compRecord, ...waterBottles]);
         }
 
@@ -3469,8 +3654,12 @@ export default function CheckInFormView({
     setWizardStep(1);
     setHasExtraBed(false);
     setExtraBedCount(1);
-    setExtraBedRate(0);
+    setExtraBedRate(500);
+    setExtraBedNightsOverride('');
     setApplyExtraPersonCharge(false);
+    setExtraPersonQty(1);
+    setExtraPersonRateOverride('');
+    setExtraPersonNightsOverride('');
     setManualExtraPaxCount('');
     setIsCFormRequired(false);
     setGroupRooms([]);
@@ -6819,17 +7008,74 @@ export default function CheckInFormView({
                         </div>
                       </div>
 
-                      <div className="pt-2.5 border-t border-[#DCE3EC] space-y-1.5 font-mono">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-[#263449]">Total:</span>
+                      <div className="pt-2.5 border-t border-[#DCE3EC] space-y-1.5 font-mono text-[11px]">
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Room Tariff:</span>
+                          <strong className="text-[#263449]">
+                            ₹{effectiveRoomChargesTotal.toLocaleString('en-IN')}
+                          </strong>
+                        </div>
+
+                        {applyExtraPersonCharge && (
+                          <div className="flex items-center justify-between text-[#8B691E]">
+                            <span className="truncate pr-1">
+                              Extra Person ({Math.max(1, Number(extraPersonQty) || 1)}×₹{effectiveExtraPaxRate}×{effectiveExtraPaxNights}N):
+                            </span>
+                            <strong className="shrink-0">
+                              ₹{effectiveExtraPersonChargesTotal.toLocaleString('en-IN')}
+                            </strong>
+                          </div>
+                        )}
+
+                        {((checkInMode === 'single' && hasExtraBed && activeSelectedRoomObj?.allowExtraBed !== false) ||
+                          (checkInMode === 'group' && groupRooms.some(g => g.hasExtraBed))) && (
+                          <div className="flex items-center justify-between text-amber-800">
+                            <span className="truncate pr-1">
+                              Extra Bed/Mattress
+                              {checkInMode === 'single'
+                                ? ` (${singleExtraCalc.extraBedQty}×₹${singleExtraCalc.extraBedRate}×${singleExtraCalc.extraBedNights}N)`
+                                : ''}
+                              :
+                            </span>
+                            <strong className="shrink-0">
+                              ₹{effectiveExtraBedTotal.toLocaleString('en-IN')}
+                            </strong>
+                          </div>
+                        )}
+
+                        {(otherCharges + servicesTotal + customAddonTotal + earlyCheckInCharge + existingStayFolioSubtotal) > 0 && (
+                          <div className="flex items-center justify-between text-slate-600">
+                            <span>Add-ons / Folio:</span>
+                            <strong className="text-[#263449]">
+                              ₹{(otherCharges + servicesTotal + customAddonTotal + earlyCheckInCharge + existingStayFolioSubtotal).toLocaleString('en-IN')}
+                            </strong>
+                          </div>
+                        )}
+
+                        {totalEffectiveDiscount > 0 && (
+                          <div className="flex items-center justify-between text-rose-700">
+                            <span>Discount / Adj.:</span>
+                            <strong>− ₹{totalEffectiveDiscount.toLocaleString('en-IN')}</strong>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>GST ({gstPercent}%):</span>
+                          <strong className="text-[#263449]">₹{gstTax.toLocaleString('en-IN')}</strong>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1.5 border-t border-[#DCE3EC]">
+                          <span className="text-xs font-bold text-[#263449]">Final Settlement:</span>
                           <strong className="text-base font-extrabold text-[#8B691E]">
                             ₹{finalAmount.toLocaleString('en-IN')}
                           </strong>
                         </div>
                         <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-emerald-700">Paid: ₹{(advanceAmount + effectiveDeskReceivedNow).toLocaleString('en-IN')}</span>
+                          <span className="text-emerald-700 font-semibold">
+                            Paid: ₹{(advanceAmount + effectiveDeskReceivedNow).toLocaleString('en-IN')}
+                          </span>
                           <span className={balanceAmount > 0 ? 'text-amber-700 font-bold' : 'text-emerald-700 font-bold'}>
-                            {balanceAmount > 0 ? `Due: ₹${balanceAmount.toLocaleString('en-IN')}` : 'PAID'}
+                            {balanceAmount > 0 ? `Pending: ₹${balanceAmount.toLocaleString('en-IN')}` : 'SETTLED'}
                           </span>
                         </div>
                       </div>
@@ -7269,13 +7515,74 @@ export default function CheckInFormView({
                               {rooms.map(r => {
                                 const avail = isRoomTrulyAvailable(r, checkInDate, checkOutDate);
                                 const conflictBkg = !avail ? getRoomOverlappingBooking(r.number, checkInDate, checkOutDate) : undefined;
+                                const unreadyWarn =
+                                  isRoomOutOfOrderForCheckIn(r) ||
+                                  (checkInDate <= getTodayDateStr() && isRoomDirtyForCheckIn(r));
+                                const statusSuffix = !avail
+                                  ? conflictBkg
+                                    ? `(Booked: ${conflictBkg.guestName})`
+                                    : isRoomDirtyForCheckIn(r)
+                                    ? `(Dirty - ${r.cleaningStatus || 'Needs Cleaning'})`
+                                    : `(${r.status})`
+                                  : unreadyWarn
+                                  ? `(⚠ ${isRoomOutOfOrderForCheckIn(r) ? r.status : r.cleaningStatus || 'Dirty'} - Override Req.)`
+                                  : '(Available • Clean)';
                                 return (
                                   <option key={r.number} value={r.number} disabled={!avail}>
-                                    Room {r.number} — {r.category} • ₹{r.rate}/nt {avail ? '(Available)' : conflictBkg ? `(Booked: ${conflictBkg.guestName})` : `(${r.status})`}
+                                    Room {r.number} — {r.category} • ₹{r.rate}/nt {statusSuffix}
                                   </option>
                                 );
                               })}
                             </select>
+                            {(() => {
+                              const selRm = rooms.find(rm => rm.number === selectedRoomNumber);
+                              if (
+                                !selRm ||
+                                editingCheckIn ||
+                                !(
+                                  isRoomOutOfOrderForCheckIn(selRm) ||
+                                  (checkInDate <= getTodayDateStr() && isRoomDirtyForCheckIn(selRm))
+                                )
+                              ) {
+                                return null;
+                              }
+                              const stLabel = isRoomOutOfOrderForCheckIn(selRm)
+                                ? selRm.status
+                                : selRm.cleaningStatus || 'Dirty';
+                              return (
+                                <div className="mt-2 p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-[11px] space-y-1.5">
+                                  <div className="font-bold text-amber-950">
+                                    ⚠ Room {selRm.number} is marked "{stLabel}" in Housekeeping
+                                  </div>
+                                  {canAuthoriseHkOverride ? (
+                                    <>
+                                      <label className="flex items-center gap-2 font-semibold text-amber-900 cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={hkOverrideApproved}
+                                          onChange={e => setHkOverrideApproved(e.target.checked)}
+                                          className="accent-amber-600"
+                                        />
+                                        <span>Authorise Room Readiness Override ({currentRole})</span>
+                                      </label>
+                                      {hkOverrideApproved && (
+                                        <input
+                                          type="text"
+                                          value={hkOverrideReason}
+                                          onChange={e => setHkOverrideReason(e.target.value)}
+                                          placeholder="Enter mandatory override reason..."
+                                          className="w-full px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white text-xs text-slate-900"
+                                        />
+                                      )}
+                                    </>
+                                  ) : (
+                                    <div className="text-rose-700 font-semibold">
+                                      Check-in is blocked until Housekeeping marks Room {selRm.number} Clean &amp; Ready (or select another available room).
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           <div className="space-y-1">
@@ -7348,64 +7655,188 @@ export default function CheckInFormView({
                               className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
                             />
                           </div>
-                          <div className="col-span-2 flex flex-wrap items-center gap-3 pt-4">
+                          <div className="col-span-2 flex flex-wrap items-center gap-4 pt-4">
+                            <label className="inline-flex items-center gap-2 text-xs font-bold text-[#263449] cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={applyExtraPersonCharge}
+                                onChange={e => {
+                                  const nextOn = e.target.checked;
+                                  extraChargeTouchedRef.current = true;
+                                  setApplyExtraPersonCharge(nextOn);
+                                  if (nextOn) {
+                                    setExtraPersonQty(prev => Math.max(1, prev || extraGuestsCount || 1));
+                                  }
+                                }}
+                                className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
+                              />
+                              <Users className="w-3.5 h-3.5 text-[#C49A3A]" />
+                              <span>Extra Person</span>
+                            </label>
+
                             {(() => {
                               const bedBlocked = Boolean(selectedRoomNumber) && activeSelectedRoomObj?.allowExtraBed === false;
                               return (
                                 <label
                                   title={bedBlocked ? `Room ${selectedRoomNumber} does not allow an extra bed` : undefined}
-                                  className={`inline-flex items-center gap-1.5 text-xs font-bold ${bedBlocked ? 'text-slate-400 cursor-not-allowed' : 'text-[#263449] cursor-pointer'}`}
+                                  className={`inline-flex items-center gap-2 text-xs font-bold select-none ${
+                                    bedBlocked ? 'text-slate-400 cursor-not-allowed' : 'text-[#263449] cursor-pointer'
+                                  }`}
                                 >
                                   <input
                                     type="checkbox"
                                     disabled={bedBlocked}
                                     checked={bedBlocked ? false : hasExtraBed}
-                                    onChange={e => setHasExtraBed(e.target.checked)}
-                                    className={`w-4 h-4 accent-[#B5822D] rounded ${bedBlocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                                    onChange={e => {
+                                      const nextOn = e.target.checked;
+                                      setHasExtraBed(nextOn);
+                                      if (nextOn && extraBedCount < 1) {
+                                        setExtraBedCount(1);
+                                      }
+                                    }}
+                                    className={`w-4 h-4 accent-[#B5822D] rounded ${
+                                      bedBlocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                                    }`}
                                   />
-                                  <span>Extra Mattress{bedBlocked ? ' (Not allowed in this room)' : ''}</span>
+                                  <BedDouble className="w-3.5 h-3.5 text-[#C49A3A]" />
+                                  <span>Extra Bed / Mattress{bedBlocked ? ' (Not allowed)' : ''}</span>
                                 </label>
                               );
                             })()}
-                            <label className="inline-flex items-center gap-1.5 text-xs font-bold text-[#263449] cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={applyExtraPersonCharge}
-                                onChange={e => {
-                                  extraChargeTouchedRef.current = true;
-                                  setApplyExtraPersonCharge(e.target.checked);
-                                }}
-                                className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
-                              />
-                              <span>Extra Person Charge (₹{extraPersonCharge}/nt)</span>
-                            </label>
                           </div>
                         </div>
 
-                        {hasExtraBed && activeSelectedRoomObj?.allowExtraBed !== false && (
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-2.5 rounded-lg bg-white border border-amber-200 text-xs">
+                        {/* CONDITIONAL PANEL 1: EXTRA PERSON (SHOWN ONLY WHEN EXTRA PERSON CHECKBOX IS SELECTED) */}
+                        {applyExtraPersonCharge && (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-xl bg-white border border-[#C49A3A]/50 text-xs shadow-2xs">
                             <div>
-                              <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">Mattresses</label>
+                              <label className="text-[10px] font-mono uppercase text-[#8B691E] font-bold block">
+                                Extra Persons (Qty)
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={extraPersonQty}
+                                onChange={e => setExtraPersonQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                                className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
+                              />
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-mono uppercase text-[#8B691E] font-bold">
+                                  Price / Night (₹)
+                                </label>
+                                {extraPersonRateOverride !== '' && Number(extraPersonRateOverride) !== extraPersonCharge && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setExtraPersonRateOverride('')}
+                                    className="text-[9.5px] font-mono text-[#8B691E] underline cursor-pointer"
+                                    title={`Reset to default ₹${extraPersonCharge}`}
+                                  >
+                                    Reset
+                                  </button>
+                                )}
+                              </div>
+                              <input
+                                type="number"
+                                min={0}
+                                value={extraPersonRateOverride !== '' ? extraPersonRateOverride : extraPersonCharge}
+                                onChange={e =>
+                                  setExtraPersonRateOverride(
+                                    e.target.value === '' ? 0 : Math.max(0, Number(e.target.value) || 0)
+                                  )
+                                }
+                                className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-mono uppercase text-[#8B691E] font-bold block">
+                                Applicable Nights
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={extraPersonNightsOverride !== '' ? extraPersonNightsOverride : stayNights}
+                                onChange={e =>
+                                  setExtraPersonNightsOverride(
+                                    e.target.value === '' ? '' : Math.max(1, Math.floor(Number(e.target.value) || 1))
+                                  )
+                                }
+                                className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
+                              />
+                            </div>
+                            <div className="flex flex-col justify-end text-right font-mono pb-1">
+                              <span className="text-[9.5px] text-slate-400">
+                                {singleExtraCalc.extraPersonQty} × ₹{singleExtraCalc.extraPersonRate} × {singleExtraCalc.extraPersonNights}N
+                              </span>
+                              <strong className="text-sm font-extrabold text-[#8B691E]">
+                                Total: ₹{extraPersonChargesTotal.toLocaleString('en-IN')}
+                              </strong>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* CONDITIONAL PANEL 2: EXTRA BED / MATTRESS (SHOWN ONLY WHEN EXTRA BED CHECKBOX IS SELECTED) */}
+                        {hasExtraBed && activeSelectedRoomObj?.allowExtraBed !== false && (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-xl bg-white border border-amber-300/80 text-xs shadow-2xs">
+                            <div>
+                              <label className="text-[10px] font-mono uppercase text-amber-800 font-bold block">
+                                Beds / Mattresses (Qty)
+                              </label>
                               <input
                                 type="number"
                                 min={1}
                                 value={extraBedCount}
-                                onChange={e => setExtraBedCount(Math.max(1, Number(e.target.value) || 1))}
-                                className="w-full mt-0.5 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold"
+                                onChange={e => setExtraBedCount(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                                className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
                               />
                             </div>
                             <div>
-                              <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">Rate / Night (₹)</label>
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-mono uppercase text-amber-800 font-bold">
+                                  Price / Night (₹)
+                                </label>
+                                {extraBedRate !== (extraPersonCharge || 500) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setExtraBedRate(extraPersonCharge > 0 ? extraPersonCharge : 500)}
+                                    className="text-[9.5px] font-mono text-amber-800 underline cursor-pointer"
+                                  >
+                                    Reset
+                                  </button>
+                                )}
+                              </div>
                               <input
                                 type="number"
                                 min={0}
                                 value={extraBedRate}
                                 onChange={e => setExtraBedRate(Math.max(0, Number(e.target.value) || 0))}
-                                className="w-full mt-0.5 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold"
+                                className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
                               />
                             </div>
-                            <div className="flex items-end font-mono font-bold text-amber-800 pb-1.5">
-                              Total: ₹{(extraBedCount * extraBedRate * stayNights).toLocaleString('en-IN')}
+                            <div>
+                              <label className="text-[10px] font-mono uppercase text-amber-800 font-bold block">
+                                Applicable Nights
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={extraBedNightsOverride !== '' ? extraBedNightsOverride : stayNights}
+                                onChange={e =>
+                                  setExtraBedNightsOverride(
+                                    e.target.value === '' ? '' : Math.max(1, Math.floor(Number(e.target.value) || 1))
+                                  )
+                                }
+                                className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
+                              />
+                            </div>
+                            <div className="flex flex-col justify-end text-right font-mono pb-1">
+                              <span className="text-[9.5px] text-slate-400">
+                                {singleExtraCalc.extraBedQty} × ₹{singleExtraCalc.extraBedRate} × {singleExtraCalc.extraBedNights}N
+                              </span>
+                              <strong className="text-sm font-extrabold text-amber-800">
+                                Total: ₹{extraBedTotal.toLocaleString('en-IN')}
+                              </strong>
                             </div>
                           </div>
                         )}
@@ -7572,14 +8003,37 @@ export default function CheckInFormView({
                                         />
                                       </td>
                                       <td className="p-2 text-center">
-                                        <input
-                                          type="checkbox"
-                                          disabled={!isExtraBedAllowedForRoom(gr.roomNumber)}
-                                          title={!isExtraBedAllowedForRoom(gr.roomNumber) ? `Room ${gr.roomNumber} does not allow an extra bed` : 'Add extra bed'}
-                                          checked={isExtraBedAllowedForRoom(gr.roomNumber) ? gr.hasExtraBed : false}
-                                          onChange={e => handleUpdateGroupRoom(gr.id, 'hasExtraBed', e.target.checked)}
-                                          className={`w-4 h-4 accent-[#B5822D] ${isExtraBedAllowedForRoom(gr.roomNumber) ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}
-                                        />
+                                        <div className="flex flex-col items-center gap-1">
+                                          <input
+                                            type="checkbox"
+                                            disabled={!isExtraBedAllowedForRoom(gr.roomNumber)}
+                                            title={!isExtraBedAllowedForRoom(gr.roomNumber) ? `Room ${gr.roomNumber} does not allow an extra bed` : 'Add extra bed / mattress'}
+                                            checked={isExtraBedAllowedForRoom(gr.roomNumber) ? gr.hasExtraBed : false}
+                                            onChange={e => handleUpdateGroupRoom(gr.id, 'hasExtraBed', e.target.checked)}
+                                            className={`w-4 h-4 accent-[#B5822D] ${isExtraBedAllowedForRoom(gr.roomNumber) ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}
+                                          />
+                                          {gr.hasExtraBed && isExtraBedAllowedForRoom(gr.roomNumber) && (
+                                            <div className="flex items-center gap-1 pt-0.5">
+                                              <input
+                                                type="number"
+                                                min={1}
+                                                value={gr.extraBedCount}
+                                                onChange={e => handleUpdateGroupRoom(gr.id, 'extraBedCount', Math.max(1, Number(e.target.value) || 1))}
+                                                className="w-10 px-1 py-0.5 border border-amber-300 rounded font-mono text-[10px] text-center bg-amber-50/50"
+                                                title="Extra Bed Qty"
+                                              />
+                                              <span className="text-[10px] text-slate-400">×</span>
+                                              <input
+                                                type="number"
+                                                min={0}
+                                                value={gr.extraBedRate}
+                                                onChange={e => handleUpdateGroupRoom(gr.id, 'extraBedRate', Math.max(0, Number(e.target.value) || 0))}
+                                                className="w-14 px-1 py-0.5 border border-amber-300 rounded font-mono text-[10px] font-bold bg-white"
+                                                title="Extra Bed Rate / Night (₹)"
+                                              />
+                                            </div>
+                                          )}
+                                        </div>
                                       </td>
                                       <td className="p-2">
                                         <div className="flex items-center gap-1">
@@ -7641,16 +8095,94 @@ export default function CheckInFormView({
                               </span>
                               <span className="text-[#8B691E] font-extrabold">
                                 Rooms: ₹{effectiveRoomChargesTotal.toLocaleString('en-IN')}
+                                {effectiveExtraPersonChargesTotal > 0 ? ` + Extra Person: ₹${effectiveExtraPersonChargesTotal.toLocaleString('en-IN')}` : ''}
                                 {effectiveExtraBedTotal > 0 ? ` + Extra Beds: ₹${effectiveExtraBedTotal.toLocaleString('en-IN')}` : ''}
                               </span>
                             </div>
+                          </div>
+                        )}
+
+                        {/* Group Mode Separate Extra Person Checkbox (OFF by default, fields hidden until checked) */}
+                        {groupRooms.length > 0 && (
+                          <div className="pt-1 space-y-2">
+                            <label className="inline-flex items-center gap-2 text-xs font-bold text-[#263449] cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={applyExtraPersonCharge}
+                                onChange={e => {
+                                  const nextOn = e.target.checked;
+                                  extraChargeTouchedRef.current = true;
+                                  setApplyExtraPersonCharge(nextOn);
+                                  if (nextOn) {
+                                    setExtraPersonQty(prev => Math.max(1, prev || groupExtraGuestsCount || 1));
+                                  }
+                                }}
+                                className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
+                              />
+                              <Users className="w-3.5 h-3.5 text-[#C49A3A]" />
+                              <span>Extra Person</span>
+                            </label>
+
+                            {applyExtraPersonCharge && (
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-xl bg-white border border-[#C49A3A]/50 text-xs">
+                                <div>
+                                  <label className="text-[10px] font-mono uppercase text-[#8B691E] font-bold block">
+                                    Extra Persons (Qty)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={extraPersonQty}
+                                    onChange={e => setExtraPersonQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                                    className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-mono uppercase text-[#8B691E] font-bold block">
+                                    Price / Night (₹)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={extraPersonRateOverride !== '' ? extraPersonRateOverride : extraPersonCharge}
+                                    onChange={e =>
+                                      setExtraPersonRateOverride(
+                                        e.target.value === '' ? 0 : Math.max(0, Number(e.target.value) || 0)
+                                      )
+                                    }
+                                    className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-mono uppercase text-[#8B691E] font-bold block">
+                                    Applicable Nights
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={extraPersonNightsOverride !== '' ? extraPersonNightsOverride : stayNights}
+                                    onChange={e =>
+                                      setExtraPersonNightsOverride(
+                                        e.target.value === '' ? '' : Math.max(1, Math.floor(Number(e.target.value) || 1))
+                                      )
+                                    }
+                                    className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg font-mono font-bold bg-white"
+                                  />
+                                </div>
+                                <div className="flex flex-col justify-end text-right font-mono pb-1">
+                                  <strong className="text-sm font-extrabold text-[#8B691E]">
+                                    Total: ₹{groupExtraPersonChargesTotal.toLocaleString('en-IN')}
+                                  </strong>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
                     )}
                   </section>
 
-                  {/* EXTRA PERSONS, OTHER & CUSTOM CHARGES */}
+                  {/* AUXILIARY & CUSTOM CHARGES */}
                   <section className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs overflow-hidden">
                     <button
                       type="button"
@@ -7659,61 +8191,27 @@ export default function CheckInFormView({
                     >
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg bg-[#FDF8ED] border border-[#E6CE9A] text-[#9E6E24] flex items-center justify-center shrink-0">
-                          <Users className="w-4 h-4" />
+                          <Sparkles className="w-4 h-4" />
                         </div>
                         <div>
-                          <span className="text-sm font-serif font-bold text-[#263449] block">Extra persons &amp; custom charges</span>
-                          <span className="text-xs text-slate-500 block">Auto extra-person charge, rate override, other &amp; custom charges (Optional)</span>
+                          <span className="text-sm font-serif font-bold text-[#263449] block">Auxiliary &amp; custom charges</span>
+                          <span className="text-xs text-slate-500 block">Optional miscellaneous or custom itemized charges</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {(effectiveExtraPersonChargesTotal + otherCharges + customExtraRowsTotal) > 0 && (
+                        {(otherCharges + customExtraRowsTotal) > 0 && (
                           <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-mono font-bold">
-                            ₹{(effectiveExtraPersonChargesTotal + otherCharges + customExtraRowsTotal).toLocaleString('en-IN')} added
+                            ₹{(otherCharges + customExtraRowsTotal).toLocaleString('en-IN')} added
                           </span>
                         )}
                         <span className="px-3 py-1 rounded-lg border border-[#DCE3EC] bg-white text-xs font-bold text-[#263449] inline-flex items-center gap-1">
-                          {showExtraChargesSection ? 'Hide' : '+ Add Extra Charges'}
+                          {showExtraChargesSection ? 'Hide' : '+ Add Custom Charges'}
                           {showExtraChargesSection ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                         </span>
                       </div>
                     </button>
                     {showExtraChargesSection && (
                       <div className="px-5 pb-5 pt-3 border-t border-[#DCE3EC] space-y-3.5">
-
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end p-3 rounded-xl bg-[#F4F6F9] border border-[#DCE3EC]">
-                      <div className="md:col-span-5 space-y-1">
-                        <label className="inline-flex items-center gap-2 text-xs font-bold text-[#263449] cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={applyExtraPersonCharge}
-                            onChange={e => {
-                              extraChargeTouchedRef.current = true;
-                              setApplyExtraPersonCharge(e.target.checked);
-                            }}
-                            className="w-4 h-4 accent-[#B5822D] rounded cursor-pointer"
-                          />
-                          <span>Apply extra-person charge</span>
-                        </label>
-                        <span className="text-[11px] text-slate-500 block">
-                          {effectiveExtraGuestsCount} extra person(s) beyond base occupancy ({effectiveBaseOccupancy}) × {stayNights} night{stayNights === 1 ? '' : 's'}
-                        </span>
-                      </div>
-                      <div className="md:col-span-4 space-y-1">
-                        <label className="text-[11px] font-bold text-[#263449] block">Rate override ₹ / person / night</label>
-                        <input
-                          type="number"
-                          min={0}
-                          value={extraPersonRateOverride}
-                          placeholder={`Room rate ₹${extraPersonCharge}`}
-                          onChange={e => setExtraPersonRateOverride(e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0))}
-                          className="w-full px-3 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
-                        />
-                      </div>
-                      <div className="md:col-span-3 text-right font-mono text-xs font-extrabold text-[#8B691E]">
-                        Total: ₹{effectiveExtraPersonChargesTotal.toLocaleString('en-IN')}
-                      </div>
-                    </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">

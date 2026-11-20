@@ -24,6 +24,8 @@ import {
   Smartphone,
   ShieldCheck,
   Check,
+  Settings,
+  HelpCircle,
 } from 'lucide-react';
 import {
   BookingRecord,
@@ -51,6 +53,10 @@ import {
   isManualPriceOverride,
   cleanOrderItemBaseName,
 } from '../utils/posBilling';
+import {
+  resolvePosCapabilities,
+  writeStoredPosFacilityFallback,
+} from '../../utils/posConfigHelpers';
 
 interface PosModuleProps {
   activeSubTab: string;
@@ -85,6 +91,7 @@ interface PosModuleProps {
   onDeleteMenuItem?: (itemId: string) => void;
   inventoryItems?: InventoryItemRecord[];
   hotelSettings?: any;
+  onUpdateHotelSettings?: (updated: any) => void;
   onRecordStockMovement?: (
     itemId: string,
     type: 'IN' | 'OUT',
@@ -335,8 +342,108 @@ export const PosModule: React.FC<PosModuleProps> = ({
   onDeleteMenuItem,
   inventoryItems = [],
   hotelSettings,
+  onUpdateHotelSettings,
   onRecordStockMovement,
 }) => {
+  // Per-hotel POS Facility Configuration (In-House Kitchen & In-House Café / Restaurant)
+  const [facilityOverrides, setFacilityOverrides] = useState<{
+    inHouseKitchenAvailable?: boolean;
+    inHouseRestaurantAvailable?: boolean;
+    posOutletName?: string;
+  }>({});
+
+  useEffect(() => {
+    setFacilityOverrides({});
+  }, [
+    hotelId,
+    hotelSettings?.inHouseKitchenAvailable,
+    hotelSettings?.inHouseRestaurantAvailable,
+    hotelSettings?.posOutletName,
+  ]);
+
+  const posCapabilities = useMemo(
+    () =>
+      resolvePosCapabilities(
+        {
+          ...(hotelSettings || {}),
+          ...facilityOverrides,
+        },
+        hotelId
+      ),
+    [hotelSettings, facilityOverrides, hotelId]
+  );
+
+  const [outletNameInput, setOutletNameInput] = useState<string>(posCapabilities.posOutletName);
+  const [fnbGstRateInput, setFnbGstRateInput] = useState<number>(
+    Number(hotelSettings?.foodGstRate ?? foodGstRate ?? 5)
+  );
+  useEffect(() => {
+    setOutletNameInput(posCapabilities.posOutletName);
+  }, [posCapabilities.posOutletName]);
+
+  const handleSavePosFacilitySettings = (patch: {
+    inHouseKitchenAvailable?: boolean;
+    inHouseRestaurantAvailable?: boolean;
+    posOutletName?: string;
+    foodGstRate?: number;
+  }) => {
+    const nextKitchen =
+      patch.inHouseKitchenAvailable !== undefined
+        ? patch.inHouseKitchenAvailable
+        : posCapabilities.inHouseKitchenAvailable;
+    const nextRestaurant =
+      patch.inHouseRestaurantAvailable !== undefined
+        ? patch.inHouseRestaurantAvailable
+        : posCapabilities.inHouseRestaurantAvailable;
+    const nextOutlet =
+      patch.posOutletName !== undefined
+        ? patch.posOutletName.trim() ||
+          (nextRestaurant ? 'Main Restaurant & Room Service' : 'In-Room Dining (Room Service)')
+        : posCapabilities.posOutletName;
+
+    setFacilityOverrides({
+      inHouseKitchenAvailable: nextKitchen,
+      inHouseRestaurantAvailable: nextRestaurant,
+      posOutletName: nextOutlet,
+    });
+
+    writeStoredPosFacilityFallback(hotelId, {
+      inHouseKitchenAvailable: nextKitchen,
+      inHouseRestaurantAvailable: nextRestaurant,
+      posOutletName: nextOutlet,
+    });
+
+    if (onUpdateHotelSettings) {
+      onUpdateHotelSettings({
+        ...(hotelSettings || { name: hotelName }),
+        id: hotelId,
+        name: hotelSettings?.name || hotelName,
+        inHouseKitchenAvailable: nextKitchen,
+        inHouseRestaurantAvailable: nextRestaurant,
+        posOutletName: nextOutlet,
+        ...(patch.foodGstRate !== undefined ? { foodGstRate: patch.foodGstRate } : {}),
+      });
+    }
+
+    if (onAddAuditLog) {
+      onAddAuditLog(
+        'POS Configuration Updated',
+        `Updated POS settings for ${hotelName} by ${loggedInUser}: In-House Kitchen = ${
+          nextKitchen ? 'YES' : 'NO'
+        }, In-House Café/Restaurant = ${nextRestaurant ? 'YES' : 'NO'}, Outlet = "${nextOutlet}".`
+      );
+    }
+    showToast(
+      `POS settings updated (Kitchen: ${nextKitchen ? 'ON' : 'OFF'} • Restaurant/Café: ${
+        nextRestaurant ? 'ON' : 'Room Service Only'
+      })`,
+      'success'
+    );
+  };
+
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyDateFilter, setHistoryDateFilter] = useState('');
+  const [historyModeFilter, setHistoryModeFilter] = useState<'ALL' | 'Dine In' | 'Takeaway' | 'Room Service'>('ALL');
   const [leftColTab, setLeftColTab] = useState<'tables' | 'orders' | 'bookings'>('tables');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [mealWindowFilter, setMealWindowFilter] = useState<'All' | 'Breakfast' | 'Lunch' | 'Dinner'>('All');
@@ -633,6 +740,51 @@ export const PosModule: React.FC<PosModuleProps> = ({
 
   // ---------------- Billing state (discount / coupon / negotiated settlement / GST / payments / open checks) ----------------
   const canApprove = ['Admin', 'Owner', 'Manager', 'SuperAdmin'].includes(String(currentRole));
+  const canOverrideItemPrice = [
+    'Admin',
+    'Owner',
+    'Manager',
+    'SuperAdmin',
+    'Reception',
+    'Receptionist',
+    'Accounts',
+  ].includes(String(currentRole));
+
+  // Enforce In-House Café / Restaurant setting: when NO, switch POS interface to Room Service Only
+  useEffect(() => {
+    if (!posCapabilities.inHouseRestaurantAvailable) {
+      setOrderType('Room Service');
+      if (leftColTab !== 'orders') {
+        setLeftColTab('orders');
+      }
+    }
+  }, [posCapabilities.inHouseRestaurantAvailable]);
+
+  // Listen to Standalone POS Top Header events (New Order, Search, Operational Date)
+  useEffect(() => {
+    const onNewOrderEvt = () => {
+      setCart([]);
+      setEditingOrder(null);
+      setOrderType(posCapabilities.defaultOrderType);
+    };
+    const onGlobalSearchEvt = (e: Event) => {
+      const q = String((e as CustomEvent)?.detail?.query ?? '');
+      setSearch(q);
+      setHistorySearch(q);
+    };
+    const onDateFilterEvt = (e: Event) => {
+      const dt = String((e as CustomEvent)?.detail?.date ?? '');
+      if (dt) setHistoryDateFilter(dt);
+    };
+    window.addEventListener('directstay:pos-new-order', onNewOrderEvt);
+    window.addEventListener('directstay:pos-global-search', onGlobalSearchEvt);
+    window.addEventListener('directstay:pos-date-filter', onDateFilterEvt);
+    return () => {
+      window.removeEventListener('directstay:pos-new-order', onNewOrderEvt);
+      window.removeEventListener('directstay:pos-global-search', onGlobalSearchEvt);
+      window.removeEventListener('directstay:pos-date-filter', onDateFilterEvt);
+    };
+  }, [posCapabilities.defaultOrderType]);
   const [discountEnabled, setDiscountEnabled] = useState(false);
   const [discountType, setDiscountType] = useState<'percent' | 'fixed'>('percent');
   const [discountValue, setDiscountValue] = useState<number | ''>('');
@@ -1036,7 +1188,11 @@ export const PosModule: React.FC<PosModuleProps> = ({
       })
     );
 
-    if (activeSubTab !== 'terminal' && activeSubTab !== 'dashboard') {
+    if (
+      activeSubTab !== 'terminal' &&
+      activeSubTab !== 'take_order' &&
+      activeSubTab !== 'dashboard'
+    ) {
       onSubTabChange('terminal');
     }
     if (!silentToast) {
@@ -1292,13 +1448,13 @@ export const PosModule: React.FC<PosModuleProps> = ({
     // Price overrides: ONLY when customUnitPrice manually differs from configured portion + add-on price!
     const overriddenLines = cart.filter((c) => isCartLinePriceOverridden(c));
     if (overriddenLines.length > 0) {
-      if (!canApprove) {
-        showToast('Manager approval is required to change an item price.', 'error');
+      if (!canOverrideItemPrice) {
+        showToast('Authorised staff permission is required to change an item selling price.', 'error');
         return;
       }
       const missing = overriddenLines.find((c) => !String(c.overrideReason || '').trim());
       if (missing) {
-        showToast(`Please enter a reason for the price change on "${missing.item.name}".`, 'warning');
+        showToast(`Please enter a reason for the custom price on "${missing.item.name}".`, 'warning');
         return;
       }
     }
@@ -1594,13 +1750,19 @@ export const PosModule: React.FC<PosModuleProps> = ({
         });
 
         if (onAddAuditLog) {
+          priceOverridesEdit.forEach((po) =>
+            onAddAuditLog(
+              'POS Item Price Override',
+              `${po.name}: Original ₹${po.originalPrice} → Custom ₹${po.newPrice} on order ${updatedOrder.orderNumber} by ${po.by} (${currentRole}). Reason: ${po.reason}`
+            )
+          );
           onAddAuditLog(
             'POS Order Edited',
             `Order ${updatedOrder.orderNumber} (${updatedOrder.tableNumber ? `Table ${updatedOrder.tableNumber}` : updatedOrder.orderType}) updated by ${loggedInUser} — Total ₹${updatedOrder.grandTotal}, Due ₹${updatedOrder.balanceDue}.`
           );
         }
 
-        if (actionLabel === 'KOT_OPEN' || actionLabel === 'KOT') {
+        if ((actionLabel === 'KOT_OPEN' || actionLabel === 'KOT') && posCapabilities.kotEnabled) {
           setPrintingKotOrder({ order: updatedOrder, isReprint: false });
         } else if (actionLabel === 'Print' || actionLabel === 'KOT + Invoice') {
           setPrintingFoodOrder(updatedOrder);
@@ -1884,7 +2046,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
         priceOverrides.forEach((po) =>
           onAddAuditLog(
             'POS Item Price Override',
-            `${po.name}: ₹${po.originalPrice} → ₹${po.newPrice} on order ${orderNum} by ${po.by}. Reason: ${po.reason}`
+            `${po.name}: Original ₹${po.originalPrice} → Custom ₹${po.newPrice} on order ${orderNum} by ${po.by} (${currentRole}). Reason: ${po.reason}`
           )
         );
         if (newOrder.discountMeta) {
@@ -1899,12 +2061,12 @@ export const PosModule: React.FC<PosModuleProps> = ({
             `Order ${orderNum}: ₹${newOrder.settlement.originalAmount} → ₹${newOrder.settlement.finalAmount} (adjustment ₹${newOrder.settlement.adjustment}) authorised by ${loggedInUser}. Reason: ${newOrder.settlement.reason}`
           );
         }
-        if (isSupplementary) {
+        if (isSupplementary && posCapabilities.kotEnabled) {
           onAddAuditLog('POS Supplementary KOT', `Table ${tableNumber}: ${kotNumber} created for check ${checkId} (new items only).`);
         }
       }
 
-      if (actionLabel === 'KOT_OPEN' || actionLabel === 'KOT') {
+      if ((actionLabel === 'KOT_OPEN' || actionLabel === 'KOT') && posCapabilities.kotEnabled) {
         setPrintingKotOrder({ order: newOrder, isReprint: false });
       } else if (actionLabel === 'Print' || actionLabel === 'KOT + Invoice') {
         setPrintingFoodOrder(newOrder);
@@ -2766,35 +2928,108 @@ export const PosModule: React.FC<PosModuleProps> = ({
     return matchCat && matchVeg && matchMeal && matchSearch;
   });
 
+  const visibleSubTabs = useMemo(
+    () =>
+      [
+        { id: 'terminal', label: 'POS Billing Terminal', show: true },
+        {
+          id: 'advance_booking',
+          label: 'Table Reservations',
+          show: posCapabilities.tableReservationsEnabled,
+        },
+        {
+          id: 'kds',
+          label: 'Kitchen Display (KDS / KOT)',
+          show: posCapabilities.kdsEnabled,
+        },
+        { id: 'orders_current', label: 'Current Orders', show: true },
+        { id: 'orders_history', label: 'Order History', show: true },
+        {
+          id: 'tables',
+          label: 'Restaurant Tables',
+          show: posCapabilities.tablesEnabled,
+        },
+        { id: 'catalog', label: 'Menu & Recipe Master', show: true },
+        { id: 'qr_menu', label: 'Digital Menu QR', show: true },
+        { id: 'reports', label: 'F&B Sales Summary', show: true },
+        { id: 'settings', label: 'POS Settings', show: true },
+      ].filter((t) => t.show),
+    [posCapabilities]
+  );
+
   return (
     <div className="space-y-4">
       {/* Header & Sub-Tabs */}
-      <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
+      <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-[#E8DEC8] shadow-2xs space-y-3">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-lg sm:text-xl font-bold text-slate-900 leading-snug">
-              POS Restaurant &amp; Room Service Terminal
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg sm:text-xl font-serif font-extrabold text-[#17120F] leading-snug">
+                {posCapabilities.inHouseRestaurantAvailable
+                  ? 'POS Restaurant & Room Service Terminal'
+                  : 'In-Room Dining (Room Service POS)'}
+              </h1>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                  posCapabilities.inHouseKitchenAvailable
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}
+              >
+                Kitchen: {posCapabilities.inHouseKitchenAvailable ? 'ON (KOT + KDS)' : 'OFF'}
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                  posCapabilities.inHouseRestaurantAvailable
+                    ? 'bg-amber-50 text-amber-900 border-amber-200'
+                    : 'bg-blue-50 text-blue-800 border-blue-200'
+                }`}
+              >
+                {posCapabilities.inHouseRestaurantAvailable
+                  ? 'Café / Restaurant: ON'
+                  : 'Room Service Only'}
+              </span>
+            </div>
             <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-              3-Column Restaurant POS • Tables, Running Checks &amp; Advance Bookings • KOT &amp; KDS • Room Folio &amp; Multi-Mode Billing
+              {posCapabilities.inHouseRestaurantAvailable
+                ? 'Dine-In Tables, Takeaway & Room Service • Custom Order Pricing • GST Billing & Hybrid Settlement'
+                : 'In-House Café/Restaurant is OFF — Room Service orders post directly to active PMS guest folios'}
             </p>
           </div>
-          <div className="grid grid-cols-3 sm:flex items-center gap-2 text-[11px] sm:text-xs w-full md:w-auto">
-            <span className="px-3 py-1.5 rounded-xl bg-amber-100 text-amber-900 font-bold text-center">
-              Active KOTs: {orders.filter((o) => !o.isHeld && o.kotStatus !== 'Served' && o.kotStatus !== 'Cancelled').length}
-            </span>
-            <span className="px-3 py-1.5 rounded-xl bg-purple-100 text-purple-900 font-bold text-center">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs w-full md:w-auto">
+            {posCapabilities.kotEnabled && (
+              <span className="px-3 py-1.5 rounded-xl bg-amber-100 text-amber-900 font-bold text-center whitespace-nowrap shrink-0">
+                Active KOTs:{' '}
+                {
+                  orders.filter(
+                    (o) => !o.isHeld && o.kotStatus !== 'Served' && o.kotStatus !== 'Cancelled'
+                  ).length
+                }
+              </span>
+            )}
+            <span className="px-3 py-1.5 rounded-xl bg-purple-100 text-purple-900 font-bold text-center whitespace-nowrap shrink-0">
               Held: {heldOrdersList.length}
             </span>
-            <span className="px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-900 font-bold text-center truncate">
-              Sales: {formatCurrency(orders.filter((o) => o.kotStatus !== 'Cancelled' && !o.isHeld).reduce((s, o) => s + o.grandTotal, 0))}
+            <span className="px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-900 font-bold text-center whitespace-nowrap shrink-0">
+              Sales:{' '}
+              {formatCurrency(
+                orders
+                  .filter((o) => o.kotStatus !== 'Cancelled' && !o.isHeld)
+                  .reduce((s, o) => s + o.grandTotal, 0)
+              )}
             </span>
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-slate-100">
           <div className="flex flex-wrap items-center gap-1.5">
-            {SUB_TABS.map((t) => {
-              const isActive = (activeSubTab === 'dashboard' ? 'terminal' : activeSubTab) === t.id;
+            {visibleSubTabs.map((t) => {
+              const normalizedActive =
+                activeSubTab === 'dashboard' || activeSubTab === 'take_order'
+                  ? 'terminal'
+                  : activeSubTab === 'orders'
+                  ? 'orders_current'
+                  : activeSubTab;
+              const isActive = normalizedActive === t.id;
               return (
                 <button
                   key={t.id}
@@ -2802,12 +3037,13 @@ export const PosModule: React.FC<PosModuleProps> = ({
                   onClick={() => onSubTabChange(t.id)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     isActive
-                      ? 'bg-slate-900 text-amber-400 shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      ? 'bg-[#17120F] text-[#F5D88A] shadow-xs'
+                      : 'bg-[#FAF6EE] text-slate-700 border border-[#E2D6BE] hover:bg-[#F3E9D4]'
                   }`}
                 >
                   {t.id === 'qr_menu' && <QrCode className="w-3.5 h-3.5" />}
                   {t.id === 'advance_booking' && <Calendar className="w-3.5 h-3.5" />}
+                  {t.id === 'settings' && <Settings className="w-3.5 h-3.5" />}
                   <span>{t.label}</span>
                 </button>
               );
@@ -2831,45 +3067,108 @@ export const PosModule: React.FC<PosModuleProps> = ({
       </div>
 
       {/* ================================================================================= */}
-      {/* SUB-TAB 1: 3-COLUMN POS BILLING TERMINAL (/pos/billing & /admin/pos/terminal)    */}
-      {/* Left: Tables, Orders & Advance Bookings | Center: Menu | Right: Cart & Billing    */}
+      {/* SUB-TAB 1: 3-COLUMN POS BILLING TERMINAL (/pos, /pos/take-order & /admin/pos)     */}
+      {/* Left: Tables/Rooms, Orders & Advance Bookings | Center: Menu | Right: Cart/Bill   */}
       {/* ================================================================================= */}
-      {(activeSubTab === 'terminal' || activeSubTab === 'dashboard') && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-          {/* ---------------- LEFT COLUMN (3 COLS): TABLES | ORDERS & HELD | BOOKINGS ---------------- */}
-          <div className="lg:col-span-3 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
-            <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-bold">
-              <button
-                type="button"
-                onClick={() => setLeftColTab('tables')}
-                className={`py-1.5 rounded-lg cursor-pointer transition ${
-                  leftColTab === 'tables' ? 'bg-slate-900 text-amber-400 shadow-2xs' : 'text-slate-600'
-                }`}
-              >
-                Tables ({tableConfigs.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setLeftColTab('orders')}
-                className={`py-1.5 rounded-lg cursor-pointer transition ${
-                  leftColTab === 'orders' ? 'bg-slate-900 text-amber-400 shadow-2xs' : 'text-slate-600'
-                }`}
-              >
-                Orders ({openChecks.length + heldOrdersList.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setLeftColTab('bookings')}
-                className={`py-1.5 rounded-lg cursor-pointer transition ${
-                  leftColTab === 'bookings' ? 'bg-slate-900 text-amber-400 shadow-2xs' : 'text-slate-600'
-                }`}
-              >
-                Bookings ({posAdvanceBookings.filter((b) => b.status !== 'Cancelled' && b.status !== 'Completed').length})
-              </button>
-            </div>
+      {(activeSubTab === 'terminal' ||
+        activeSubTab === 'take_order' ||
+        activeSubTab === 'dashboard') && (
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start min-w-0">
+          {/* ---------------- LEFT COLUMN (3 COLS): TABLES/ROOMS | ORDERS & HELD | BOOKINGS ---------------- */}
+          <div className="xl:col-span-3 min-w-0 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
+            {posCapabilities.inHouseRestaurantAvailable ? (
+              <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setLeftColTab('tables')}
+                  className={`py-1.5 rounded-lg cursor-pointer transition ${
+                    leftColTab === 'tables'
+                      ? 'bg-slate-900 text-amber-400 shadow-2xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Tables ({tableConfigs.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLeftColTab('orders')}
+                  className={`py-1.5 rounded-lg cursor-pointer transition ${
+                    leftColTab === 'orders'
+                      ? 'bg-slate-900 text-amber-400 shadow-2xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Orders ({openChecks.length + heldOrdersList.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLeftColTab('bookings')}
+                  className={`py-1.5 rounded-lg cursor-pointer transition ${
+                    leftColTab === 'bookings'
+                      ? 'bg-slate-900 text-amber-400 shadow-2xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Bookings (
+                  {
+                    posAdvanceBookings.filter(
+                      (b) => b.status !== 'Cancelled' && b.status !== 'Completed'
+                    ).length
+                  }
+                  )
+                </button>
+              </div>
+            ) : (
+              /* ROOM SERVICE ONLY MODE: In-House Occupied Rooms Quick Picker */
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                    <BedDouble className="w-3.5 h-3.5 text-amber-600" />
+                    In-House Rooms ({inHouseBookings.length})
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-400">Room Service Only</span>
+                </div>
+                {inHouseBookings.length === 0 ? (
+                  <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-[11px] text-amber-900">
+                    No checked-in guests currently in-house. Check in a guest in PMS Front Office to post Room Service orders.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-1.5 max-h-56 overflow-y-auto pr-0.5">
+                    {inHouseBookings.map((bk) => {
+                      const active = selectedBookingId === bk.id;
+                      return (
+                        <button
+                          key={bk.id}
+                          type="button"
+                          onClick={() => {
+                            setOrderType('Room Service');
+                            setSelectedBookingId(bk.id);
+                          }}
+                          className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                            active
+                              ? 'border-2 border-[#17120F] bg-amber-50/70 shadow-2xs'
+                              : 'border-slate-200 hover:border-amber-400 bg-slate-50/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-xs font-extrabold text-slate-900">
+                            <span>Room {bk.roomNumbers.join(', ')}</span>
+                            <span className="text-[10px] font-mono text-amber-800">
+                              #{bk.bookingNo}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-600 truncate mt-0.5">
+                            {bk.customerName}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* LEFT TAB A: TABLES */}
-            {leftColTab === 'tables' && (
+            {posCapabilities.inHouseRestaurantAvailable && leftColTab === 'tables' && (
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 px-0.5">
                   <span>Click table to load/edit order or bill</span>
@@ -3025,78 +3324,90 @@ export const PosModule: React.FC<PosModuleProps> = ({
                   </div>
                 )}
 
-                {/* Open Table Checks */}
-                <div className="space-y-1.5">
-                  <div className="text-[10px] font-extrabold uppercase text-amber-800">
-                    Running Table Checks ({openChecks.length})
+                {/* Open Table Checks (shown when In-House Café / Restaurant is ON) */}
+                {posCapabilities.inHouseRestaurantAvailable && (
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-extrabold uppercase text-amber-800">
+                      Running Table Checks ({openChecks.length})
+                    </div>
+                    {openChecks
+                      .filter(
+                        (g) =>
+                          !leftOrderSearch.trim() ||
+                          g.table.toLowerCase().includes(leftOrderSearch.toLowerCase()) ||
+                          g.orders.some((o) =>
+                            o.customerName.toLowerCase().includes(leftOrderSearch.toLowerCase())
+                          )
+                      )
+                      .map((g) => (
+                        <div key={g.table} className="p-2.5 rounded-xl border border-amber-200 bg-amber-50/40 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-extrabold text-slate-900">
+                              Table {g.table} ({g.orders.length} KOT{g.orders.length > 1 ? 's' : ''})
+                            </span>
+                            <span className="font-extrabold text-rose-700">Due {formatCurrency(g.due)}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-600">
+                            {g.orders.flatMap((o) => o.items).map((i) => `${i.name} x${i.qty}`).join(', ')}
+                          </div>
+                          <div className="grid grid-cols-3 gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleLoadOrderIntoTicket(g.orders[g.orders.length - 1])}
+                              className="py-1 rounded-lg border border-amber-300 bg-amber-100 hover:bg-amber-200 font-bold text-[10px] text-amber-950 inline-flex items-center justify-center gap-0.5 cursor-pointer"
+                            >
+                              <Pencil className="w-2.5 h-2.5" /> Edit
+                            </button>
+                            {posCapabilities.kotEnabled && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCart([]);
+                                  resetBillingState();
+                                  setOrderType('Dine In');
+                                  setTableNumber(g.table);
+                                }}
+                                className="py-1 rounded-lg border border-slate-300 bg-white font-bold text-[10px] text-slate-800 cursor-pointer"
+                              >
+                                + Supp. KOT
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSettleTable(g.table);
+                                setSettleMode('Cash');
+                                setSettleAmount('');
+                              }}
+                              className="py-1 rounded-lg bg-slate-900 text-amber-400 font-bold text-[10px] cursor-pointer"
+                            >
+                              Settle
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                   </div>
-                  {openChecks
-                    .filter(
-                      (g) =>
-                        !leftOrderSearch.trim() ||
-                        g.table.toLowerCase().includes(leftOrderSearch.toLowerCase()) ||
-                        g.orders.some((o) => o.customerName.toLowerCase().includes(leftOrderSearch.toLowerCase()))
-                    )
-                    .map((g) => (
-                      <div key={g.table} className="p-2.5 rounded-xl border border-amber-200 bg-amber-50/40 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-extrabold text-slate-900">
-                            Table {g.table} ({g.orders.length} KOT{g.orders.length > 1 ? 's' : ''})
-                          </span>
-                          <span className="font-extrabold text-rose-700">Due {formatCurrency(g.due)}</span>
-                        </div>
-                        <div className="text-[10px] text-slate-600">
-                          {g.orders.flatMap((o) => o.items).map((i) => `${i.name} x${i.qty}`).join(', ')}
-                        </div>
-                        <div className="grid grid-cols-3 gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleLoadOrderIntoTicket(g.orders[g.orders.length - 1])}
-                            className="py-1 rounded-lg border border-amber-300 bg-amber-100 hover:bg-amber-200 font-bold text-[10px] text-amber-950 inline-flex items-center justify-center gap-0.5 cursor-pointer"
-                          >
-                            <Pencil className="w-2.5 h-2.5" /> Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCart([]);
-                              resetBillingState();
-                              setOrderType('Dine In');
-                              setTableNumber(g.table);
-                            }}
-                            className="py-1 rounded-lg border border-slate-300 bg-white font-bold text-[10px] text-slate-800 cursor-pointer"
-                          >
-                            + Supp. KOT
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSettleTable(g.table);
-                              setSettleMode('Cash');
-                              setSettleAmount('');
-                            }}
-                            className="py-1 rounded-lg bg-slate-900 text-amber-400 font-bold text-[10px] cursor-pointer"
-                          >
-                            Settle
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                </div>
+                )}
 
                 {/* Recent Active Kitchen / Takeaway / Room Service Orders */}
                 <div className="space-y-1.5 pt-1">
                   <div className="text-[10px] font-extrabold uppercase text-slate-500">
-                    Live Order Progress
+                    {posCapabilities.inHouseRestaurantAvailable
+                      ? 'Live Order Progress'
+                      : 'Room Service Orders'}
                   </div>
                   {orders
                     .filter(
                       (o) =>
                         !o.isHeld &&
+                        (posCapabilities.inHouseRestaurantAvailable ||
+                          o.orderType === 'Room Service') &&
                         (!leftOrderSearch.trim() ||
                           o.orderNumber.toLowerCase().includes(leftOrderSearch.toLowerCase()) ||
                           o.customerName.toLowerCase().includes(leftOrderSearch.toLowerCase()) ||
-                          String(o.tableNumber || o.roomNumber || '').toLowerCase().includes(leftOrderSearch.toLowerCase()))
+                          String(o.tableNumber || o.roomNumber || '')
+                            .toLowerCase()
+                            .includes(leftOrderSearch.toLowerCase()))
                     )
                     .slice(0, 8)
                     .map((ord) => {
@@ -3154,7 +3465,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
             )}
 
             {/* LEFT TAB C: ADVANCE RESTAURANT BOOKINGS */}
-            {leftColTab === 'bookings' && (
+            {posCapabilities.inHouseRestaurantAvailable && leftColTab === 'bookings' && (
               <div className="space-y-2.5 max-h-[560px] overflow-y-auto pr-0.5 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-slate-500 uppercase">Upcoming Table Bookings</span>
@@ -3218,7 +3529,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
           </div>
 
           {/* ---------------- CENTER COLUMN (5 COLS): CATEGORIES, MENU & ITEM SELECTION ---------------- */}
-          <div className="lg:col-span-5 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-3.5">
+          <div className="xl:col-span-5 min-w-0 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-3.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="relative flex-1 min-w-[180px]">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -3399,9 +3710,9 @@ export const PosModule: React.FC<PosModuleProps> = ({
                           className="flex flex-wrap items-center gap-1.5 w-full"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          {item.variants!.map((v) => (
+                          {item.variants!.map((v, vIdx) => (
                             <button
-                              key={v.id}
+                              key={v.id || `${v.name}-${vIdx}`}
                               type="button"
                               onClick={() => addToCart(item, v.name)}
                               className="flex-1 min-w-[78px] py-1 px-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 text-[10.5px] font-extrabold flex items-center justify-center gap-1 cursor-pointer"
@@ -3420,7 +3731,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
 
           {/* ---------------- RIGHT COLUMN (4 COLS): CURRENT ORDER, KOT, DISCOUNTS & BILLING ---------------- */}
           <div
-            className={`lg:col-span-4 bg-white p-4 rounded-2xl border shadow-sm flex flex-col justify-between space-y-3.5 h-fit sticky top-20 transition-all ${
+            className={`xl:col-span-4 min-w-0 bg-white p-4 rounded-2xl border shadow-sm flex flex-col justify-between space-y-3.5 h-fit xl:sticky xl:top-20 transition-all ${
               editingOrder ? 'border-amber-400 ring-2 ring-amber-100' : 'border-slate-200/80'
             }`}
           >
@@ -3490,9 +3801,13 @@ export const PosModule: React.FC<PosModuleProps> = ({
                 </div>
               )}
 
-              {/* Order Type Toggle: Dine In | Takeaway | Room Service */}
-              <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl">
-                {(['Dine In', 'Takeaway', 'Room Service'] as const).map((t) => (
+              {/* Order Type Toggle: Dynamic per In-House Café / Restaurant Setting */}
+              <div
+                className={`grid ${
+                  posCapabilities.allowedOrderTypes.length === 1 ? 'grid-cols-1' : 'grid-cols-3'
+                } gap-1 bg-slate-100 p-1 rounded-xl`}
+              >
+                {posCapabilities.allowedOrderTypes.map((t) => (
                   <button
                     key={t}
                     type="button"
@@ -3738,8 +4053,8 @@ export const PosModule: React.FC<PosModuleProps> = ({
                             onChange={(e) => setLineVariant(lineId, e.target.value)}
                             className="px-2 py-0.5 rounded border border-slate-200 bg-white text-[11px] font-bold"
                           >
-                            {item.variants.map((v) => (
-                              <option key={v.id} value={v.name}>
+                            {item.variants.map((v, vIdx) => (
+                              <option key={v.id || `${v.name}-${vIdx}`} value={v.name}>
                                 {v.name} (₹{v.price})
                               </option>
                             ))}
@@ -3750,11 +4065,11 @@ export const PosModule: React.FC<PosModuleProps> = ({
                       {item.addons && item.addons.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1">
                           <span className="text-[10px] font-bold text-slate-500">Add-ons:</span>
-                          {item.addons.map((ad) => {
+                          {item.addons.map((ad, adIdx) => {
                             const selected = Boolean(addons?.includes(ad.name));
                             return (
                               <button
-                                key={ad.id}
+                                key={ad.id || `${ad.name}-${adIdx}`}
                                 type="button"
                                 onClick={() => toggleLineAddon(lineId, ad.name)}
                                 className={`px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
@@ -3772,19 +4087,23 @@ export const PosModule: React.FC<PosModuleProps> = ({
                       )}
 
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-bold text-slate-500">₹/unit</span>
+                        <span className="text-[10px] font-bold text-slate-500">Order ₹</span>
                         <input
                           type="number"
                           min={0}
-                          disabled={!canApprove}
+                          disabled={!canOverrideItemPrice}
                           title={
-                            canApprove
-                              ? 'Price for this order only — master menu price is not changed'
-                              : 'Manager approval is required to change an item price'
+                            canOverrideItemPrice
+                              ? 'Custom selling price for this order only — original product master price stays unchanged'
+                              : 'Authorised staff permission is required to change an item selling price'
                           }
                           value={eff}
                           onChange={(e) => setLinePrice(lineId, e.target.value)}
-                          className="w-16 px-1.5 py-1 rounded-lg border border-slate-200 text-xs font-bold disabled:bg-slate-100 disabled:text-slate-400"
+                          className={`w-20 px-1.5 py-1 rounded-lg border text-xs font-extrabold disabled:bg-slate-100 disabled:text-slate-400 ${
+                            overridden
+                              ? 'border-amber-400 bg-amber-50 text-amber-950'
+                              : 'border-slate-200 bg-white text-slate-900'
+                          }`}
                         />
                         <input
                           type="number"
@@ -3805,21 +4124,42 @@ export const PosModule: React.FC<PosModuleProps> = ({
                       </div>
 
                       {overridden && (
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="text"
-                            placeholder="Price override reason (required)"
-                            value={overrideReason || ''}
-                            onChange={(e) => setLineReason(lineId, e.target.value)}
-                            className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-amber-300 bg-amber-50 text-[11px]"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => resetLinePrice(lineId)}
-                            className="px-1.5 py-1 rounded-lg border border-slate-200 text-[10px] font-bold text-slate-600 cursor-pointer"
-                          >
-                            Reset
-                          </button>
+                        <div className="space-y-1.5 pt-0.5">
+                          <div className="flex items-center justify-between text-[10px] font-bold text-amber-800">
+                            <span>
+                              Custom Order Price: ₹{eff} (Master Price ₹{configuredUnitPrice} unchanged)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => resetLinePrice(lineId)}
+                              className="underline hover:text-amber-950 cursor-pointer"
+                            >
+                              Reset to ₹{configuredUnitPrice}
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              placeholder="Reason for custom price (required for audit log) *"
+                              value={overrideReason || ''}
+                              onChange={(e) => setLineReason(lineId, e.target.value)}
+                              className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-amber-300 bg-amber-50 text-[11px]"
+                            />
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {['Special Guest Prep', 'Extra Rich / Add-on', 'Custom Order Rate'].map(
+                              (preset) => (
+                                <button
+                                  key={preset}
+                                  type="button"
+                                  onClick={() => setLineReason(lineId, preset)}
+                                  className="px-1.5 py-0.5 rounded bg-white border border-amber-200 hover:border-amber-400 text-[9.5px] font-semibold text-amber-900 cursor-pointer"
+                                >
+                                  {preset}
+                                </button>
+                              )
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -3867,7 +4207,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
 
               {editingOrder ? (
                 <>
-                  <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div className={`grid ${posCapabilities.kotEnabled ? 'grid-cols-2' : 'grid-cols-1'} gap-2 pt-1`}>
                     <button
                       type="button"
                       disabled={cart.length === 0}
@@ -3876,14 +4216,16 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     >
                       <Check className="w-3.5 h-3.5" /> Update Order
                     </button>
-                    <button
-                      type="button"
-                      disabled={cart.length === 0}
-                      onClick={() => handleFinalizeOrder('KOT_OPEN')}
-                      className="py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs flex items-center justify-center gap-1 cursor-pointer"
-                    >
-                      <Printer className="w-3.5 h-3.5" /> Update &amp; KOT
-                    </button>
+                    {posCapabilities.kotEnabled && (
+                      <button
+                        type="button"
+                        disabled={cart.length === 0}
+                        onClick={() => handleFinalizeOrder('KOT_OPEN')}
+                        className="py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> Update &amp; KOT
+                      </button>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -3896,7 +4238,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
                 </>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div className={`grid ${posCapabilities.kotEnabled && posCapabilities.dineInEnabled ? 'grid-cols-2' : 'grid-cols-1'} gap-2 pt-1`}>
                     <button
                       type="button"
                       disabled={cart.length === 0}
@@ -3905,15 +4247,17 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     >
                       Hold Bill
                     </button>
-                    <button
-                      type="button"
-                      disabled={cart.length === 0 || orderType !== 'Dine In'}
-                      onClick={() => handleFinalizeOrder('KOT_OPEN')}
-                      title="Send KOT to kitchen and keep table check open"
-                      className="py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs cursor-pointer"
-                    >
-                      {openCheckForCurrentTable ? 'Send Supp. KOT' : 'Send KOT (Open)'}
-                    </button>
+                    {posCapabilities.kotEnabled && posCapabilities.dineInEnabled && (
+                      <button
+                        type="button"
+                        disabled={cart.length === 0 || orderType !== 'Dine In'}
+                        onClick={() => handleFinalizeOrder('KOT_OPEN')}
+                        title="Send KOT to kitchen and keep table check open"
+                        className="py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs cursor-pointer"
+                      >
+                        {openCheckForCurrentTable ? 'Send Supp. KOT' : 'Send KOT (Open)'}
+                      </button>
+                    )}
                   </div>
 
                   <button
@@ -3922,7 +4266,9 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     onClick={() => setShowAdditionalModal(true)}
                     className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-extrabold text-xs uppercase tracking-wider shadow-sm transition cursor-pointer"
                   >
-                    Proceed to KOT, Discount &amp; Settlement →
+                    {posCapabilities.kotEnabled
+                      ? 'Proceed to KOT, Discount & Settlement →'
+                      : 'Proceed to Discount, Bill & Settlement →'}
                   </button>
                 </>
               )}
@@ -4745,44 +5091,58 @@ export const PosModule: React.FC<PosModuleProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* 4. COMPLETE KOT SYSTEM, LIVE KDS & RUNNING ORDERS                     */}
+      {/* 4. COMPLETE KOT SYSTEM, LIVE KDS & CURRENT ORDERS                     */}
       {/* ===================================================================== */}
-      {(activeSubTab === 'kds' || activeSubTab === 'orders') && (
+      {(activeSubTab === 'kds' ||
+        activeSubTab === 'orders' ||
+        activeSubTab === 'orders_current') && (
         <div className="space-y-4">
           <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-sm font-extrabold text-slate-900">
-                {activeSubTab === 'kds'
+                {activeSubTab === 'kds' && posCapabilities.kdsEnabled
                   ? 'Kitchen Display System (KDS) — Live KOT Routing & Preparation'
-                  : 'Running POS Orders, KOT Progress & Invoices'}
+                  : 'Current POS Orders, Preparation Status & Live Billing'}
               </h3>
               <p className="text-xs text-slate-500">
-                Workflow: Order Created → KOT Sent → Kitchen Accepted → Preparing → Ready → Served / Delivered → Paid / Closed
+                {posCapabilities.kotEnabled
+                  ? 'Workflow: Order Created → KOT Sent → Kitchen Accepted → Preparing → Ready → Served / Delivered → Paid / Closed'
+                  : 'In-House Kitchen is OFF — Direct Order Fulfillment, Delivery & Settlement'}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {(['ALL', 'Main Kitchen', 'Tandoor', 'Beverage Bar', 'Bakery'] as const).map((st) => (
-                <button
-                  key={st}
-                  type="button"
-                  onClick={() => setKdsStationFilter(st)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
-                    kdsStationFilter === st
-                      ? 'bg-slate-900 text-amber-400'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {st === 'ALL' ? 'All Kitchen Stations' : st}
-                </button>
-              ))}
-            </div>
+            {posCapabilities.kdsEnabled && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(['ALL', 'Main Kitchen', 'Tandoor', 'Beverage Bar', 'Bakery'] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setKdsStationFilter(st)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                      kdsStationFilter === st
+                        ? 'bg-slate-900 text-amber-400'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {st === 'ALL' ? 'All Kitchen Stations' : st}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {orders
               .filter((o) => {
-                if (o.isHeld) return false;
-                if (kdsStationFilter === 'ALL') return true;
+                if (activeSubTab === 'orders_current') {
+                  if (o.kotStatus === 'Cancelled') return false;
+                  const isClosed =
+                    o.kotStatus === 'Served' &&
+                    (o.paymentStatus === 'Paid' || o.paymentStatus === 'Unpaid (Room Folio)');
+                  if (isClosed && !o.isHeld) return false;
+                } else if (o.isHeld) {
+                  return false;
+                }
+                if (!posCapabilities.kdsEnabled || kdsStationFilter === 'ALL') return true;
                 return o.items.some((i) => {
                   const found = menuItems.find((m) => m.id === i.itemId);
                   return (found?.kitchenStation || 'Main Kitchen') === kdsStationFilter;
@@ -4973,53 +5333,69 @@ export const PosModule: React.FC<PosModuleProps> = ({
                         </span>
                       </div>
 
-                      {/* KOT Stage Transitions */}
+                      {/* KOT Stage Transitions (adapts when In-House Kitchen is OFF) */}
                       {!isCancelled && (
                         <div className="grid grid-cols-2 gap-1.5">
-                          {order.kotStatus === 'KOT Sent' && (
-                            <button
-                              type="button"
-                              onClick={() => handleAdvanceKotStage(order, 'Kitchen Accepted')}
-                              className="col-span-2 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer"
-                            >
-                              Accept KOT in Kitchen
-                            </button>
-                          )}
-                          {(order.kotStatus === 'KOT Sent' || order.kotStatus === 'Kitchen Accepted') && (
-                            <button
-                              type="button"
-                              onClick={() => handleAdvanceKotStage(order, 'Preparing')}
-                              className="col-span-2 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold cursor-pointer"
-                            >
-                              Start Preparing
-                            </button>
-                          )}
-                          {order.kotStatus === 'Preparing' && (
-                            <button
-                              type="button"
-                              onClick={() => handleAdvanceKotStage(order, 'Ready')}
-                              className="col-span-2 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
-                            >
-                              Mark Food Ready
-                            </button>
-                          )}
-                          {order.kotStatus === 'Ready' && (
-                            <button
-                              type="button"
-                              onClick={() => handleAdvanceKotStage(order, 'Served')}
-                              className="col-span-2 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-400 text-xs font-bold cursor-pointer"
-                            >
-                              {order.orderType === 'Room Service'
-                                ? 'Mark Delivered to Room'
-                                : order.orderType === 'Takeaway'
-                                ? 'Mark Handed Over'
-                                : 'Mark Served at Table'}
-                            </button>
+                          {posCapabilities.kotEnabled ? (
+                            <>
+                              {order.kotStatus === 'KOT Sent' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAdvanceKotStage(order, 'Kitchen Accepted')}
+                                  className="col-span-2 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer"
+                                >
+                                  Accept KOT in Kitchen
+                                </button>
+                              )}
+                              {(order.kotStatus === 'KOT Sent' || order.kotStatus === 'Kitchen Accepted') && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAdvanceKotStage(order, 'Preparing')}
+                                  className="col-span-2 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold cursor-pointer"
+                                >
+                                  Start Preparing
+                                </button>
+                              )}
+                              {order.kotStatus === 'Preparing' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAdvanceKotStage(order, 'Ready')}
+                                  className="col-span-2 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
+                                >
+                                  Mark Food Ready
+                                </button>
+                              )}
+                              {order.kotStatus === 'Ready' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAdvanceKotStage(order, 'Served')}
+                                  className="col-span-2 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-400 text-xs font-bold cursor-pointer"
+                                >
+                                  {order.orderType === 'Room Service'
+                                    ? 'Mark Delivered to Room'
+                                    : order.orderType === 'Takeaway'
+                                    ? 'Mark Handed Over'
+                                    : 'Mark Served at Table'}
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            order.kotStatus !== 'Served' && (
+                              <button
+                                type="button"
+                                onClick={() => handleAdvanceKotStage(order, 'Served')}
+                                className="col-span-2 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-400 text-xs font-bold cursor-pointer"
+                              >
+                                {order.orderType === 'Room Service'
+                                  ? 'Mark Delivered to Room'
+                                  : 'Mark Served / Completed'}
+                              </button>
+                            )
                           )}
                         </div>
                       )}
 
-                      {/* Edit Order, Print KOT, Reprint KOT, Food Bill, Settle & Void */}
+                      {/* Edit Order, Print KOT (only when Kitchen=ON), Food Bill, Settle & Void */}
                       <div className="flex flex-wrap gap-1.5 pt-1">
                         {!isCancelled && (
                           <button
@@ -5031,20 +5407,24 @@ export const PosModule: React.FC<PosModuleProps> = ({
                             <Pencil className="w-3.5 h-3.5" /> Edit
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => setPrintingKotOrder({ order, isReprint: false })}
-                          className="flex-1 py-1.5 px-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer"
-                        >
-                          <Printer className="w-3.5 h-3.5" /> KOT
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleReprintKot(order)}
-                          className="flex-1 py-1.5 px-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer"
-                        >
-                          <Printer className="w-3.5 h-3.5" /> Reprint
-                        </button>
+                        {posCapabilities.kotPrintingEnabled && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setPrintingKotOrder({ order, isReprint: false })}
+                              className="flex-1 py-1.5 px-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5" /> KOT
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleReprintKot(order)}
+                              className="flex-1 py-1.5 px-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5" /> Reprint
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
                           onClick={() => setPrintingFoodOrder(order)}
@@ -5354,24 +5734,528 @@ export const PosModule: React.FC<PosModuleProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* 7. ADVANCE RESTAURANT BOOKING TAB                                     */}
+      {/* 7. ADVANCE RESTAURANT BOOKING TAB (GUARDED WHEN RESTAURANT IS OFF)    */}
       {/* ===================================================================== */}
-      {activeSubTab === 'advance_booking' && (
-        <FoodAdvanceBookingPanel
-          bookings={posAdvanceBookings}
-          hotelName={hotelName}
-          loggedInUser={loggedInUser}
-          availableTables={tableConfigs.map((t) => t.tableNumber)}
-          initialEditBookingId={pendingEditAdvanceId}
-          onClearInitialEdit={() => setPendingEditAdvanceId(null)}
-          onUpdateBookings={(updated) =>
-            onUpdatePosAdvanceBookings && onUpdatePosAdvanceBookings(updated)
-          }
-          onCreatePosOrderFromAdvance={(booking) => {
-            handleConvertAdvanceToLive(booking);
-            onSubTabChange('terminal');
-          }}
-        />
+      {activeSubTab === 'advance_booking' &&
+        (posCapabilities.tableReservationsEnabled ? (
+          <FoodAdvanceBookingPanel
+            bookings={posAdvanceBookings}
+            hotelName={hotelName}
+            loggedInUser={loggedInUser}
+            availableTables={tableConfigs.map((t) => t.tableNumber)}
+            initialEditBookingId={pendingEditAdvanceId}
+            onClearInitialEdit={() => setPendingEditAdvanceId(null)}
+            onUpdateBookings={(updated) =>
+              onUpdatePosAdvanceBookings && onUpdatePosAdvanceBookings(updated)
+            }
+            onCreatePosOrderFromAdvance={(booking) => {
+              handleConvertAdvanceToLive(booking);
+              onSubTabChange('terminal');
+            }}
+          />
+        ) : (
+          <div className="bg-white p-8 rounded-2xl border border-[#E8DEC8] text-center space-y-3 max-w-xl mx-auto">
+            <div className="text-base font-serif font-extrabold text-[#17120F]">
+              Table Reservations Disabled (Room Service Only Mode)
+            </div>
+            <p className="text-xs text-slate-500">
+              In-House Café / Restaurant is currently set to <strong>NO</strong> for {hotelName}. All{' '}
+              {posAdvanceBookings.length} existing reservation record(s) are safely preserved. Enable In-House Café / Restaurant in POS Settings to manage table reservations.
+            </p>
+            <button
+              type="button"
+              onClick={() => onSubTabChange('settings')}
+              className="px-4 py-2 rounded-xl bg-[#17120F] text-[#F5D88A] font-bold text-xs cursor-pointer"
+            >
+              Open POS Settings →
+            </button>
+          </div>
+        ))}
+
+      {/* ===================================================================== */}
+      {/* 8. ORDER HISTORY TAB (/pos/orders/history)                            */}
+      {/* ===================================================================== */}
+      {activeSubTab === 'orders_history' && (
+        <div className="bg-white p-5 rounded-2xl border border-[#E8DEC8] shadow-2xs space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-slate-100 pb-3.5">
+            <div>
+              <h3 className="text-base font-serif font-extrabold text-[#17120F]">
+                POS Order History &amp; Invoices
+              </h3>
+              <p className="text-xs text-slate-500">
+                Complete historical ledger of all POS orders (Dine-In, Takeaway &amp; Room Service), custom item prices, GST invoices and payment settlements.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  placeholder="Search order #, guest, room/table..."
+                  className="pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 bg-[#FAF7F0] text-xs w-56"
+                />
+              </div>
+              <input
+                type="date"
+                value={historyDateFilter}
+                onChange={(e) => setHistoryDateFilter(e.target.value)}
+                className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold"
+              />
+              {historyDateFilter && (
+                <button
+                  type="button"
+                  onClick={() => setHistoryDateFilter('')}
+                  className="px-2 py-1 rounded-lg bg-slate-100 text-slate-600 text-[11px] font-bold cursor-pointer"
+                >
+                  All Dates
+                </button>
+              )}
+              <select
+                value={historyModeFilter}
+                onChange={(e) => setHistoryModeFilter(e.target.value as any)}
+                className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white text-xs font-bold"
+              >
+                <option value="ALL">All Order Modes</option>
+                <option value="Dine In">Dine In</option>
+                <option value="Takeaway">Takeaway</option>
+                <option value="Room Service">Room Service</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 text-[10px] font-extrabold uppercase text-slate-500">
+                  <th className="py-2.5 px-3">Order / KOT</th>
+                  <th className="py-2.5 px-3">Date &amp; Time</th>
+                  <th className="py-2.5 px-3">Mode &amp; Target</th>
+                  <th className="py-2.5 px-3">Guest</th>
+                  <th className="py-2.5 px-3">Items Ordered</th>
+                  <th className="py-2.5 px-3 text-right">Subtotal / GST</th>
+                  <th className="py-2.5 px-3 text-right">Grand Total</th>
+                  <th className="py-2.5 px-3">Payment Status</th>
+                  <th className="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {orders
+                  .filter((o) => {
+                    if (o.isHeld) return false;
+                    if (historyModeFilter !== 'ALL' && o.orderType !== historyModeFilter) return false;
+                    if (historyDateFilter && !String(o.dateTime || '').startsWith(historyDateFilter)) {
+                      return false;
+                    }
+                    const q = historySearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return (
+                      o.orderNumber.toLowerCase().includes(q) ||
+                      String(o.kotNumber || '').toLowerCase().includes(q) ||
+                      o.customerName.toLowerCase().includes(q) ||
+                      String(o.roomNumber || o.tableNumber || '').toLowerCase().includes(q) ||
+                      o.items.some((i) => i.name.toLowerCase().includes(q))
+                    );
+                  })
+                  .map((ord) => (
+                    <tr key={ord.id} className="hover:bg-[#FAF7F0]">
+                      <td className="py-2.5 px-3 font-mono font-bold text-[#17120F]">
+                        <div>{ord.orderNumber}</div>
+                        {ord.kotNumber && posCapabilities.kotEnabled && (
+                          <div className="text-[10px] text-[#8C7355]">{ord.kotNumber}</div>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">{ord.dateTime}</td>
+                      <td className="py-2.5 px-3">
+                        <span className="font-bold text-slate-800">{ord.orderType}</span>
+                        <div className="text-[10px] text-amber-800 font-semibold">
+                          {ord.roomNumber
+                            ? `Room ${ord.roomNumber}`
+                            : ord.tableNumber
+                            ? `Table ${ord.tableNumber}`
+                            : 'Counter'}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <div className="font-bold text-slate-800">{ord.customerName}</div>
+                        {ord.customerPhone && (
+                          <div className="text-[10px] text-slate-400 font-mono">{ord.customerPhone}</div>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 max-w-[260px]">
+                        <div className="truncate font-medium text-slate-700">
+                          {ord.items
+                            .map((i) => `${i.qty}x ${i.name} (₹${i.price})`)
+                            .join(', ')}
+                        </div>
+                        {ord.priceOverrides && ord.priceOverrides.length > 0 && (
+                          <div className="text-[10px] font-bold text-amber-700 mt-0.5">
+                            Custom Price Override ({ord.priceOverrides.length})
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                        <div>{formatCurrency(ord.subtotal)}</div>
+                        <div className="text-[10px] text-slate-400">
+                          GST: {formatCurrency(ord.taxAmount)}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-extrabold text-[#17120F]">
+                        {formatCurrency(ord.grandTotal)}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            ord.kotStatus === 'Cancelled'
+                              ? 'bg-rose-100 text-rose-800'
+                              : ord.paymentStatus === 'Paid'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : ord.paymentStatus === 'Unpaid (Room Folio)'
+                              ? 'bg-amber-100 text-amber-900'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}
+                        >
+                          {ord.kotStatus === 'Cancelled' ? 'Void / Cancelled' : ord.paymentStatus}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setPrintingFoodOrder(ord)}
+                            className="px-2.5 py-1 rounded-lg bg-[#17120F] text-[#F5D88A] font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Printer className="w-3 h-3" /> Invoice
+                          </button>
+                          {ord.kotStatus !== 'Cancelled' &&
+                            ord.paymentStatus !== 'Unpaid (Room Folio)' &&
+                            (ord.balanceDue ?? 0) > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOrderPaymentModal(ord);
+                                  setOrderPayAmtInput(ord.balanceDue || 0);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold text-[11px] cursor-pointer"
+                              >
+                                Settle
+                              </button>
+                            )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* 9. POS CONFIGURATION SETTINGS (/pos/settings)                         */}
+      {/* ===================================================================== */}
+      {activeSubTab === 'settings' && (
+        <div className="max-w-4xl mx-auto space-y-5">
+          <div className="bg-white p-6 rounded-2xl border border-[#E8DEC8] shadow-2xs space-y-5">
+            <div className="border-b border-slate-100 pb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-amber-100 text-amber-900">
+                  Property-Scoped POS Settings
+                </span>
+                <h2 className="text-lg font-serif font-extrabold text-[#17120F] mt-1">
+                  POS Configuration Settings — {hotelName}
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Configure kitchen KOT/KDS operations and café/restaurant dining modes for this property. Existing orders, menus, tables and folios are always preserved when switching modes.
+                </p>
+              </div>
+            </div>
+
+            {/* TWO CORE ON/OFF SWITCHES */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Switch 1: In-House Kitchen Available? */}
+              <div
+                className={`p-5 rounded-2xl border-2 transition ${
+                  posCapabilities.inHouseKitchenAvailable
+                    ? 'border-emerald-300 bg-emerald-50/40'
+                    : 'border-slate-200 bg-slate-50/60'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-extrabold text-[#17120F] flex items-center gap-2">
+                      <ChefHat className="w-4 h-4 text-[#B08326]" />
+                      <span>In-House Kitchen Available?</span>
+                    </div>
+                    <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                      <strong>YES:</strong> Enables KOT generation, 80mm thermal KOT printing, supplementary KOTs and live Kitchen Display System (KDS).
+                      <br />
+                      <strong>NO:</strong> Hides/disables KOT printing and Kitchen Display options for direct billing &amp; delivery.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-200/70 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700">
+                    Current Status:{' '}
+                    <strong
+                      className={
+                        posCapabilities.inHouseKitchenAvailable
+                          ? 'text-emerald-700'
+                          : 'text-slate-600'
+                      }
+                    >
+                      {posCapabilities.inHouseKitchenAvailable ? 'YES (Enabled)' : 'NO (Disabled)'}
+                    </strong>
+                  </span>
+                  <div className="inline-flex rounded-xl bg-white p-1 border border-slate-200 shadow-2xs">
+                    <button
+                      type="button"
+                      data-testid="toggle-kitchen-yes"
+                      onClick={() =>
+                        handleSavePosFacilitySettings({ inHouseKitchenAvailable: true })
+                      }
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${
+                        posCapabilities.inHouseKitchenAvailable
+                          ? 'bg-emerald-600 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      YES
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="toggle-kitchen-no"
+                      onClick={() =>
+                        handleSavePosFacilitySettings({ inHouseKitchenAvailable: false })
+                      }
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${
+                        !posCapabilities.inHouseKitchenAvailable
+                          ? 'bg-slate-900 text-amber-400 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      NO
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Switch 2: In-House Café / Restaurant Available? */}
+              <div
+                className={`p-5 rounded-2xl border-2 transition ${
+                  posCapabilities.inHouseRestaurantAvailable
+                    ? 'border-amber-300 bg-amber-50/40'
+                    : 'border-blue-200 bg-blue-50/40'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-extrabold text-[#17120F] flex items-center gap-2">
+                      <Utensils className="w-4 h-4 text-[#B08326]" />
+                      <span>In-House Café / Restaurant Available?</span>
+                    </div>
+                    <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                      <strong>YES:</strong> Enables Dine-In, Restaurant Tables, Table Reservations, Takeaway and Room Service.
+                      <br />
+                      <strong>NO:</strong> Shows <strong>only Room Service</strong> in the POS interface while preserving all historical Dine-In &amp; Reservation records.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-200/70 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700">
+                    Current Status:{' '}
+                    <strong
+                      className={
+                        posCapabilities.inHouseRestaurantAvailable
+                          ? 'text-amber-800'
+                          : 'text-blue-800'
+                      }
+                    >
+                      {posCapabilities.inHouseRestaurantAvailable
+                        ? 'YES (Full Outlet)'
+                        : 'NO (Room Service Only)'}
+                    </strong>
+                  </span>
+                  <div className="inline-flex rounded-xl bg-white p-1 border border-slate-200 shadow-2xs">
+                    <button
+                      type="button"
+                      data-testid="toggle-restaurant-yes"
+                      onClick={() =>
+                        handleSavePosFacilitySettings({ inHouseRestaurantAvailable: true })
+                      }
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${
+                        posCapabilities.inHouseRestaurantAvailable
+                          ? 'bg-[#17120F] text-[#F5D88A] shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      YES
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="toggle-restaurant-no"
+                      onClick={() =>
+                        handleSavePosFacilitySettings({ inHouseRestaurantAvailable: false })
+                      }
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${
+                        !posCapabilities.inHouseRestaurantAvailable
+                          ? 'bg-blue-700 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      NO
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Outlet Name & F&B Tax Configuration */}
+            <div className="p-4 rounded-2xl bg-[#FAF7F0] border border-[#E8DEC8] grid grid-cols-1 md:grid-cols-3 gap-3 items-end text-xs">
+              <div>
+                <label className="block text-[10px] font-extrabold uppercase text-[#7A6A53] mb-1">
+                  POS Outlet Display Name
+                </label>
+                <input
+                  type="text"
+                  value={outletNameInput}
+                  onChange={(e) => setOutletNameInput(e.target.value)}
+                  placeholder="e.g. Main Restaurant & Room Service"
+                  className="w-full px-3 py-2 rounded-xl border border-[#DFD3BA] bg-white font-bold text-[#17120F]"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-extrabold uppercase text-[#7A6A53] mb-1">
+                  Default F&amp;B GST Rate (%)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={28}
+                  value={fnbGstRateInput}
+                  onChange={(e) => setFnbGstRateInput(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-full px-3 py-2 rounded-xl border border-[#DFD3BA] bg-white font-bold text-[#17120F]"
+                />
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSavePosFacilitySettings({
+                      posOutletName: outletNameInput,
+                      foodGstRate: fnbGstRateInput,
+                    })
+                  }
+                  className="w-full py-2.5 px-4 rounded-xl bg-[#17120F] hover:bg-black text-[#F5D88A] font-extrabold text-xs cursor-pointer"
+                >
+                  Save Outlet &amp; Tax Preferences
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Management Links */}
+            <div className="flex flex-wrap items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => onSubTabChange('catalog')}
+                className="px-4 py-2 rounded-xl bg-[#FAF6EE] hover:bg-[#F3E8D0] border border-[#DFC078] text-[#17120F] font-bold text-xs cursor-pointer"
+              >
+                Manage Menu &amp; Recipe Master ({menuItems.length} Products) →
+              </button>
+              {posCapabilities.tablesEnabled && (
+                <button
+                  type="button"
+                  onClick={() => onSubTabChange('tables')}
+                  className="px-4 py-2 rounded-xl bg-[#FAF6EE] hover:bg-[#F3E8D0] border border-[#DFC078] text-[#17120F] font-bold text-xs cursor-pointer"
+                >
+                  Manage Restaurant Tables ({tableConfigs.length} Tables) →
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onSubTabChange('reports')}
+                className="px-4 py-2 rounded-xl bg-[#FAF6EE] hover:bg-[#F3E8D0] border border-[#DFC078] text-[#17120F] font-bold text-xs cursor-pointer"
+              >
+                View F&amp;B Sales &amp; Audit Summary →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* 10. POS HELP GUIDE (/pos/help)                                        */}
+      {/* ===================================================================== */}
+      {activeSubTab === 'help' && (
+        <div className="max-w-4xl mx-auto bg-white p-6 rounded-2xl border border-[#E8DEC8] shadow-2xs space-y-5 text-xs">
+          <div className="border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-2 text-[#B08326] font-extrabold uppercase tracking-wider text-[11px]">
+              <HelpCircle className="w-4 h-4" />
+              <span>DirectStay POS Operations Manual</span>
+            </div>
+            <h2 className="text-lg font-serif font-extrabold text-[#17120F] mt-1">
+              POS Quick Reference &amp; Cashier Guide
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 rounded-2xl bg-[#FAF7F0] border border-[#E8DEC8] space-y-1.5">
+              <div className="font-extrabold text-[#17120F] text-sm">
+                1. Taking Dine-In, Takeaway &amp; Room Service Orders
+              </div>
+              <p className="text-slate-600 leading-relaxed">
+                Click <strong>Take Order</strong> or <strong>+ New Order</strong>, choose the order mode, click items from the menu grid to add to the ticket, and select <strong>Send KOT (Open)</strong> for running table checks or <strong>Proceed to Settlement</strong> for instant billing.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#FAF7F0] border border-[#E8DEC8] space-y-1.5">
+              <div className="font-extrabold text-[#17120F] text-sm">
+                2. Custom Product Price Per Order
+              </div>
+              <p className="text-slate-600 leading-relaxed">
+                Need a custom rate for a single order (e.g. Paneer ₹500 → ₹600)? Edit the <strong>Order ₹</strong> field directly inside the cart line and pick/type a reason. The invoice and GST recalculate automatically, the master menu price remains ₹500, and an audit log is recorded.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#FAF7F0] border border-[#E8DEC8] space-y-1.5">
+              <div className="font-extrabold text-[#17120F] text-sm">
+                3. Room Service &amp; Guest Folio Sync
+              </div>
+              <p className="text-slate-600 leading-relaxed">
+                Select <strong>Room Service</strong>, pick the occupied room &amp; checked-in guest, and choose <strong>Post to Room Folio</strong>. Charges post directly to that guest&apos;s PMS stay bill without duplicate entries or double GST.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#FAF7F0] border border-[#E8DEC8] space-y-1.5">
+              <div className="font-extrabold text-[#17120F] text-sm">
+                4. Kitchen &amp; Restaurant ON/OFF Modes
+              </div>
+              <p className="text-slate-600 leading-relaxed">
+                Under <strong>Settings</strong>, toggle <strong>In-House Kitchen Available?</strong> to show/hide KOT &amp; KDS, and toggle <strong>In-House Café / Restaurant Available?</strong> to switch between full Restaurant + Takeaway + Room Service or Room-Service-Only mode.
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => onSubTabChange('take_order')}
+              className="px-4 py-2 rounded-xl bg-[#17120F] text-[#F5D88A] font-bold cursor-pointer"
+            >
+              Go to Take Order →
+            </button>
+            <button
+              type="button"
+              onClick={() => onSubTabChange('settings')}
+              className="px-4 py-2 rounded-xl border border-[#DFC078] bg-[#FAF6EE] text-[#17120F] font-bold cursor-pointer"
+            >
+              Open POS Settings →
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ===================================================================== */}
@@ -5980,8 +6864,12 @@ export const PosModule: React.FC<PosModuleProps> = ({
               </div>
             </div>
 
-            {/* 4 Action Buttons: Print | KOT | KOT + Invoice | Save */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-200">
+            {/* Action Buttons: Print | KOT (when Kitchen=ON) | KOT + Invoice / Save & Print | Save */}
+            <div
+              className={`grid grid-cols-2 ${
+                posCapabilities.kotEnabled ? 'sm:grid-cols-4' : 'sm:grid-cols-3'
+              } gap-2 pt-2 border-t border-slate-200`}
+            >
               <button
                 type="button"
                 onClick={() => handleFinalizeOrder('Print')}
@@ -5989,19 +6877,22 @@ export const PosModule: React.FC<PosModuleProps> = ({
               >
                 <Printer className="w-3.5 h-3.5" /> Print Bill
               </button>
-              <button
-                type="button"
-                onClick={() => handleFinalizeOrder('KOT')}
-                className="py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <ChefHat className="w-3.5 h-3.5" /> KOT Only
-              </button>
+              {posCapabilities.kotEnabled && (
+                <button
+                  type="button"
+                  onClick={() => handleFinalizeOrder('KOT')}
+                  className="py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <ChefHat className="w-3.5 h-3.5" /> KOT Only
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => handleFinalizeOrder('KOT + Invoice')}
                 className="py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <CheckCircle2 className="w-3.5 h-3.5" /> KOT + Bill
+                <CheckCircle2 className="w-3.5 h-3.5" />{' '}
+                {posCapabilities.kotEnabled ? 'KOT + Bill' : 'Save & Invoice'}
               </button>
               <button
                 type="button"
