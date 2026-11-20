@@ -37,7 +37,10 @@ import {
   DollarSign,
   PieChart,
   Bell,
+  Wallet,
+  Utensils,
 } from 'lucide-react';
+import { openStandalonePosInNewTab } from '../utils/posConfigHelpers';
 import { UserRole, Hotel, Staff } from '../types';
 import type { HotelOwnerSubTab } from './HotelOwnerView';
 import {
@@ -135,6 +138,10 @@ function renderSidebarIcon(iconKey: string, isActive: boolean): React.ReactNode 
       return <Globe className={cls} />;
     case 'channelManager':
       return <Share2 className={cls} />;
+    case 'financialHub':
+      return <Wallet className={cls} />;
+    case 'pointOfSale':
+      return <Utensils className={cls} />;
     case 'propertySetup':
       return <Building2 className={cls} />;
     case 'configuration':
@@ -296,6 +303,12 @@ export default function Sidebar({
   const applyNavigationTarget = (nodeId: string, target: SidebarNavTarget) => {
     setLastSelectedSidebarId(nodeId);
     setMobileDrawerOpen(false);
+
+    // Point of Sale always opens the standalone POS interface in a new browser tab
+    if (target.openInNewTab) {
+      openStandalonePosInNewTab('terminal', selectedHotelId);
+      return;
+    }
 
     // Handle preset flags in sessionStorage + CustomEvents so already-mounted views react immediately
     try {

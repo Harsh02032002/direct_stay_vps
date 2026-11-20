@@ -20,7 +20,7 @@ function test(name: string, fn: () => void) {
 console.log('Running DirectStay Dashboard & Sidebar Redesign Tests...\n');
 
 // 1. Exact Top-Level & Nested Sidebar Structure
-test('Left Sidebar matches exact 10 top-level items & nested structure with NO Financial Hub or POS', () => {
+test('Left Sidebar matches approved structure including Financial Hub & Point of Sale entries', () => {
   const topLabels = DIRECTSTAY_PMS_SIDEBAR_TREE.map((n) => n.label);
   assert.deepEqual(topLabels, [
     'Dashboard',
@@ -30,6 +30,8 @@ test('Left Sidebar matches exact 10 top-level items & nested structure with NO F
     'Reports & Graphs',
     'Booking Engine',
     'Channel Manager',
+    'Financial Hub',
+    'Point of Sale',
     'Property Setup',
     'Configuration',
     'Administration',
@@ -117,16 +119,16 @@ test('Left Sidebar matches exact 10 top-level items & nested structure with NO F
     ['Properties', 'Building & Floor', 'Users', 'User Roles', 'Audit Logs', 'Profile Setup']
   );
 
-  // Strict check: NO Financial Hub or Point of Sale anywhere in the sidebar
-  const allLabelsLower = JSON.stringify(DIRECTSTAY_PMS_SIDEBAR_TREE).toLowerCase();
-  assert.equal(allLabelsLower.includes('financial hub'), false);
-  assert.equal(allLabelsLower.includes('finance hub'), false);
-  assert.equal(allLabelsLower.includes('point of sale'), false);
-  assert.equal(allLabelsLower.includes('pos terminal'), false);
+  // Financial Hub opens in-page; Point of Sale opens the standalone POS in a new browser tab
+  const finNode = DIRECTSTAY_PMS_SIDEBAR_TREE.find((n) => n.label === 'Financial Hub')!;
+  assert.equal(finNode.target?.activeTab, 'finance');
+  const posNode = DIRECTSTAY_PMS_SIDEBAR_TREE.find((n) => n.label === 'Point of Sale')!;
+  assert.equal(posNode.target?.activeTab, 'pos');
+  assert.equal(posNode.target?.openInNewTab, true);
 });
 
 // 2. Every Leaf Item Connects to a Valid Existing Module & Active Highlighting Works
-test('All 50 leaf sidebar items resolve to valid DirectStay modules and active state highlights cleanly', () => {
+test('All 52 leaf sidebar items resolve to valid DirectStay modules and active state highlights cleanly', () => {
   const validTabs = new Set([
     'dashboard',
     'calendar',
@@ -141,10 +143,12 @@ test('All 50 leaf sidebar items resolve to valid DirectStay modules and active s
     'profile',
     'staff',
     'auditLogs',
+    'finance',
+    'pos',
   ]);
 
   const leaves = flattenSidebarLeafNodes();
-  assert.equal(leaves.length, 50);
+  assert.equal(leaves.length, 52);
   for (const leaf of leaves) {
     assert.ok(leaf.target?.activeTab, `Missing target on ${leaf.label}`);
     assert.equal(

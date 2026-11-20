@@ -7,6 +7,8 @@ export interface SidebarNavTarget {
   reportsSubTab?: string;
   staffSubTab?: string;
   invoiceSubTab?: string;
+  /** When true, the target opens in a separate browser tab (standalone POS) instead of in-page navigation */
+  openInNewTab?: boolean;
   /** Optional preset flags dispatched via sessionStorage + CustomEvent */
   openNewReservationModal?: boolean;
   reservationSegment?: 'All' | 'Group' | 'Corporate' | 'Individual' | 'Walk-in' | 'OTA' | 'Travel Agent';
@@ -277,6 +279,20 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
     target: { activeTab: 'otaManager', otaSubTab: 'channels' },
   },
   {
+    id: 'financial-hub',
+    label: 'Financial Hub',
+    iconKey: 'financialHub',
+    rbacTab: 'finance',
+    target: { activeTab: 'finance' },
+  },
+  {
+    id: 'point-of-sale',
+    label: 'Point of Sale',
+    iconKey: 'pointOfSale',
+    rbacTab: 'pos',
+    target: { activeTab: 'pos', openInNewTab: true },
+  },
+  {
     id: 'property-setup',
     label: 'Property Setup',
     iconKey: 'propertySetup',
@@ -383,7 +399,7 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
         label: 'Shift Setup',
         iconKey: 'dot',
         rbacTab: 'staff',
-        target: { activeTab: 'staff', staffSubTab: 'attendance' },
+        target: { activeTab: 'staff', staffSubTab: 'directory' },
       },
       {
         id: 'cfg-coupons',
