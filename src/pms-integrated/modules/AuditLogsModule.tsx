@@ -32,7 +32,7 @@ const DEFAULT_SAMPLE_LOGS: AuditLogEntry[] = [
   {
     id: 'AUD-001',
     timestamp: '2026-11-05, 02:45 PM',
-    actorName: 'Raghunath Sir (Owner)',
+    actorName: 'Harsh Vardhan (Owner)',
     actorRole: 'Owner',
     module: 'Finance',
     action: 'Payment Voucher Settled',
@@ -55,8 +55,8 @@ const DEFAULT_SAMPLE_LOGS: AuditLogEntry[] = [
     actorName: 'Super Admin',
     actorRole: 'Admin',
     module: 'Security',
-    action: 'Staff Attendance Marked',
-    details: 'Daily shift attendance marked for 6 active on-duty staff members.',
+    action: 'Staff Shift Roster Updated',
+    details: 'Shift roster and department assignments updated for active on-duty staff.',
     severity: 'info',
   },
 ];

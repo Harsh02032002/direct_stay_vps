@@ -701,7 +701,7 @@ export default function SuperAdminHub({
       'POS Restaurant & Food Billing',
       'Inventory Store & Purchase Ledger',
       'Housekeeping, Laundry & Audit Trail',
-      'Staff Roles & Attendance Workspace',
+      'Staff Roles & Shift Roster Workspace',
       'Daily Financial & Occupancy Reports',
       'Direct Booking Website CMS',
     ],

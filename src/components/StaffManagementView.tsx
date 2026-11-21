@@ -103,53 +103,6 @@ export default function StaffManagementView({
       onSelectSubTab(t === 'staff' ? 'directory' : 'salary');
     }
   };
-
-  // --- DAILY ATTENDANCE STATE ---
-  const [attendanceDate, setAttendanceDate] = useState(() => new Date().toISOString().substring(0, 10));
-  const [attendanceRecords, setAttendanceRecords] = useState<Record<string, { status: 'Present' | 'Absent' | 'Half Day' | 'On Leave'; inTime?: string; outTime?: string; notes?: string }>>(() => {
-    try {
-      const saved = localStorage.getItem(`staff_attendance_${new Date().toISOString().substring(0, 10)}`);
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
-
-  const handleSetAttendanceStatus = (staffId: string, status: 'Present' | 'Absent' | 'Half Day' | 'On Leave') => {
-    const updated = {
-      ...attendanceRecords,
-      [staffId]: {
-        ...attendanceRecords[staffId],
-        status,
-        inTime: status === 'Present' || status === 'Half Day' ? (attendanceRecords[staffId]?.inTime || '09:00 AM') : '',
-        outTime: status === 'Present' || status === 'Half Day' ? (attendanceRecords[staffId]?.outTime || '06:00 PM') : ''
-      }
-    };
-    setAttendanceRecords(updated);
-    try {
-      localStorage.setItem(`staff_attendance_${attendanceDate}`, JSON.stringify(updated));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleMarkAllPresent = () => {
-    const updated: Record<string, any> = {};
-    staff.forEach(s => {
-      updated[s.id] = {
-        status: 'Present',
-        inTime: '09:00 AM',
-        outTime: '06:00 PM'
-      };
-    });
-    setAttendanceRecords(updated);
-    try {
-      localStorage.setItem(`staff_attendance_${attendanceDate}`, JSON.stringify(updated));
-    } catch (e) {
-      console.error(e);
-    }
-    showToast(`All ${staff.length} staff marked Present for ${attendanceDate}`, 'success');
-  };
   
   // New Staff Local Form States
   const [isAddingStaff, setIsAddingStaff] = useState(false);

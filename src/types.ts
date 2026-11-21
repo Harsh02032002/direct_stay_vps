@@ -6,7 +6,7 @@ export type CleaningStatus = 'Clean' | 'Dirty' | 'In Progress' | 'Ready For Gues
 
 export interface PackageModulePermissions {
   ota: boolean;            // OTA Channel Manager
-  staff: boolean;          // Staff Management & Attendance/Roster
+  staff: boolean;          // Staff Management & Shift Roster
   reports: boolean;        // Advanced Daily & Financial Reports
   cashHandover: boolean;   // Cash Handover & Shift Audit
   expenses: boolean;       // Expense Accounting
