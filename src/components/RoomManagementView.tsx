@@ -31,6 +31,22 @@ interface RoomManagementViewProps {
   onSubTabChange?: (sub: string) => void;
 }
 
+const PREFERRED_CATEGORY_ORDER = ['Deluxe', 'Executive', 'Standard', 'Family'];
+
+const normalizeCategory = (cat?: string): string => {
+  if (!cat) return 'Standard';
+  const trimmed = cat.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === 'delux' || lower === 'deluxe') return 'Deluxe';
+  if (lower === 'executive' || lower === 'executive room' || lower === 'executive suite') return 'Executive';
+  if (lower === 'standard' || lower === 'standard room') return 'Standard';
+  if (lower === 'family' || lower === 'family room' || lower === 'family suite' || lower === 'familyroom') return 'Family';
+  return trimmed
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+};
+
 interface CategoryConfig {
   name: string;
   rate: number;
@@ -618,6 +634,22 @@ export default function RoomManagementView({
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
+  const roomCategories = useMemo(() => {
+    const unique = Array.from(
+      new Set(filteredRooms.map((r) => normalizeCategory(r.category)).filter(Boolean))
+    );
+
+    return unique.sort((a, b) => {
+      const idxA = PREFERRED_CATEGORY_ORDER.indexOf(a);
+      const idxB = PREFERRED_CATEGORY_ORDER.indexOf(b);
+
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [filteredRooms]);
+
   const getStatusBadge = (st: RoomStatus) => {
     switch (st) {
       case 'Available': return 'bg-emerald-50 text-emerald-700 border-emerald-300';
@@ -913,8 +945,44 @@ export default function RoomManagementView({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {filteredRooms.map((room) => (
+            <div className="space-y-6">
+              {filteredRooms.length === 0 ? (
+                <div className="py-12 text-center text-xs text-luxury-brown-400 bg-luxury-beige-50 rounded-2xl">
+                  No rooms match the search or filter criteria.
+                </div>
+              ) : (
+                roomCategories.map((catName) => {
+                  const catRooms = filteredRooms
+                    .filter((r) => normalizeCategory(r.category) === catName)
+                    .sort((a, b) => {
+                      const numA = parseInt(String(a.number).replace(/\D/g, ''), 10) || 0;
+                      const numB = parseInt(String(b.number).replace(/\D/g, ''), 10) || 0;
+                      return numA - numB;
+                    });
+
+                  if (catRooms.length === 0) return null;
+
+                  return (
+                    <div key={catName} className="space-y-3">
+                      <div className="flex items-center justify-between bg-gradient-to-r from-[#FAF6EE] to-white border border-[#E8DEC8] px-3.5 py-2 rounded-xl shadow-2xs">
+                        <div className="flex items-center gap-2.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#C49A3A] shadow-xs" />
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-[#DFB962] via-[#CEA346] to-[#BE9032] text-[#17120F] font-black text-xs sm:text-sm uppercase tracking-wider shadow-xs border border-[#C49A3A]/40">
+                            {catName}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white text-[#3E5068] border border-[#E2D6BE]">
+                            {catRooms.length} {catRooms.length === 1 ? 'room' : 'rooms'}
+                          </span>
+                        </div>
+                        <div className="text-[11px] sm:text-xs text-slate-600 flex items-center gap-1">
+                          <span className="text-slate-400 font-medium">Base Tariff:</span>
+                          <strong className="text-[#17120F] font-bold font-mono">₹{Number(catRooms[0]?.rate || 2000).toLocaleString('en-IN')}</strong>
+                          <span className="text-slate-400">/ night</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {catRooms.map((room) => (
                 <div
                   key={room.id}
                   className="bg-white border border-luxury-brown-200 rounded-2xl p-4 shadow-xs space-y-3 hover:border-luxury-gold-500 transition-all"
@@ -1029,7 +1097,12 @@ export default function RoomManagementView({
                     </div>
                   </div>
                 </div>
-              ))}
+))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

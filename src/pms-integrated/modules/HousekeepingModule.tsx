@@ -44,6 +44,22 @@ export interface RoomHousekeepingPatch {
   checklist?: string[];
 }
 
+const PREFERRED_CATEGORY_ORDER = ['Deluxe', 'Executive', 'Standard', 'Family'];
+
+const normalizeCategory = (cat?: string): string => {
+  if (!cat) return 'Standard';
+  const trimmed = cat.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === 'delux' || lower === 'deluxe') return 'Deluxe';
+  if (lower === 'executive' || lower === 'executive room' || lower === 'executive suite') return 'Executive';
+  if (lower === 'standard' || lower === 'standard room') return 'Standard';
+  if (lower === 'family' || lower === 'family room' || lower === 'family suite' || lower === 'familyroom') return 'Family';
+  return trimmed
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+};
+
 interface HousekeepingModuleProps {
   activeSubTab: string;
   onSubTabChange: (subTab: string) => void;
@@ -367,6 +383,23 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
     globalSearch,
     roomBoxSearch,
   ]);
+
+  // Distinct sorted categories for category-wise board grouping (Deluxe, Executive, Standard, Family, ...)
+  const hkCategories = useMemo(() => {
+    const unique = Array.from(
+      new Set(filteredRooms.map((item) => normalizeCategory(item.room.category)).filter(Boolean))
+    );
+
+    return unique.sort((a, b) => {
+      const idxA = PREFERRED_CATEGORY_ORDER.indexOf(a);
+      const idxB = PREFERRED_CATEGORY_ORDER.indexOf(b);
+
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [filteredRooms]);
 
   // Apply Room Housekeeping Update (Status / Staff / Priority / Notes / Out-of-Order)
   const applyHousekeepingPatch = (roomNums: string[], patch: RoomHousekeepingPatch) => {
@@ -1027,8 +1060,34 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
                     No rooms match the selected floor/status filters.
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5">
-                    {filteredRooms.map((item) => {
+                  <div className="space-y-6">
+                    {hkCategories.map((catName) => {
+                      const catItems = filteredRooms
+                        .filter((item) => normalizeCategory(item.room.category) === catName)
+                        .sort((a, b) => {
+                          const numA = parseInt(String(a.room.number).replace(/\D/g, ''), 10) || 0;
+                          const numB = parseInt(String(b.room.number).replace(/\D/g, ''), 10) || 0;
+                          return numA - numB;
+                        });
+
+                      if (catItems.length === 0) return null;
+
+                      return (
+                        <div key={catName} className="space-y-3">
+                          <div className="flex items-center justify-between bg-gradient-to-r from-[#FAF6EE] to-white border border-[#E8DEC8] px-3.5 py-2 rounded-xl shadow-2xs">
+                            <div className="flex items-center gap-2.5">
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#C49A3A] shadow-xs" />
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-[#DFB962] via-[#CEA346] to-[#BE9032] text-[#17120F] font-black text-xs sm:text-sm uppercase tracking-wider shadow-xs border border-[#C49A3A]/40">
+                                {catName}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white text-[#3E5068] border border-[#E2D6BE]">
+                                {catItems.length} {catItems.length === 1 ? 'room' : 'rooms'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5">
+                            {catItems.map((item) => {
                       const {
                         room,
                         stage,
@@ -1186,6 +1245,10 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
                                 {stage !== 'Clean' && <ArrowRight className="w-3 h-3" />}
                               </button>
                             )}
+                          </div>
+                        </div>
+                      );
+})}
                           </div>
                         </div>
                       );
