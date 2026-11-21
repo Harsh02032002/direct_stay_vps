@@ -148,6 +148,17 @@ const ADMIN_ROUTE_ALIASES: Record<string, { tab: string; subTab?: string }> = {
   reports: { tab: 'reports' },
   notifications: { tab: 'notifications' },
   profile: { tab: 'profile' },
+  'tax-setup': { tab: 'profile', subTab: 'tax' },
+  tax: { tab: 'profile', subTab: 'tax' },
+  'payment-mode': { tab: 'profile', subTab: 'payment_mode' },
+  payment: { tab: 'profile', subTab: 'payment_mode' },
+  whatsapp: { tab: 'profile', subTab: 'whatsapp' },
+  'shift-setup': { tab: 'profile', subTab: 'shift' },
+  shift: { tab: 'profile', subTab: 'shift' },
+  coupons: { tab: 'profile', subTab: 'coupons' },
+  coupon: { tab: 'profile', subTab: 'coupons' },
+  'master-setup': { tab: 'profile', subTab: 'master' },
+  master: { tab: 'profile', subTab: 'master' },
   frontDesk: { tab: 'frontDesk' },
   frontdesk: { tab: 'frontDesk' },
   todayBookings: { tab: 'todayBookings' },
@@ -499,6 +510,16 @@ export default function App() {
   const [invoiceSubTab, setInvoiceSubTab] = useState<string>(() =>
     initialRouteInfo.tab === 'invoice' && initialRouteInfo.sub ? initialRouteInfo.sub : 'all'
   );
+  const [profileSection, setProfileSection] = useState<
+    'general' | 'tax' | 'payment_mode' | 'whatsapp' | 'properties' | 'master' | 'shift' | 'coupons' | 'renewal' | 'compliance'
+  >(() => {
+    if (initialRouteInfo.tab === 'profile' && initialRouteInfo.sub) {
+      return initialRouteInfo.sub as any;
+    }
+    const saved = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('pms_profile_section') : null;
+    if (saved) return saved as any;
+    return 'tax';
+  });
 
   // Navigation and Role
   const [activeTab, setActiveTab] = useState(() => {
@@ -537,6 +558,16 @@ export default function App() {
 
   useEffect(() => {
     return subscribeToasts((toasts) => setActiveToasts(toasts));
+  }, []);
+
+  useEffect(() => {
+    const onProfileNav = (e: any) => {
+      if (e.detail?.section) {
+        setProfileSection(e.detail.section);
+      }
+    };
+    window.addEventListener('directstay:profile-nav', onProfileNav);
+    return () => window.removeEventListener('directstay:profile-nav', onProfileNav);
   }, []);
 
   // Zero-touch live deployment auto-updater: seamlessly loads new frontend builds without manual refresh
@@ -1105,6 +1136,7 @@ export default function App() {
         if (mapped.tab === 'otaManager' && sub) setOtaSubTab(sub);
         if (mapped.tab === 'reports' && sub) setReportsSubTab(sub);
         if (mapped.tab === 'staff' && sub) setStaffSubTab(sub);
+        if (mapped.tab === 'profile' && sub) setProfileSection(sub as any);
       }
 
       const queryHotelId = searchParams.get('hotelId');
@@ -1389,6 +1421,10 @@ export default function App() {
         targetPath = financeSubTab && financeSubTab !== 'dashboard'
           ? `/admin/finance/${financeSubTab}`
           : '/admin/finance';
+      } else if (activeTab === 'profile') {
+        targetPath = profileSection && profileSection !== 'general'
+          ? `/admin/profile/${profileSection}`
+          : '/admin/profile';
       } else if (VALID_ADMIN_TABS.has(activeTab)) {
         targetPath = `/admin/${activeTab}`;
       } else {
@@ -1399,7 +1435,7 @@ export default function App() {
     if (currentCleanPath !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
-  }, [isAuthenticated, unauthView, currentRole, activeTab, superAdminSubTab, ownerSubTab, frontDeskSubTab, financeSubTab, posSubTab, isStandalonePosMode, isNotFoundRoute, isPublicWebsiteForced, publicHotelBookingId, portalLoginMode]);
+  }, [isAuthenticated, unauthView, currentRole, activeTab, superAdminSubTab, ownerSubTab, frontDeskSubTab, financeSubTab, posSubTab, profileSection, isStandalonePosMode, isNotFoundRoute, isPublicWebsiteForced, publicHotelBookingId, portalLoginMode]);
 
   const handleUpdatePackages = (updatedPackages: SaaSPackage[]) => {
     setPackages(updatedPackages);
@@ -4129,6 +4165,13 @@ export default function App() {
       case 'profile':
         return (
           <ProfileSettingsView
+            activeSection={profileSection}
+            onSelectSection={(sec) => {
+              setProfileSection(sec as any);
+              try {
+                sessionStorage.setItem('pms_profile_section', sec);
+              } catch {}
+            }}
             currentRole={currentRole}
             loggedInUser={loggedInUser}
             hotels={hotels}
@@ -5000,6 +5043,14 @@ export default function App() {
         onSelectStaffSubTab={(t: any) => { leavePublicBookingView(); setStaffSubTab(t); }}
         invoiceSubTab={invoiceSubTab}
         onSelectInvoiceSubTab={(t: any) => { leavePublicBookingView(); setInvoiceSubTab(t); }}
+        profileSection={profileSection}
+        onSelectProfileSection={(sec: any) => {
+          leavePublicBookingView();
+          setProfileSection(sec);
+          try {
+            sessionStorage.setItem('pms_profile_section', sec);
+          } catch {}
+        }}
         currentRole={currentRole} 
         setCurrentRole={(r: any) => { leavePublicBookingView(); setCurrentRole(r); }}
         hotels={hotels}

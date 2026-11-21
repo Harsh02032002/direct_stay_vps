@@ -15,7 +15,7 @@ export interface SidebarNavTarget {
   openNewReservationModal?: boolean;
   reservationSegment?: 'All' | 'Group' | 'Corporate' | 'Individual' | 'Walk-in' | 'OTA' | 'Travel Agent';
   bookingCategory?: 'room' | 'event';
-  profileSection?: 'general' | 'tax' | 'whatsapp' | 'properties' | 'master';
+  profileSection?: 'general' | 'tax' | 'payment_mode' | 'whatsapp' | 'properties' | 'master' | 'shift' | 'coupons';
 }
 
 export interface SidebarMenuNode {
@@ -477,8 +477,8 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
         id: 'cfg-payment-mode',
         label: 'Payment Mode',
         iconKey: 'dot',
-        rbacTab: 'frontDesk',
-        target: { activeTab: 'frontDesk', frontDeskSubTab: 'settings' },
+        rbacTab: 'profile',
+        target: { activeTab: 'profile', profileSection: 'payment_mode' },
       },
       {
         id: 'cfg-whatsapp',
@@ -498,15 +498,15 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
         id: 'cfg-shift-setup',
         label: 'Shift Setup',
         iconKey: 'dot',
-        rbacTab: 'staff',
-        target: { activeTab: 'staff', staffSubTab: 'directory' },
+        rbacTab: 'profile',
+        target: { activeTab: 'profile', profileSection: 'shift' },
       },
       {
         id: 'cfg-coupons',
         label: 'Coupons',
         iconKey: 'dot',
-        rbacTab: 'frontDesk',
-        target: { activeTab: 'frontDesk', frontDeskSubTab: 'settings' },
+        rbacTab: 'profile',
+        target: { activeTab: 'profile', profileSection: 'coupons' },
       },
       {
         id: 'cfg-master-setup',
@@ -580,6 +580,7 @@ export interface ActiveNavigationSnapshot {
   invoiceSubTab?: string;
   financeSubTab?: string;
   inventorySubTab?: string;
+  profileSection?: string;
   lastSelectedSidebarId?: string | null;
 }
 
@@ -636,7 +637,8 @@ export function isSidebarLeafActive(
       (!exactNode.target.reportsSubTab || exactNode.target.reportsSubTab === state.reportsSubTab) &&
       (!exactNode.target.staffSubTab || exactNode.target.staffSubTab === state.staffSubTab) &&
       (!exactNode.target.invoiceSubTab || exactNode.target.invoiceSubTab === state.invoiceSubTab) &&
-      (!exactNode.target.financeSubTab || exactNode.target.financeSubTab === state.financeSubTab)
+      (!exactNode.target.financeSubTab || exactNode.target.financeSubTab === state.financeSubTab) &&
+      (!exactNode.target.profileSection || exactNode.target.profileSection === state.profileSection)
     ) {
       return node.id === state.lastSelectedSidebarId;
     }
@@ -663,6 +665,15 @@ export function isSidebarLeafActive(
   if (t.financeSubTab && t.financeSubTab !== (state.financeSubTab || 'dashboard')) return false;
   if (t.inventorySubTab && t.inventorySubTab !== (state.inventorySubTab || 'dashboard')) return false;
 
+  if (t.activeTab === 'profile') {
+    const curSec = state.profileSection || 'tax';
+    const targetSec = t.profileSection || 'master';
+    if ((curSec === 'general' || curSec === 'master') && (targetSec === 'general' || targetSec === 'master')) {
+      return node.id === 'cfg-master-setup' || node.id === 'adm-profile-setup';
+    }
+    return targetSec === curSec;
+  }
+
   // Default canonical winners when no lastSelectedSidebarId disambiguates
   if (t.activeTab === 'inventory' && node.id !== 'fo-rates-inventory') return false;
   if (t.activeTab === 'calendar' && node.id !== 'stay-overview') return false;
@@ -677,9 +688,6 @@ export function isSidebarLeafActive(
     return false;
   }
   if (t.activeTab === 'staff' && t.staffSubTab === 'directory' && node.id !== 'adm-users') {
-    return false;
-  }
-  if (t.activeTab === 'profile' && node.id !== 'adm-profile-setup') {
     return false;
   }
 

@@ -144,6 +144,10 @@ export interface Hotel {
   ownerPassword?: string;
   renewalRequest?: SubscriptionRenewalRequest;
   subscriptionInvoices?: SubscriptionInvoice[];
+  paymentModes?: any[];
+  whatsappTemplates?: Record<string, string>;
+  shiftSettings?: any;
+  coupons?: PosCoupon[];
 }
 
 export interface Room {
@@ -1025,6 +1029,10 @@ export interface HotelSettings {
   gstSlabs?: number[];
   invoiceConditions?: InvoiceConditionsConfig;
   panNumber?: string;
+  paymentModes?: any[];
+  whatsappTemplates?: Record<string, string>;
+  shiftSettings?: any;
+  coupons?: PosCoupon[];
 }
 
 export interface Testimonial {

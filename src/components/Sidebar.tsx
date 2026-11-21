@@ -84,6 +84,8 @@ interface SidebarProps {
   onSelectStaffSubTab?: (tab: string) => void;
   invoiceSubTab?: string;
   onSelectInvoiceSubTab?: (tab: string) => void;
+  profileSection?: string;
+  onSelectProfileSection?: (section: string) => void;
   currentRole: UserRole;
   setCurrentRole: (role: UserRole) => void;
   hotels: Hotel[];
@@ -189,6 +191,8 @@ export default function Sidebar({
   onSelectInvoiceSubTab,
   inventorySubTab = 'products',
   onSelectInventorySubTab,
+  profileSection = 'tax',
+  onSelectProfileSection,
   currentRole,
   hotels,
   selectedHotelId,
@@ -257,6 +261,7 @@ export default function Sidebar({
       staffSubTab,
       invoiceSubTab,
       inventorySubTab,
+      profileSection,
       lastSelectedSidebarId,
     }),
     [
@@ -270,6 +275,7 @@ export default function Sidebar({
       staffSubTab,
       invoiceSubTab,
       inventorySubTab,
+      profileSection,
       lastSelectedSidebarId,
     ]
   );
@@ -290,7 +296,7 @@ export default function Sidebar({
     if (Object.keys(nextExpanded).length > 0) {
       setExpandedIds((prev) => ({ ...prev, ...nextExpanded }));
     }
-  }, [activeTab, frontDeskSubTab, roomSubTab, housekeepingSubTab, otaSubTab, reportsSubTab, financeSubTab, staffSubTab, invoiceSubTab]);
+  }, [activeTab, frontDeskSubTab, roomSubTab, housekeepingSubTab, otaSubTab, reportsSubTab, financeSubTab, staffSubTab, invoiceSubTab, profileSection]);
 
   const activeHotel = hotels.find((h) => h.id === selectedHotelId) || hotels[0];
   const hotelCitySnippet = useMemo(() => {
@@ -401,6 +407,9 @@ export default function Sidebar({
     }
     if (target.inventorySubTab && onSelectInventorySubTab) {
       onSelectInventorySubTab(target.inventorySubTab);
+    }
+    if (target.profileSection && onSelectProfileSection) {
+      onSelectProfileSection(target.profileSection);
     }
 
     setActiveTab(target.activeTab);
