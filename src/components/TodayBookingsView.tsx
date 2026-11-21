@@ -1931,18 +1931,22 @@ export default function TodayBookingsView({
                 if (categoryRooms.length === 0) return null;
 
               return (
-                <div key={categoryName} className="space-y-2.5">
-                  <div className="flex items-center justify-between border-b border-luxury-brown-100/60 pb-1">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-luxury-gold-500" />
-                      <h3 className="text-xs sm:text-sm font-bold text-luxury-brown-900 uppercase tracking-wider">
+                <div key={categoryName} className="space-y-3">
+                  <div className="flex items-center justify-between bg-gradient-to-r from-[#FAF6EE] to-white border border-[#E8DEC8] px-3.5 py-2 rounded-xl shadow-2xs">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#C49A3A] shadow-xs" />
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-[#DFB962] via-[#CEA346] to-[#BE9032] text-[#17120F] font-black text-xs sm:text-sm uppercase tracking-wider shadow-xs border border-[#C49A3A]/40">
                         {categoryName}
-                      </h3>
-                      <span className="text-[11px] text-luxury-brown-400 font-mono">({categoryRooms.length} rooms)</span>
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white text-[#3E5068] border border-[#E2D6BE]">
+                        {categoryRooms.length} {categoryRooms.length === 1 ? 'room' : 'rooms'}
+                      </span>
                     </div>
-                    <span className="text-xs text-luxury-brown-500">
-                      Base Tariff: <strong className="text-luxury-brown-950 font-mono">₹{(categoryRooms[0]?.rate || 2000).toLocaleString()}</strong> / night
-                    </span>
+                    <div className="text-[11px] sm:text-xs text-slate-600 flex items-center gap-1">
+                      <span className="text-slate-400 font-medium">Base Tariff:</span>
+                      <strong className="text-[#17120F] font-bold font-mono">₹{(categoryRooms[0]?.rate || 2000).toLocaleString()}</strong>
+                      <span className="text-slate-400">/ night</span>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">

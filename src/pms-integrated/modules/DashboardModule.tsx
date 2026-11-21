@@ -1067,15 +1067,22 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({
                 if (categoryRooms.length === 0) return null;
 
                 return (
-                  <div key={category} className="space-y-2.5">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-xs sm:text-sm font-bold text-slate-800 uppercase tracking-wider">{category}</h3>
-                        <span className="text-[11px] sm:text-xs text-slate-400 font-medium">({categoryRooms.length} rooms)</span>
+                  <div key={category} className="space-y-3">
+                    <div className="flex items-center justify-between bg-gradient-to-r from-[#FAF6EE] to-white border border-[#E8DEC8] px-3.5 py-2 rounded-xl shadow-2xs">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-[#C49A3A] shadow-xs" />
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-[#DFB962] via-[#CEA346] to-[#BE9032] text-[#17120F] font-black text-xs sm:text-sm uppercase tracking-wider shadow-xs border border-[#C49A3A]/40">
+                          {category}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white text-[#3E5068] border border-[#E2D6BE]">
+                          {categoryRooms.length} {categoryRooms.length === 1 ? 'room' : 'rooms'}
+                        </span>
                       </div>
-                      <span className="text-[11px] sm:text-xs text-slate-500">
-                        Base Tariff: <strong className="text-slate-800">{formatCurrency(categoryRooms[0]?.rate || 2000)}</strong> / night
-                      </span>
+                      <div className="text-[11px] sm:text-xs text-slate-600 flex items-center gap-1">
+                        <span className="text-slate-400 font-medium">Base Tariff:</span>
+                        <strong className="text-[#17120F] font-bold font-mono">{formatCurrency(categoryRooms[0]?.rate || 2000)}</strong>
+                        <span className="text-slate-400">/ night</span>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3.5">
