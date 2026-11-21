@@ -4668,13 +4668,8 @@ export default function ReservationView({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                   <div className="space-y-1">
                     <div className="min-h-[22px] flex items-center justify-between">
-                      <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold flex items-center gap-1">
+                      <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">
                         Arrival Date *
-                        {allowBackDatedCheckIn && (
-                          <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[8.5px] font-sans font-bold" title="Back-Date & Past-Time Allowed">
-                            🕒 Back-Time Allowed
-                          </span>
-                        )}
                       </label>
                       <span className="text-[10px] font-mono text-[#8B691E] font-bold">
                         {checkInTime}

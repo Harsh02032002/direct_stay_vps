@@ -7428,13 +7428,8 @@ export default function CheckInFormView({
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
                       <div className="md:col-span-4 space-y-1">
                         <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-[#263449] flex items-center gap-1.5">
+                          <label className="text-xs font-bold text-[#263449]">
                             Choose Date <span className="text-[#A8812B]">*</span>
-                            {allowBackDatedCheckIn && (
-                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-sans font-bold flex items-center gap-0.5" title="Back-Date & Past-Time Check-In Enabled in Property Setup">
-                                🕒 Back-Time Allowed
-                              </span>
-                            )}
                           </label>
                           <span className="text-[10px] font-mono font-bold text-[#8B691E]">
                             {formatDdmmyyyy(checkInDate)} / {arrivalTime}

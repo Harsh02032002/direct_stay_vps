@@ -260,11 +260,6 @@ export default function QuickCheckInModal({
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-[#17120F] flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-[#C49A3A]" /> Check-In Date & Arrival Time
-                {allowBackDatedCheckIn && (
-                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9px] font-mono font-bold">
-                    Back-Time Active
-                  </span>
-                )}
               </span>
               <span className="text-[10px] font-mono text-slate-500">
                 {checkInDateInput} at {checkInTimeInput}
