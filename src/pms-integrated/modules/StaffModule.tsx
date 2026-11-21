@@ -44,9 +44,10 @@ interface StaffModuleProps {
 }
 
 const SUB_TABS = [
-  { id: 'directory', label: 'Staff Roster & Shifts' },
-  { id: 'roles', label: 'RBAC Module Permissions' },
-  { id: 'payroll', label: 'Monthly Payroll & KPIs' },
+  { id: 'directory', label: 'Staff Roster & Shifts', icon: Users },
+  { id: 'roles', label: 'RBAC Module Permissions', icon: ShieldCheck },
+  { id: 'attendance', label: 'Biometric Attendance', icon: Clock },
+  { id: 'payroll', label: 'Monthly Payroll & KPIs', icon: IndianRupee },
 ];
 
 interface AttendanceEntry {
@@ -385,6 +386,29 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
               Payroll: {formatCurrency(totalBasePayroll)}
             </span>
           </div>
+        </div>
+
+        {/* Sub-Tab Navigation Bar */}
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+          {SUB_TABS.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = currentTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => onSubTabChange(tab.id)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  isActive
+                    ? 'bg-amber-500 text-slate-950 shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {actionBanner && (
