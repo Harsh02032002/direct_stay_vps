@@ -36,6 +36,22 @@ import {
   KpiDeltaSummary,
 } from '../../utils/dashboardMetrics';
 
+const PREFERRED_CATEGORY_ORDER = ['Deluxe', 'Executive', 'Standard', 'Family'];
+
+export const normalizeCategory = (cat?: string): string => {
+  if (!cat) return 'Standard';
+  const trimmed = cat.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === 'delux' || lower === 'deluxe') return 'Deluxe';
+  if (lower === 'executive' || lower === 'executive room' || lower === 'executive suite') return 'Executive';
+  if (lower === 'standard' || lower === 'standard room') return 'Standard';
+  if (lower === 'family' || lower === 'family room' || lower === 'family suite' || lower === 'familyroom') return 'Family';
+  return trimmed
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+};
+
 interface DashboardModuleProps {
   rooms: RoomAsset[];
   bookings: BookingRecord[];
@@ -301,10 +317,21 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({
       )
       .sort((a, b) => (a.checkInDate || '').localeCompare(b.checkInDate || ''))[0];
 
-  const categories = useMemo(
-    () => Array.from(new Set(rooms.map((r) => r.category).filter(Boolean))),
-    [rooms]
-  );
+  const categories = useMemo(() => {
+    const unique = Array.from(
+      new Set(rooms.map((r) => normalizeCategory(r.category)).filter(Boolean))
+    );
+
+    return unique.sort((a, b) => {
+      const idxA = PREFERRED_CATEGORY_ORDER.indexOf(a);
+      const idxB = PREFERRED_CATEGORY_ORDER.indexOf(b);
+
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [rooms]);
 
   const handleAssignRoomSubmit = () => {
     if (!selectedUnassignedBookingId || !selectedAssignRoomNo) return;
@@ -1024,12 +1051,18 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({
               }
 
               return categories.map((category) => {
-                const categoryRooms = rooms.filter((r) => {
-                  if (r.category !== category) return false;
-                  if (roomFilter === 'All') return true;
-                  if (roomFilter === 'Dirty') return r.status === 'Dirty' || r.cleaningStatus === 'Dirty';
-                  return r.status === roomFilter;
-                });
+                const categoryRooms = rooms
+                  .filter((r) => {
+                    if (normalizeCategory(r.category) !== category) return false;
+                    if (roomFilter === 'All') return true;
+                    if (roomFilter === 'Dirty') return r.status === 'Dirty' || r.cleaningStatus === 'Dirty';
+                    return r.status === roomFilter;
+                  })
+                  .sort((a, b) => {
+                    const numA = parseInt(String(a.number).replace(/\D/g, ''), 10) || 0;
+                    const numB = parseInt(String(b.number).replace(/\D/g, ''), 10) || 0;
+                    return numA - numB;
+                  });
 
                 if (categoryRooms.length === 0) return null;
 

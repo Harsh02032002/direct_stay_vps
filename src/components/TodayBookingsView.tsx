@@ -15,6 +15,22 @@ import { openPrintWindow } from '../utils/printDocument';
 import InvoiceConditionsModal from './InvoiceConditionsModal';
 import CalendarBookingView from './CalendarBookingView';
 
+const PREFERRED_CATEGORY_ORDER = ['Deluxe', 'Executive', 'Standard', 'Family'];
+
+const normalizeCategory = (cat?: string): string => {
+  if (!cat) return 'Standard';
+  const trimmed = cat.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === 'delux' || lower === 'deluxe') return 'Deluxe';
+  if (lower === 'executive' || lower === 'executive room' || lower === 'executive suite') return 'Executive';
+  if (lower === 'standard' || lower === 'standard room') return 'Standard';
+  if (lower === 'family' || lower === 'family room' || lower === 'family suite' || lower === 'familyroom') return 'Family';
+  return trimmed
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+};
+
 interface TodayBookingsViewProps {
   rooms: Room[];
   bookings: Booking[];
@@ -1886,15 +1902,33 @@ export default function TodayBookingsView({
 
           {/* Grouped by Asset Categories */}
           <div className="space-y-5">
-            {Array.from(new Set(rooms.map(r => r.category || (r as any).type || 'Standard'))).map((categoryName) => {
-              const categoryRooms = rooms.filter(r => {
-                const rCat = r.category || (r as any).type || 'Standard';
-                if (rCat !== categoryName) return false;
-                if (rackStatusFilter === 'All') return true;
-                return getRoomOccupancyStatus(r) === rackStatusFilter;
+            {(() => {
+              const uniqueCategories = Array.from(
+                new Set(rooms.map((r) => normalizeCategory(r.category || (r as any).type || 'Standard')).filter(Boolean))
+              ).sort((a, b) => {
+                const idxA = PREFERRED_CATEGORY_ORDER.indexOf(a);
+                const idxB = PREFERRED_CATEGORY_ORDER.indexOf(b);
+                if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                if (idxA !== -1) return -1;
+                if (idxB !== -1) return 1;
+                return a.localeCompare(b);
               });
 
-              if (categoryRooms.length === 0) return null;
+              return uniqueCategories.map((categoryName) => {
+                const categoryRooms = rooms
+                  .filter((r) => {
+                    const rCat = normalizeCategory(r.category || (r as any).type || 'Standard');
+                    if (rCat !== categoryName) return false;
+                    if (rackStatusFilter === 'All') return true;
+                    return getRoomOccupancyStatus(r) === rackStatusFilter;
+                  })
+                  .sort((a, b) => {
+                    const numA = parseInt(String(a.number).replace(/\D/g, ''), 10) || 0;
+                    const numB = parseInt(String(b.number).replace(/\D/g, ''), 10) || 0;
+                    return numA - numB;
+                  });
+
+                if (categoryRooms.length === 0) return null;
 
               return (
                 <div key={categoryName} className="space-y-2.5">
@@ -2088,8 +2122,9 @@ export default function TodayBookingsView({
                   </div>
                 </div>
               );
-            })}
-          </div>
+            });
+          })()}
+        </div>
         </div>
       )}
 

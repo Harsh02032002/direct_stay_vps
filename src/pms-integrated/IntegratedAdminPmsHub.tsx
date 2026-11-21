@@ -10,7 +10,7 @@ import RoomTasksDrawer from './components/RoomTasksDrawer';
 import AddRoomOrderModal from './components/AddRoomOrderModal';
 import CheckoutClearanceModal from './components/CheckoutClearanceModal';
 
-import { DashboardModule } from './modules/DashboardModule';
+import { DashboardModule, normalizeCategory } from './modules/DashboardModule';
 import { FrontDeskModule } from './modules/FrontDeskModule';
 import { InvoiceModule } from './modules/InvoiceModule';
 import { RoomManagementModule } from './modules/RoomManagementModule';
@@ -275,7 +275,7 @@ function mapAppRoomToAsset(r: Room, bookings: BookingRecord[]): RoomAsset {
     number: r.number,
     name: `Room ${r.number}`,
     groupId: `grp-${(r.category || 'standard').toLowerCase().replace(/\s+/g, '-')}`,
-    category: r.category || 'Standard',
+    category: normalizeCategory(r.category) || 'Standard',
     rate: Number(r.rate) || 2000,
     mealsRate: (Number(r.rate) || 2000) + 500,
     status,
@@ -1546,11 +1546,12 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     // Derive assetGroups dynamically from rooms & merge with any saved custom assetGroups
     const catMap = new Map<string, { rate: number; count: number }>();
     mappedRooms.forEach((rm) => {
-      const existing = catMap.get(rm.category);
+      const normCat = normalizeCategory(rm.category);
+      const existing = catMap.get(normCat);
       if (existing) {
         existing.count += 1;
       } else {
-        catMap.set(rm.category, { rate: rm.rate, count: 1 });
+        catMap.set(normCat, { rate: rm.rate, count: 1 });
       }
     });
     const derivedGroups: AssetGroup[] = Array.from(catMap.entries()).map(([name, info]) => ({
