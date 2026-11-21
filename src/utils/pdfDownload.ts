@@ -550,7 +550,17 @@ export function invoiceRecordToPrintHtml(
         bookingRecord?.mobile ||
         ''
     ),
+    guestEmail: String(
+      (invoice as any).guestEmail ||
+        (invoice as any).email ||
+        checkinRecord?.emailAddress ||
+        (bookingRecord as any)?.emailAddress ||
+        bookingRecord?.guestEmail ||
+        ''
+    ),
     guestAddress: guestAddr,
+    guestCity: String(checkinRecord?.city || (bookingRecord as any)?.city || ''),
+    guestState: String(checkinRecord?.state || (bookingRecord as any)?.state || ''),
     placeOfSupply: String(
       checkinRecord?.state ||
         (bookingRecord as any)?.state ||
@@ -569,7 +579,17 @@ export function invoiceRecordToPrintHtml(
         ''
     ),
     roomLabel,
+    roomNumber: roomBase,
+    roomType: roomType || 'Standard Room',
     pax,
+    adults: Number(checkinRecord?.adults || bookingRecord?.adults || 1),
+    children: Number(checkinRecord?.children || bookingRecord?.children || 0),
+    bookingSource: String(
+      invoice.bookingSource ||
+        checkinRecord?.bookingSource ||
+        bookingRecord?.bookingSource ||
+        'Walkin'
+    ),
     checkIn: [
       formatDateLabel(invoice.checkInDate || checkinRecord?.checkInDate || bookingRecord?.checkInDate),
       checkInTime,
@@ -583,6 +603,13 @@ export function invoiceRecordToPrintHtml(
       .filter(Boolean)
       .join(' '),
     nights,
+    isHourlyStay: Boolean(
+      (invoice as any).isHourlyStay ||
+        checkinRecord?.isHourlyStay ||
+        (bookingRecord as any)?.isHourlyStay ||
+        (invoice.checkInDate && invoice.checkOutDate && invoice.checkInDate === invoice.checkOutDate)
+    ),
+    stayHours: (invoice as any).stayHours || checkinRecord?.stayHours || (bookingRecord as any)?.stayHours,
     bill,
     footerNote: invoice.notes || undefined,
   };

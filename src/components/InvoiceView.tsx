@@ -1517,31 +1517,31 @@ export default function InvoiceView({
                 </div>
               )}
               <div>
-                <h1 className="text-2xl font-serif text-[#263449] font-bold tracking-tight uppercase">
-                  {hotelSettings?.name || 'GRAND PAVILION HOTEL'}
+                <h1 className="text-2xl font-sans text-black font-extrabold tracking-tight">
+                  {hotelSettings?.name || 'Hotel Grant Heights'}
                 </h1>
                 {hotelSettings?.address && String(hotelSettings.address).trim() !== '0' && (
-                  <p className="text-xs text-[#5A6B82] mt-0.5">{hotelSettings.address}</p>
+                  <p className="text-xs text-[#222] mt-0.5">{hotelSettings.address}</p>
                 )}
-                <p className="text-[11px] text-[#5A6B82] font-mono mt-0.5">
+                <p className="text-[11px] text-[#222] font-mono mt-0.5">
                   Phone: {hotelSettings?.phoneNumber || 'N/A'} {hotelSettings?.emailAddress ? `| Email: ${hotelSettings.emailAddress}` : ''}
+                  {(selectedInvoice.gst || 0) > 0 && hotelSettings?.gstNumber ? ` | GSTIN: ${hotelSettings.gstNumber}` : ''}
                 </p>
-                {(selectedInvoice.gst || 0) > 0 && hotelSettings?.gstNumber && (
-                  <p className="text-[11px] font-mono font-bold text-[#8B691E] mt-1">
-                    GSTIN: {hotelSettings.gstNumber}
-                  </p>
-                )}
               </div>
             </div>
             <div className="text-right">
-              <span className="px-3 py-1 bg-[#FBF4E0] text-[#8B691E] border border-[#C49A3A] rounded text-xs font-mono font-bold tracking-widest inline-block mb-1.5">
-                {(selectedInvoice.gst || 0) > 0 ? 'TAX INVOICE' : 'ROOM BILL'}
-              </span>
-              <p className="text-xs text-[#263449] font-mono font-bold mt-1">Invoice No: {selectedInvoice.invoiceNumber}</p>
-              <p className="text-[11px] text-[#5A6B82] font-mono">GRC / Ref: {selectedInvoice.grcNumber || selectedInvoice.bookingId || selectedInvoice.id}</p>
-              <p className="text-[11px] text-[#5A6B82] font-mono">Date: {selectedInvoice.dateCreated}</p>
+              <p className="text-sm font-extrabold uppercase text-black tracking-wider mb-1">
+                BOOKING CONFIRMATION &amp; INVOICE
+              </p>
+              <p className="text-xs text-[#222] font-semibold">
+                Conf #: <span className="font-mono">{selectedInvoice.grcNumber || selectedInvoice.bookingId || selectedInvoice.invoiceNumber}</span> | Date: {selectedInvoice.dateCreated}
+              </p>
+              <p className="text-xs font-bold text-black mt-0.5">
+                Status: <span className="uppercase">{selectedInvoice.isPaid ? 'CONFIRMED (PAID)' : 'CONFIRMED'}</span>
+              </p>
             </div>
           </div>
+          <div className="border-b-2 border-black my-3"></div>
 
           <div className="space-y-4 text-xs font-sans">
             {(() => {
@@ -1557,23 +1557,25 @@ export default function InvoiceView({
               return (
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-0.5">
-                    <p className="font-bold text-slate-500 uppercase text-[9px] font-mono mb-1">Name of Receiver / Bill To</p>
-                    <p className="text-sm font-serif font-bold text-slate-900">{compName || selectedInvoice.guestName}</p>
-                    <p><strong>Guest Name:</strong> {selectedInvoice.guestName} • <strong>Nationality:</strong> {custNat}</p>
-                    {custAddr && <p><strong>Address:</strong> {custAddr}</p>}
+                    <p className="font-extrabold text-black uppercase text-xs tracking-wider mb-2">GUEST INFORMATION</p>
+                    <p className="text-sm font-sans font-bold text-slate-900">{compName || selectedInvoice.guestName}</p>
+                    <p><strong>Name:</strong> {selectedInvoice.guestName}</p>
+                    <p><strong>Phone:</strong> {selectedInvoice.guestMobile || checkinRecord?.mobile || (bookingRecord as any)?.mobile || '—'}</p>
+                    <p><strong>Email:</strong> {selectedInvoice.guestEmail || checkinRecord?.emailAddress || (bookingRecord as any)?.guestEmail || '—'}</p>
+                    {custAddr && <p><strong>Location:</strong> {custAddr}</p>}
                     {compName && <p className="font-semibold text-slate-700">Company Name: {compName}</p>}
                     {(selectedInvoice.gst || 0) > 0 && custGst && (
                       <p className="font-mono font-semibold text-slate-700">Customer GSTIN: {custGst}</p>
                     )}
                   </div>
                   <div className="text-right space-y-0.5">
-                    <p className="font-bold text-slate-500 uppercase text-[9px] font-mono mb-1">Stay &amp; Room Bill Particulars</p>
-                    <p>Allocated Room: <strong>Room {selectedInvoice.roomNumber}</strong></p>
-                    <p>GRC No.: <strong>{selectedInvoice.grcNumber || selectedInvoice.bookingId || selectedInvoice.id}</strong></p>
-                    {vchNo && <p>Voucher / Tour No.: <strong>{vchNo}</strong></p>}
-                    <p>Arrival Date &amp; Time: <strong>{selectedInvoice.checkInDate} • {arrTime}</strong></p>
-                    <p>Departure Date &amp; Time: <strong>{selectedInvoice.checkOutDate || 'Open Stay'} • {depTime}</strong></p>
-                    <p>Duration: {calcNightsCount(selectedInvoice.checkInDate, selectedInvoice.checkOutDate)} Night(s)</p>
+                    <p className="font-extrabold text-black uppercase text-xs tracking-wider mb-2">STAY DETAILS</p>
+                    <p>Check-In: <strong>{selectedInvoice.checkInDate} ({arrTime})</strong></p>
+                    <p>Check-Out: <strong>{selectedInvoice.checkOutDate || 'Open Stay'} ({depTime})</strong></p>
+                    <p>Duration: <strong>{selectedInvoice.isHourlyStay ? `${selectedInvoice.stayHours || 3} Hours (Day-Use)` : `${calcNightsCount(selectedInvoice.checkInDate, selectedInvoice.checkOutDate)} Night(s)`}</strong></p>
+                    <p>Occupants: <strong>{Number(checkinRecord?.adults || bookingRecord?.adults || 1)} Adult(s), {Number(checkinRecord?.children || bookingRecord?.children || 0)} Child(ren)</strong></p>
+                    <p>Booking Source: <strong>{selectedInvoice.bookingSource || checkinRecord?.bookingSource || 'Walkin'}</strong></p>
+                    <p>Room No: <strong>{selectedInvoice.roomNumber}</strong></p>
                   </div>
                 </div>
               );
@@ -1729,6 +1731,13 @@ export default function InvoiceView({
                   Status: {selectedInvoice.isPaid ? 'PAID IN FULL' : 'UNPAID / BALANCE DUE'}
                 </span>
                 <span className="border-t w-52 text-center pt-1 text-slate-500">Authorized Signatory</span>
+              </div>
+              <div className="bg-[#ECECEC] p-3 rounded text-left my-4">
+                <p className="text-xs font-extrabold uppercase text-black tracking-wider mb-1">HOTEL POLICY</p>
+                <p className="text-xs text-[#222]">Non-Refundable. If you lose any personal items, the hotel will not be responsible.</p>
+              </div>
+              <div className="text-center font-bold italic text-sm text-black pt-2 pb-1">
+                Thank you for choosing {hotelSettings?.name || 'Hotel Grant Heights'}!
               </div>
             </div>
           </div>

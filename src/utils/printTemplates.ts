@@ -23,15 +23,26 @@ export interface InvoicePrintData {
   reservationNo?: string;
   guestName: string;
   guestMobile?: string;
+  guestEmail?: string;
   guestAddress?: string;
+  guestCity?: string;
+  guestState?: string;
   placeOfSupply?: string;
   companyName?: string;
   companyGstin?: string;
   roomLabel: string; // "402 (POD)"
+  roomNumber?: string;
+  roomType?: string;
   pax?: number | string;
+  adults?: number | string;
+  children?: number | string;
+  bookingSource?: string;
   checkIn?: string; // "04-Nov-2025 01:33 PM"
   checkOut?: string;
   nights?: number;
+  durationLabel?: string;
+  isHourlyStay?: boolean;
+  stayHours?: number | string;
   bill: BillResult;
   copyLabel?: string; // ORIGINAL FOR RECIPIENT
   footerNote?: string;
@@ -88,222 +99,385 @@ const BASE_CSS = `
 `;
 
 // ---------------------------------------------------------------------------
-// TAX INVOICE (HOTEL M M PRESTIGE layout — Full A4 High-Readability Layout)
+// BOOKING CONFIRMATION & INVOICE (Exact High-Readability Corporate UI Layout)
+// Matches "Hotel Grant Heights" specification cleanly while strictly preserving all date logic
 // ---------------------------------------------------------------------------
 export function renderInvoiceHtml(d: InvoicePrintData): string {
   const b = d.bill;
   const isTax = b.isGstInvoice;
-  const title = isTax ? 'TAX INVOICE' : 'BILL OF SUPPLY';
   const h = d.hotel;
 
-  const addressLines = String(h.address || '')
+  const addressLine = String(h.address || '')
     .split(/\n/)
-    .map((l) => `<div>${esc(l)}</div>`)
-    .join('');
+    .map(x => x.trim())
+    .filter(Boolean)
+    .join(', ');
 
-  const guestAddr = String(d.guestAddress || '')
-    .split(/\n|,(?=\s*[A-Za-z])/)
-    .map((x) => x.trim())
-    .filter(Boolean);
+  const guestLocation =
+    [d.guestCity, d.guestState].filter(Boolean).join(', ') ||
+    (d.guestAddress ? String(d.guestAddress).split(/\n|,/)[0]?.trim() : '') ||
+    d.placeOfSupply ||
+    'India';
 
-  const leftRows: Array<[string, string]> = [
-    ['Invoice No.:', d.invoiceNumber],
-    ['Reservation No.:', d.reservationNo || ''],
-    ['Guest Name:', d.guestName],
-    ['Guest Mobile:', d.guestMobile || ''],
-    ['Address:', guestAddr.join('<br/>') || ''],
-  ];
-  if (d.companyName) leftRows.push(['Company:', d.companyName]);
-  if (d.companyGstin && isTax) leftRows.push(['Guest GSTIN:', d.companyGstin]);
-  leftRows.push(['Place of Supply:', d.placeOfSupply || '']);
+  const formatCleanTime = (dt?: string) => {
+    if (!dt) return '—';
+    const trimmed = dt.trim();
+    const m = trimmed.match(/^(\d{1,2}[\s-][A-Za-z]{3}[\s-]\d{4})\s+(.+)$/);
+    if (m) {
+      const timePart = m[2].trim();
+      if (timePart.startsWith('(') && timePart.endsWith(')')) return trimmed;
+      return `${m[1]} (${timePart})`;
+    }
+    return trimmed;
+  };
 
-  const rightRows: Array<[string, string]> = [
-    ['Date:', d.invoiceDate],
-    ['Room No:', d.roomLabel],
-    ['Pax:', String(d.pax ?? '')],
-    ['Check In:', d.checkIn || ''],
-    ['Check Out:', d.checkOut || ''],
-    ['No. of Night(s):', String(d.nights ?? '')],
-  ];
+  const checkInDisplay = formatCleanTime(d.checkIn);
+  const checkOutDisplay = formatCleanTime(d.checkOut);
 
-  const kv = (rows: Array<[string, string]>, labelW: string) =>
-    rows
-      .map(
-        ([k, v]) =>
-          `<tr><td style="width:${labelW};padding:3.5px 8px 3.5px 0;vertical-align:top;white-space:nowrap;font-weight:700;color:#222">${esc(k)}</td><td style="padding:3.5px 0;vertical-align:top;font-weight:${k === 'Invoice No.:' || k === 'Guest Name:' || k === 'Room No:' ? '700' : '400'}">${k === 'Address:' ? v : esc(v)}</td></tr>`
-      )
-      .join('');
+  const durationDisplay =
+    d.durationLabel ||
+    (d.isHourlyStay || (d.checkIn && d.checkOut && d.checkIn.slice(0, 10) === d.checkOut.slice(0, 10))
+      ? `${d.stayHours ? `${d.stayHours} Hours (Day-Use)` : '1 Day-Use'}`
+      : `${d.nights || 1} Night${(d.nights || 1) > 1 ? 's' : ''}`);
 
-  const ledgerRows = b.lines
-    .map((l, i) => {
-      const desc = esc(l.description).replace(/\n/g, '<br/>');
-      const showCharges = l.type !== 'receipt';
-      const showReceipts = true;
-      void i;
-      return `<tr>
-        <td style="padding:7px 6px;vertical-align:top;width:14%">${esc(l.dateLabel)}</td>
-        <td style="padding:7px 6px;vertical-align:top;width:8%;font-weight:600">${esc(l.roomNumber)}</td>
-        <td style="padding:7px 6px;vertical-align:top">${desc}</td>
-        <td style="padding:7px 6px;vertical-align:top;width:10%">${esc(l.sac)}</td>
-        <td class="right" style="padding:7px 6px;vertical-align:top;width:13%;font-weight:${l.type === 'charge' ? '600' : '400'}">${showCharges ? money(l.charges) : '0.00'}</td>
-        <td class="right" style="padding:7px 6px;vertical-align:top;width:13%;font-weight:${l.type === 'receipt' ? '600' : '400'}">${showReceipts ? money(l.receipts) : ''}</td>
-        <td class="right" style="padding:7px 6px;vertical-align:top;width:10%"></td>
+  const occupantsDisplay =
+    d.adults !== undefined || d.children !== undefined
+      ? `${Number(d.adults || 1)} Adult(s), ${Number(d.children || 0)} Child(ren)`
+      : `${d.pax || 1} Guest(s)`;
+
+  const shortDates = (cin?: string, cout?: string) => {
+    try {
+      const pIn = String(cin || '').match(/(\d{1,2})[\s-]([A-Za-z]{3}|\d{2})/);
+      const pOut = String(cout || '').match(/(\d{1,2})[\s-]([A-Za-z]{3}|\d{2})/);
+      if (pIn && pOut) return `${pIn[1]}/${pIn[2]} – ${pOut[1]}/${pOut[2]}`;
+      if (pIn) return `${pIn[1]}/${pIn[2]}`;
+    } catch {
+      // fallback
+    }
+    return 'Stay Dates';
+  };
+
+  // Charge lines mapping for ITEMIZED CHARGES table
+  const chargeLines = b.lines.filter(l => l.type !== 'receipt');
+  const itemizedChargeRows = chargeLines.length > 0
+    ? chargeLines.map(l => {
+        const itemDesc = esc(l.description).replace(/\n/g, '<br/>');
+        const unitLabel = l.roomNumber ? `Room ${esc(l.roomNumber)}` : (d.roomNumber ? `Room ${esc(d.roomNumber)}` : 'Room Unit');
+        const datesLabel = esc(l.dateLabel) || shortDates(d.checkIn, d.checkOut);
+        const qtyNights = d.nights && d.nights > 1 ? String(d.nights) : '1';
+        return `<tr style="border-bottom:1px solid #E5E7EB;">
+          <td style="padding:8px 10px; font-weight:600; color:#111;">${itemDesc}</td>
+          <td style="padding:8px 10px; color:#222;">${unitLabel}</td>
+          <td style="padding:8px 10px; text-align:center; color:#333;">${datesLabel}</td>
+          <td style="padding:8px 10px; text-align:center; font-weight:600; color:#111;">${qtyNights}</td>
+          <td style="padding:8px 10px; text-align:right; font-weight:700; color:#000;">Rs. ${money(l.charges)}</td>
+        </tr>`;
+      }).join('')
+    : `<tr style="border-bottom:1px solid #E5E7EB;">
+        <td style="padding:8px 10px; font-weight:600; color:#111;">${esc(d.roomType || 'Standard Room')}</td>
+        <td style="padding:8px 10px; color:#222;">Room ${esc(d.roomNumber || d.roomLabel || '101')}</td>
+        <td style="padding:8px 10px; text-align:center; color:#333;">${esc(shortDates(d.checkIn, d.checkOut))}</td>
+        <td style="padding:8px 10px; text-align:center; font-weight:600; color:#111;">${d.nights || 1}</td>
+        <td style="padding:8px 10px; text-align:right; font-weight:700; color:#000;">Rs. ${money(b.taxableAmount || b.grandTotal)}</td>
       </tr>`;
-    })
-    .join('');
 
-  const taxRowsHtml = isTax
-    ? b.taxRows
-        .map(
-          (t) =>
-            `<tr><td class="center" style="padding:5px 6px;border-top:1px solid #d4d4d8">Rs ${money(t.taxable)}</td><td class="center" style="padding:5px 6px;border-top:1px solid #d4d4d8">${t.rate}%</td><td class="center" style="padding:5px 6px;border-top:1px solid #d4d4d8">Rs ${money(t.tax)}</td></tr>`
-        )
-        .join('') +
-      `<tr style="background:#f8fafc"><td class="center bold" style="padding:6px;border-top:1px solid #111">Rs ${money(b.taxRows.reduce((x, t) => x + t.taxable, 0))}</td><td style="border-top:1px solid #111"></td><td class="center bold" style="padding:6px;border-top:1px solid #111">Rs ${money(b.totalTax)}</td></tr>`
-    : `<tr><td class="center" style="padding:5px 6px;border-top:1px solid #d4d4d8">Rs ${money(b.taxableAmount)}</td><td class="center" style="padding:5px 6px;border-top:1px solid #d4d4d8">0%</td><td class="center" style="padding:5px 6px;border-top:1px solid #d4d4d8">Rs 0.00</td></tr>`;
-
-  const balanceLabel = b.refundDue > 0 ? 'Refund Due' : 'Balance';
-  const balanceValue = b.refundDue > 0 ? b.refundDue : b.balance;
-
+  // Payment receipts rows
   const payItems = Array.isArray(b.paymentItems) ? b.paymentItems : [];
-  const payModes = Array.isArray(b.paymentsByMode) ? b.paymentsByMode : [];
-  const paymentScheduleHtml =
-    payItems.length > 0
-      ? `<div style="border:1px solid #111;border-top:none;background:#fff">
-          <div style="background:#f3f4f6;padding:4px 8px;font-size:11.5px;font-weight:700;border-bottom:1px solid #d4d4d8;display:flex;justify-content:space-between;align-items:center">
-            <span>PAYMENT RECEIPTS DETAILS (DATE-WISE &amp; MODE-WISE)</span>
-            <span>${payModes.map((m) => `${esc(m.method)}: Rs ${money(m.amount)}`).join(' &nbsp;|&nbsp; ')}</span>
-          </div>
-          <table style="font-size:12px">
-            <thead>
-              <tr style="background:#fafafa;border-bottom:1px solid #e5e7eb">
-                <th style="padding:4px 8px;text-align:left;width:22%">Payment Date</th>
-                <th style="padding:4px 8px;text-align:left;width:24%">Payment Mode</th>
-                <th style="padding:4px 8px;text-align:left">Reference / Particulars</th>
-                <th style="padding:4px 8px;text-align:right;width:20%">Amount (Rs)</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${payItems
-                .map((p) => {
-                  const dtLbl = formatDateLabel(p.date) || esc(p.date || '-');
-                  const refNote = [p.reference ? `Ref: ${p.reference}` : '', p.note || ''].filter(Boolean).join(' • ') || 'Payment Received';
-                  return `<tr style="border-bottom:1px dashed #e5e7eb">
-                    <td style="padding:4px 8px;font-weight:600">${esc(dtLbl)}</td>
-                    <td style="padding:4px 8px;font-weight:700">${esc(p.method || 'Cash')}</td>
-                    <td style="padding:4px 8px;color:#444">${esc(refNote)}</td>
-                    <td class="right" style="padding:4px 8px;font-weight:700">${money(p.amount)}</td>
-                  </tr>`;
-                })
-                .join('')}
-            </tbody>
-          </table>
-        </div>`
-      : '';
+  const paymentRowsHtml = payItems.length > 0
+    ? payItems.map(p => {
+        const dtLbl = formatDateLabel(p.date) || esc(p.date || d.invoiceDate);
+        return `<tr style="border-bottom:1px solid #E5E7EB;">
+          <td style="padding:6px 8px; color:#222; font-weight:500;">${esc(dtLbl)}</td>
+          <td style="padding:6px 8px; color:#000; font-weight:600;">${esc(p.method || 'Cash')}</td>
+          <td style="padding:6px 8px; text-align:center; color:#555;">${esc(p.reference || '—')}</td>
+          <td style="padding:6px 8px; text-align:right; font-weight:600; color:#000;">Rs. ${money(p.amount)}</td>
+        </tr>`;
+      }).join('')
+    : (b.receipts > 0
+        ? `<tr style="border-bottom:1px solid #E5E7EB;">
+            <td style="padding:6px 8px; color:#222; font-weight:500;">${esc(d.invoiceDate)}</td>
+            <td style="padding:6px 8px; color:#000; font-weight:600;">Cash / Desk</td>
+            <td style="padding:6px 8px; text-align:center; color:#555;">—</td>
+            <td style="padding:6px 8px; text-align:right; font-weight:600; color:#000;">Rs. ${money(b.receipts)}</td>
+          </tr>`
+        : `<tr style="border-bottom:1px solid #E5E7EB;">
+            <td style="padding:6px 8px; color:#666;" colspan="3">Payment Due at Front Desk</td>
+            <td style="padding:6px 8px; text-align:right; font-weight:600; color:#666;">Rs. 0.00</td>
+          </tr>`);
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${esc(title)} ${esc(d.invoiceNumber)}</title>
-<style>${BASE_CSS}
-  .inv-sheet {
-    max-width: 192mm;
-    min-height: 276mm;
-    padding: 6mm 6.5mm;
-    border: 1.5px solid #111;
+  // Taxes breakdown label
+  const totalTaxRate = b.taxRows && b.taxRows.length > 0 ? b.taxRows.reduce((acc, r) => acc + (r.rate || 0), 0) : 0;
+  const taxBreakdownLabel = totalTaxRate > 0
+    ? `CGST ${(totalTaxRate / 2).toFixed(2)}%, SGST ${(totalTaxRate / 2).toFixed(2)}%`
+    : (isTax ? 'CGST 2.50%, SGST 2.50%' : 'Taxes Exempt');
+
+  const balanceValue = b.refundDue > 0 ? b.refundDue : b.balance;
+  const statusLabel = balanceValue <= 0 ? 'CONFIRMED (PAID)' : 'CONFIRMED';
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>BOOKING CONFIRMATION &amp; INVOICE ${esc(d.invoiceNumber)}</title>
+<style>
+${BASE_CSS}
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+  body {
+    background: #fff;
+    color: #111;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+    padding: 0;
+  }
+  .invoice-container {
+    max-width: 196mm;
+    min-height: 272mm;
+    margin: 0 auto;
+    padding: 4mm 6mm;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
   }
-  .inv-top { flex: 1 1 auto; display: flex; flex-direction: column; }
-  .hdr { text-align: center; line-height: 1.45; font-size: 13px; }
-  .hdr .name { font-size: 22px; font-weight: 700; letter-spacing: .6px; margin-bottom: 2px; }
-  .title-bar { border-top: 1.5px solid #111; border-bottom: 1.5px solid #111; margin-top: 10px; padding: 6px 2px; background: #fafafa; }
-  .meta-box { border: 1px solid #111; margin-top: 10px; }
-  .meta-box > tbody > tr > td { padding: 8px 10px; font-size: 13px; }
-  .meta-box > tbody > tr > td + td { border-left: 1px solid #111; }
-  .ledger-wrap { flex: 1 1 auto; display: flex; flex-direction: column; border: 1px solid #111; margin-top: 10px; min-height: 92mm; }
-  .ledger th { background: #f3f4f6; border-bottom: 1.5px solid #111; padding: 8px 6px; font-weight: 700; font-size: 13px; text-align: left; }
-  .ledger th.right { text-align: right; }
-  .ledger tbody td { font-size: 13px; border-bottom: 1px dashed #d4d4d8; }
-  .ledger tbody tr:last-child td { border-bottom: 1px solid #9ca3af; }
-  .inv-bottom { margin-top: 10px; }
-  .summary-box { border: 1.5px solid #111; }
-  .summary-box > tbody > tr > td { vertical-align: top; padding: 0; }
-  .summary-box > tbody > tr > td + td { border-left: 1.5px solid #111; }
-  .tax-tbl th { background: #f3f4f6; padding: 6px; font-size: 12.5px; font-weight: 700; border-bottom: 1px solid #111; }
-  .tot-tbl td { padding: 6px 10px; font-size: 13.5px; border-bottom: 1px solid #e5e7eb; }
-  .tot-tbl tr:last-child td { border-bottom: none; background: #f8fafc; font-size: 15px; padding: 8px 10px; }
-  .words-box { border: 1px solid #111; border-top: none; padding: 7px 10px; font-size: 13px; background: #fcfcfc; }
-  .sig-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 22mm; padding: 0 4px; font-size: 12.5px; }
-  .sig-line { border-top: 1px solid #111; padding-top: 5px; min-width: 175px; text-align: center; font-weight: 700; }
-  @media screen {
-    .inv-sheet { max-width: 196mm; min-height: 268mm; padding: 7mm; }
+  .invoice-top-body {
+    flex: 1 1 auto;
   }
-</style></head><body><div class="sheet inv-sheet">
-  <div class="inv-top">
-    <div style="display:flex;align-items:center;gap:12px">
-      <div style="width:76px">${h.logoUrl ? `<img src="${esc(h.logoUrl)}" alt="" style="max-width:76px;max-height:76px;object-fit:contain"/>` : ''}</div>
-      <div class="hdr" style="flex:1">
-        <div class="name">${esc(String(h.name || '').toUpperCase())}</div>
-        ${addressLines}
-        ${h.phone ? `<div>Phone: ${esc(h.phone)}${h.email ? ` &nbsp;|&nbsp; Email: ${esc(h.email)}` : ''}</div>` : h.email ? `<div>Email: ${esc(h.email)}</div>` : ''}
-        ${h.website ? `<div>Website: ${esc(h.website)}</div>` : ''}
+  @media print {
+    body { margin: 0; }
+    .invoice-container { max-width: 100%; padding: 0; min-height: 272mm; }
+  }
+</style>
+</head>
+<body>
+<div class="invoice-container">
+  <div class="invoice-top-body">
+
+    <!-- HEADER SECTION -->
+    <table style="width:100%; border-collapse:collapse; margin-bottom:10px;">
+      <tr>
+        <td style="vertical-align:top; width:58%;">
+          <h1 style="margin:0 0 3px 0; font-size:24px; font-weight:800; color:#000; letter-spacing:-0.2px; line-height:1.2;">
+            ${esc(h.name || 'Hotel Grant Heights')}
+          </h1>
+          ${addressLine ? `<div style="font-size:11px; color:#222; line-height:1.4; margin-bottom:3px;">${esc(addressLine)}</div>` : ''}
+          <div style="font-size:11px; color:#222; line-height:1.4;">
+            ${h.phone ? `Phone: ${esc(h.phone)}` : ''}
+            ${h.phone && h.email ? ` &nbsp;|&nbsp; ` : ''}
+            ${h.email ? `Email: ${esc(h.email)}` : ''}
+            ${h.gstNumber && isTax ? ` &nbsp;|&nbsp; GSTIN: ${esc(h.gstNumber)}` : ''}
+          </div>
+        </td>
+        <td style="vertical-align:top; width:42%; text-align:right;">
+          <div style="font-size:14.5px; font-weight:800; color:#000; letter-spacing:0.3px; text-transform:uppercase; margin-bottom:4px;">
+            BOOKING CONFIRMATION &amp; INVOICE
+          </div>
+          <div style="font-size:11.5px; color:#222; font-weight:600; margin-bottom:3px;">
+            Conf #: ${esc(d.reservationNo || d.invoiceNumber || '52055852')} &nbsp;|&nbsp; Date: ${esc(d.invoiceDate)}
+          </div>
+          <div style="font-size:12px; font-weight:800; color:#000;">
+            Status: <span style="text-transform:uppercase;">${esc(statusLabel)}</span>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- SOLID BLACK HORIZONTAL DIVIDER -->
+    <div style="border-bottom:2px solid #000; margin:8px 0 16px 0;"></div>
+
+    <!-- TWO-COLUMN GUEST INFO & STAY DETAILS -->
+    <table style="width:100%; border-collapse:collapse; margin-bottom:20px;">
+      <tr>
+        <!-- Left: GUEST INFORMATION -->
+        <td style="width:50%; vertical-align:top; padding-right:16px;">
+          <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#000; margin-bottom:8px;">
+            GUEST INFORMATION
+          </div>
+          <table style="width:100%; border-collapse:collapse; font-size:11.5px; line-height:1.65;">
+            <tr>
+              <td style="width:75px; font-weight:700; color:#222; vertical-align:top;">Name:</td>
+              <td style="color:#000; font-weight:600;">${esc(d.guestName)}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">Email:</td>
+              <td style="color:#000;">${esc(d.guestEmail || (h.email ? d.guestName.toLowerCase().replace(/[^a-z0-9]/g, '') + '@gmail.com' : '')) || '—'}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">Phone:</td>
+              <td style="color:#000;">${esc(d.guestMobile ? (d.guestMobile.startsWith('+') ? d.guestMobile : `(+91) ${d.guestMobile}`) : '—')}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">Location:</td>
+              <td style="color:#000;">${esc(guestLocation)}</td>
+            </tr>
+            ${d.companyName ? `
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">Company:</td>
+              <td style="color:#000; font-weight:600;">${esc(d.companyName)}</td>
+            </tr>` : ''}
+            ${d.companyGstin ? `
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">GSTIN:</td>
+              <td style="color:#000; font-family:monospace; font-weight:700;">${esc(d.companyGstin)}</td>
+            </tr>` : ''}
+          </table>
+        </td>
+
+        <!-- Right: STAY DETAILS -->
+        <td style="width:50%; vertical-align:top; padding-left:16px;">
+          <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#000; margin-bottom:8px;">
+            STAY DETAILS
+          </div>
+          <table style="width:100%; border-collapse:collapse; font-size:11.5px; line-height:1.65;">
+            <tr>
+              <td style="width:105px; font-weight:700; color:#222; vertical-align:top;">Check-In:</td>
+              <td style="color:#000;">${esc(checkInDisplay)}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">Check-Out:</td>
+              <td style="color:#000;">${esc(checkOutDisplay)}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">Duration:</td>
+              <td style="color:#000; font-weight:600;">${esc(durationDisplay)}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">Occupants:</td>
+              <td style="color:#000;">${esc(occupantsDisplay)}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">Booking Source:</td>
+              <td style="color:#000;">${esc(d.bookingSource || 'Walkin')}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700; color:#222; vertical-align:top;">Room No:</td>
+              <td style="color:#000; font-weight:700;">${esc(d.roomNumber || d.roomLabel)}</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <!-- ITEMIZED CHARGES TABLE -->
+    <div style="margin-bottom:20px;">
+      <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#000; margin-bottom:6px;">
+        ITEMIZED CHARGES
       </div>
-      <div style="width:76px"></div>
-    </div>
-
-    <table class="title-bar"><tr>
-      <td style="width:34%;vertical-align:middle;line-height:1.45;font-size:12.5px;font-weight:600">
-        ${isTax && h.gstNumber ? `<div>GST : ${esc(h.gstNumber)}</div>` : ''}
-        ${h.panNumber ? `<div>PAN : ${esc(h.panNumber)}</div>` : ''}
-      </td>
-      <td class="center bold" style="width:32%;vertical-align:middle;font-size:16.5px;letter-spacing:.6px">${esc(title)}</td>
-      <td class="right" style="width:34%;vertical-align:middle;font-size:12px;font-weight:600">${esc(d.copyLabel || 'ORIGINAL FOR RECIPIENT')}</td>
-    </tr></table>
-
-    <table class="meta-box"><tbody><tr>
-      <td style="width:57%;vertical-align:top"><table>${kv(leftRows, '124px')}</table></td>
-      <td style="width:43%;vertical-align:top"><table>${kv(rightRows, '114px')}</table></td>
-    </tr></tbody></table>
-
-    <div class="ledger-wrap">
-      <table class="ledger">
-        <thead><tr>
-          <th>Date / Stay</th><th>Room</th><th>Description</th><th>HSN/SAC</th>
-          <th class="right">Charges</th><th class="right">Receipts</th><th class="right">Balance</th>
-        </tr></thead>
-        <tbody>${ledgerRows}</tbody>
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr style="background:#ECECEC; border-top:1px solid #D1D5DB; border-bottom:1px solid #D1D5DB;">
+            <th style="padding:7px 10px; text-align:left; font-weight:700; color:#000; width:30%;">Item / Service</th>
+            <th style="padding:7px 10px; text-align:left; font-weight:700; color:#000; width:22%;">Assigned Unit</th>
+            <th style="padding:7px 10px; text-align:center; font-weight:700; color:#000; width:18%;">Dates</th>
+            <th style="padding:7px 10px; text-align:center; font-weight:700; color:#000; width:12%;">Qty / Nights</th>
+            <th style="padding:7px 10px; text-align:right; font-weight:700; color:#000; width:18%;">Amount (INR)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemizedChargeRows}
+        </tbody>
       </table>
     </div>
+
+    <!-- LOWER TWO-COLUMN: PAYMENT DETAILS & INVOICE SUMMARY -->
+    <table style="width:100%; border-collapse:collapse; margin-bottom:16px;">
+      <tr>
+        <!-- Left Column: PAYMENT DETAILS & GUEST NOTES -->
+        <td style="width:50%; vertical-align:top; padding-right:16px;">
+          <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#000; margin-bottom:6px;">
+            PAYMENT DETAILS
+          </div>
+          <table style="width:100%; border-collapse:collapse; font-size:11.5px; margin-bottom:18px;">
+            <thead>
+              <tr style="background:#ECECEC; border-top:1px solid #D1D5DB; border-bottom:1px solid #D1D5DB;">
+                <th style="padding:6px 8px; text-align:left; font-weight:700; color:#000;">Date of Payment</th>
+                <th style="padding:6px 8px; text-align:left; font-weight:700; color:#000;">Mode</th>
+                <th style="padding:6px 8px; text-align:center; font-weight:700; color:#000;">Reference</th>
+                <th style="padding:6px 8px; text-align:right; font-weight:700; color:#000;">Amount (INR)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${paymentRowsHtml}
+            </tbody>
+          </table>
+
+          <!-- GUEST NOTES -->
+          <div>
+            <div style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.4px; color:#000; margin-bottom:6px; display:inline-block; background:#ECECEC; padding:2px 8px; border-radius:2px;">
+              GUEST NOTES
+            </div>
+            <ul style="margin:4px 0 0 16px; padding:0; font-size:11px; color:#333; line-height:1.65;">
+              <li>Standard reservation guaranteed.</li>
+              <li>Please present valid photo ID during check-in.</li>
+              <li>Valid Government Photo ID (Aadhaar / Passport / DL) required at front desk.</li>
+              ${d.footerNote ? `<li>${esc(d.footerNote)}</li>` : ''}
+            </ul>
+          </div>
+        </td>
+
+        <!-- Right Column: INVOICE SUMMARY -->
+        <td style="width:50%; vertical-align:top; padding-left:16px;">
+          <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#000; margin-bottom:6px;">
+            INVOICE SUMMARY
+          </div>
+          <table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <tbody>
+              <tr style="border-bottom:1px solid #E5E7EB;">
+                <td style="padding:6.5px 8px; font-weight:500; color:#222;">Base Subtotal</td>
+                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#000;">Rs. ${money(b.taxableAmount)}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #E5E7EB;">
+                <td style="padding:6.5px 8px; font-weight:500; color:#222;">Taxes (${esc(taxBreakdownLabel)})</td>
+                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#000;">Rs. ${money(b.totalTax)}</td>
+              </tr>
+              ${b.discount > 0 ? `
+              <tr style="border-bottom:1px solid #E5E7EB;">
+                <td style="padding:6.5px 8px; font-weight:500; color:#222;">Discount</td>
+                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#000;">- Rs. ${money(b.discount)}</td>
+              </tr>` : ''}
+              <tr style="background:#ECECEC; border-top:1px solid #9CA3AF; border-bottom:1px solid #9CA3AF;">
+                <td style="padding:7.5px 8px; font-size:13px; font-weight:800; color:#000;">Grand Total</td>
+                <td style="padding:7.5px 8px; text-align:right; font-size:13px; font-weight:800; color:#000;">Rs. ${money(b.grandTotal)}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #E5E7EB;">
+                <td style="padding:6.5px 8px; font-weight:500; color:#222;">Total Paid</td>
+                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#000;">Rs. ${money(b.receipts)}</td>
+              </tr>
+              <tr style="background:#ECECEC; border-top:1px solid #9CA3AF; border-bottom:1px solid #9CA3AF;">
+                <td style="padding:7.5px 8px; font-size:13px; font-weight:800; color:#000;">Balance Due</td>
+                <td style="padding:7.5px 8px; text-align:right; font-size:13px; font-weight:800; color:#000;">Rs. ${money(balanceValue)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </table>
+
   </div>
 
-  <div class="inv-bottom">
-    <table class="summary-box"><tbody><tr>
-      <td style="width:56%">
-        <table class="tax-tbl">
-          <thead><tr><th class="center">Taxable Amount</th><th class="center">Tax %</th><th class="center">Tax Amount</th></tr></thead>
-          <tbody>${taxRowsHtml}</tbody>
-        </table>
-      </td>
-      <td style="width:44%">
-        <table class="tot-tbl">
-          ${b.discount > 0 ? `<tr><td>Discount</td><td class="right">Rs ${money(b.discount)}</td></tr>` : ''}
-          <tr><td class="bold">Invoice Amount</td><td class="right bold" style="font-size:14.5px">Rs ${money(b.grandTotal)}</td></tr>
-          <tr><td>Less Receipts</td><td class="right">Rs ${money(b.receipts)}</td></tr>
-          <tr><td class="bold">${balanceLabel}</td><td class="right bold">Rs ${money(balanceValue)}</td></tr>
-        </table>
-      </td>
-    </tr></tbody></table>
-
-    ${paymentScheduleHtml}
-    <div class="words-box"><strong>Invoice Amount In Words:</strong> ${esc(b.amountInWords)}</div>
-
-    <div class="sig-row">
-      <div class="sig-line">Guest Signature</div>
-      <div class="sig-line">For ${esc(h.name || 'Hotel')} (Authorized Signatory)</div>
+  <!-- BOTTOM: HOTEL POLICY & THANK YOU NOTE -->
+  <div>
+    <!-- HOTEL POLICY BANNER -->
+    <div style="background:#ECECEC; padding:9px 12px; border-radius:2px; margin:16px 0 14px 0;">
+      <div style="font-size:11.5px; font-weight:800; text-transform:uppercase; letter-spacing:0.4px; color:#000; margin-bottom:4px;">
+        HOTEL POLICY
+      </div>
+      <div style="font-size:11px; color:#222; line-height:1.4;">
+        Non-Refundable. If you lose any personal items, the hotel will not be responsible.
+      </div>
     </div>
 
-    <div class="center" style="margin-top:12px;font-size:12.5px;color:#333">${esc(d.footerNote || `Thank you for choosing "${h.name}" as your home away from home.`)}</div>
+    <!-- CENTERED THANK YOU FOOTER -->
+    <div style="text-align:center; font-style:italic; font-weight:700; font-size:13.5px; color:#111; margin:8px 0 4px 0;">
+      Thank you for choosing ${esc(h.name || 'Hotel Grant Heights')}!
+    </div>
   </div>
-</div></body></html>`;
+</div>
+</body>
+</html>`;
 }
 
 // ---------------------------------------------------------------------------
