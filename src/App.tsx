@@ -357,6 +357,9 @@ export default function App() {
       return (!isAuth || role !== 'Owner') ? 'hotelowner' : null;
     }
     if (firstSeg === 'admin') {
+      const sp = new URLSearchParams(window.location.search);
+      const isImpersonating = isAuth && (role === 'SuperAdmin' || sessionStorage.getItem('pms_role') === 'SuperAdmin' || localStorage.getItem('pms_role') === 'SuperAdmin') && (Boolean(sp.get('hotelId')) || sp.get('asAdmin') === 'true');
+      if (isImpersonating) return null;
       return (!isAuth || role === 'SuperAdmin' || role === 'Owner') ? 'admin' : null;
     }
     return null;
