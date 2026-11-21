@@ -1632,6 +1632,8 @@ export default function RoomManagementView({
                     <option value="1st Floor">1st Floor</option>
                     <option value="2nd Floor">2nd Floor</option>
                     <option value="3rd Floor">3rd Floor</option>
+                    <option value="4th Floor">4th Floor</option>
+                    <option value="5th Floor">5th Floor</option>
                     <option value="Executive Floor">Executive Floor</option>
                     <option value="Penthouse">Penthouse Tier</option>
                   </select>

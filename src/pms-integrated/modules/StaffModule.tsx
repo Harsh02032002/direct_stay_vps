@@ -1,21 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   Users,
   ShieldCheck,
-  Clock,
   IndianRupee,
   CheckCircle2,
   Trash2,
-  Download,
   Printer,
-  LogIn,
-  LogOut,
   Save,
   MessageCircle,
   KeyRound,
 } from 'lucide-react';
 import { PaymentMethod, StaffMemberRecord } from '../types';
-import { exportToCsv, formatCurrency } from '../utils/formatters';
+import { formatCurrency } from '../utils/formatters';
 import {
   PMS_MODULES_LIST,
   DEFAULT_RBAC_MATRIX,
@@ -46,18 +42,8 @@ interface StaffModuleProps {
 const SUB_TABS = [
   { id: 'directory', label: 'Staff Roster & Shifts', icon: Users },
   { id: 'roles', label: 'RBAC Module Permissions', icon: ShieldCheck },
-  { id: 'attendance', label: 'Biometric Attendance', icon: Clock },
   { id: 'payroll', label: 'Monthly Payroll & KPIs', icon: IndianRupee },
 ];
-
-interface AttendanceEntry {
-  staffId: string;
-  date: string;
-  punchIn: string;
-  punchOut: string;
-  status: 'Present' | 'Late' | 'Half Day' | 'On Leave' | 'Not Punched';
-  remarks: string;
-}
 
 interface PayrollAdjustment {
   incentive: number;
@@ -99,11 +85,7 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
   const [selectedRoleForRbac, setSelectedRoleForRbac] = useState<string>('Receptionist');
   const [rbacMatrix, setRbacMatrix] = useRbacMatrix();
 
-  // Sub-Tab 3: Biometric Attendance state
-  const [attendanceDate, setAttendanceDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [attendanceMap, setAttendanceMap] = useState<Record<string, AttendanceEntry>>({});
-
-  // Sub-Tab 4: Monthly Payroll & KPIs state
+  // Sub-Tab 3: Monthly Payroll & KPIs state
   const [payrollMonth, setPayrollMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [payrollAdjustments, setPayrollAdjustments] = useState<Record<string, PayrollAdjustment>>({});
   const [salaryPaymentMode, setSalaryPaymentMode] = useState<PaymentMethod>('UPI');
@@ -160,26 +142,6 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
     );
   };
 
-  // Initialize default attendance rows for any staff member
-  useEffect(() => {
-    setAttendanceMap((prev) => {
-      const next = { ...prev };
-      staff.forEach((s) => {
-        const key = `${s.id}_${attendanceDate}`;
-        if (!next[key]) {
-          next[key] = {
-            staffId: s.id,
-            date: attendanceDate,
-            punchIn: s.status === 'Active' ? '07:02 AM' : '--',
-            punchOut: '--',
-            status: s.status === 'On Leave' ? 'On Leave' : 'Present',
-            remarks: s.status === 'Active' ? 'Biometric Verified' : 'Approved Leave',
-          };
-        }
-      });
-      return next;
-    });
-  }, [staff, attendanceDate]);
 
   const derivedUsername =
     customUsername.trim() || name.trim().toLowerCase().replace(/\s+/g, '.') || 'staff.user';
@@ -258,84 +220,6 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
     }
   };
 
-  const handlePunchAction = (
-    member: StaffMemberRecord,
-    action: 'PUNCH_IN' | 'PUNCH_OUT' | 'LATE' | 'HALF_DAY' | 'LEAVE'
-  ) => {
-    const key = `${member.id}_${attendanceDate}`;
-    const nowTime = new Date().toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    setAttendanceMap((prev) => {
-      const existing = prev[key] || {
-        staffId: member.id,
-        date: attendanceDate,
-        punchIn: '--',
-        punchOut: '--',
-        status: 'Not Punched',
-        remarks: '',
-      };
-      if (action === 'PUNCH_IN') {
-        return {
-          ...prev,
-          [key]: {
-            ...existing,
-            punchIn: nowTime,
-            status: 'Present',
-            remarks: `Punched In at ${nowTime}`,
-          },
-        };
-      }
-      if (action === 'PUNCH_OUT') {
-        return {
-          ...prev,
-          [key]: {
-            ...existing,
-            punchOut: nowTime,
-            remarks: `Shift Completed (${existing.punchIn} - ${nowTime})`,
-          },
-        };
-      }
-      if (action === 'LATE') {
-        return {
-          ...prev,
-          [key]: {
-            ...existing,
-            punchIn: existing.punchIn === '--' ? nowTime : existing.punchIn,
-            status: 'Late',
-            remarks: 'Late Arrival Logged',
-          },
-        };
-      }
-      if (action === 'HALF_DAY') {
-        return {
-          ...prev,
-          [key]: {
-            ...existing,
-            status: 'Half Day',
-            remarks: 'Half-Day Shift',
-          },
-        };
-      }
-      return {
-        ...prev,
-        [key]: {
-          ...existing,
-          punchIn: '--',
-          punchOut: '--',
-          status: 'On Leave',
-          remarks: 'Marked On Leave',
-        },
-      };
-    });
-    if (action === 'LEAVE' && onUpdateStaffMember) {
-      onUpdateStaffMember(member.id, { status: 'On Leave' });
-    } else if (action === 'PUNCH_IN' && onUpdateStaffMember) {
-      onUpdateStaffMember(member.id, { status: 'Active' });
-    }
-    setActionBanner(`Updated biometric attendance for ${member.name}.`);
-  };
 
   const getAdjustment = (staffId: string): PayrollAdjustment => {
     const key = `${staffId}_${payrollMonth}`;
@@ -811,193 +695,6 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
         </div>
       )}
 
-      {/* ===================================================================== */}
-      {/* TAB 3: BIOMETRIC ATTENDANCE (`attendance`)                            */}
-      {/* ===================================================================== */}
-      {currentTab === 'attendance' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-              <div className="text-[11px] font-bold text-slate-500">Total Roster Staff</div>
-              <div className="text-2xl font-extrabold text-slate-900 mt-1">{staff.length}</div>
-            </div>
-            <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-200">
-              <div className="text-[11px] font-bold text-emerald-700">Present Today</div>
-              <div className="text-2xl font-extrabold text-emerald-900 mt-1">
-                {
-                  staff.filter(
-                    (s) => attendanceMap[`${s.id}_${attendanceDate}`]?.status === 'Present'
-                  ).length
-                }
-              </div>
-            </div>
-            <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200">
-              <div className="text-[11px] font-bold text-amber-700">Late / Half-Day</div>
-              <div className="text-2xl font-extrabold text-amber-900 mt-1">
-                {
-                  staff.filter((s) =>
-                    ['Late', 'Half Day'].includes(
-                      attendanceMap[`${s.id}_${attendanceDate}`]?.status || ''
-                    )
-                  ).length
-                }
-              </div>
-            </div>
-            <div className="bg-rose-50 p-4 rounded-2xl border border-rose-200">
-              <div className="text-[11px] font-bold text-rose-700">On Leave / Absent</div>
-              <div className="text-2xl font-extrabold text-rose-900 mt-1">
-                {
-                  staff.filter(
-                    (s) => attendanceMap[`${s.id}_${attendanceDate}`]?.status === 'On Leave'
-                  ).length
-                }
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-amber-500" />
-                  Daily Biometric Punch-In / Punch-Out Register
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Log real-time shift attendance, late arrivals, half-days, and leaves
-                </p>
-              </div>
-              <div className="flex items-center gap-2 text-xs">
-                <input
-                  type="date"
-                  value={attendanceDate}
-                  onChange={(e) => setAttendanceDate(e.target.value)}
-                  className="px-3 py-1.5 rounded-xl border border-slate-200 font-bold"
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    exportToCsv(
-                      `DirectStay_Attendance_${attendanceDate}.csv`,
-                      staff.map((s) => {
-                        const att = attendanceMap[`${s.id}_${attendanceDate}`];
-                        return {
-                          Date: attendanceDate,
-                          Employee: s.name,
-                          Role: s.role,
-                          Department: s.department,
-                          Shift: s.shift,
-                          PunchIn: att?.punchIn || '--',
-                          PunchOut: att?.punchOut || '--',
-                          Status: att?.status || 'Present',
-                          Remarks: att?.remarks || '',
-                        };
-                      })
-                    )
-                  }
-                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Export Attendance CSV
-                </button>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto w-full">
-              <table className="w-full min-w-[740px] text-left text-xs">
-                <thead>
-                  <tr className="bg-slate-50 text-[10px] uppercase text-slate-500 border-b border-slate-200">
-                    <th className="py-3 px-4">Employee</th>
-                    <th className="py-3 px-4">Role & Shift</th>
-                    <th className="py-3 px-4">Punch-In Time</th>
-                    <th className="py-3 px-4">Punch-Out Time</th>
-                    <th className="py-3 px-4">Attendance Status</th>
-                    <th className="py-3 px-4">Biometric / Shift Notes</th>
-                    <th className="py-3 px-4 text-right">Quick Punch Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {staff.map((m) => {
-                    const att = attendanceMap[`${m.id}_${attendanceDate}`] || {
-                      staffId: m.id,
-                      date: attendanceDate,
-                      punchIn: '07:02 AM',
-                      punchOut: '--',
-                      status: 'Present',
-                      remarks: 'Biometric Verified',
-                    };
-                    return (
-                      <tr key={m.id} className="hover:bg-slate-50">
-                        <td className="py-3.5 px-4">
-                          <div className="font-bold text-slate-900">{m.name}</div>
-                          <div className="text-[10px] text-slate-400">@{m.username}</div>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <div className="font-bold text-slate-800">{m.role}</div>
-                          <div className="text-[10px] text-slate-500">{m.shift}</div>
-                        </td>
-                        <td className="py-3.5 px-4 font-mono font-bold text-emerald-700">
-                          {att.punchIn}
-                        </td>
-                        <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
-                          {att.punchOut}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${
-                              att.status === 'Present'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : att.status === 'Late' || att.status === 'Half Day'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-rose-100 text-rose-800'
-                            }`}
-                          >
-                            {att.status}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4 text-slate-500">{att.remarks}</td>
-                        <td className="py-3.5 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handlePunchAction(m, 'PUNCH_IN')}
-                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <LogIn className="w-3 h-3" />
-                              Punch In
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handlePunchAction(m, 'PUNCH_OUT')}
-                              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-bold text-[10px] inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <LogOut className="w-3 h-3" />
-                              Punch Out
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handlePunchAction(m, 'LATE')}
-                              className="px-2 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[10px] cursor-pointer"
-                            >
-                              Late
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handlePunchAction(m, 'LEAVE')}
-                              className="px-2 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold text-[10px] cursor-pointer"
-                            >
-                              Leave
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ===================================================================== */}
       {/* TAB 4: MONTHLY PAYROLL & KPIs (`payroll`)                             */}
