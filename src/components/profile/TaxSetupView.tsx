@@ -33,6 +33,12 @@ export default function TaxSetupView({
   onUpdateHotelSettings,
   onAddAuditLog,
 }: TaxSetupViewProps) {
+  const safeHotel: Hotel = activeHotel || {
+    id: 'hotel-1',
+    name: 'DirectStay Hotel',
+    gstNumber: hotelSettings?.gstNumber || '',
+  } as unknown as Hotel;
+
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -57,7 +63,8 @@ export default function TaxSetupView({
   const [sampleTariff, setSampleTariff] = useState<number>(2000);
 
   useEffect(() => {
-    if (!activeHotel) return;
+    const target = activeHotel || safeHotel;
+    if (!target) return;
     setHotelGst(activeHotel.gstNumber || hotelSettings?.gstNumber || '');
     setHotelPan(activeHotel.panNumber || hotelSettings?.panNumber || '');
     setHotelPlaceOfSupply(activeHotel.placeOfSupply || hotelSettings?.placeOfSupply || '');
@@ -151,11 +158,11 @@ export default function TaxSetupView({
           fnbSgst: r2(cleanFoodGst - r2(cleanFoodGst / 2)),
           invoicePrefix: cleanPrefix,
         },
-        activeHotel.id
+        safeHotel.id
       );
 
       const updatedHotel: Hotel = {
-        ...activeHotel,
+        ...safeHotel,
         gstNumber: hotelGst.trim().toUpperCase(),
         panNumber: cleanPan,
         placeOfSupply: cleanPlaceOfSupply,
@@ -177,15 +184,15 @@ export default function TaxSetupView({
       if (onUpdateHotelSettings) {
         onUpdateHotelSettings({
           ...(hotelSettings || {
-            logoUrl: activeHotel.logoUrl || '',
-            name: activeHotel.name || '',
-            address: activeHotel.address || '',
+            logoUrl: safeHotel.logoUrl || '',
+            name: safeHotel.name || '',
+            address: safeHotel.address || '',
             gstNumber: hotelGst.trim().toUpperCase(),
-            phoneNumber: activeHotel.phoneNumber || '',
-            emailAddress: activeHotel.emailAddress || '',
-            website: activeHotel.website || '',
+            phoneNumber: safeHotel.phoneNumber || '',
+            emailAddress: safeHotel.emailAddress || '',
+            website: safeHotel.website || '',
           }),
-          id: activeHotel.id,
+          id: safeHotel.id,
           gstNumber: hotelGst.trim().toUpperCase(),
           panNumber: cleanPan,
           placeOfSupply: cleanPlaceOfSupply,

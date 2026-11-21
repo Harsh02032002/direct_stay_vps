@@ -38,6 +38,27 @@ export default function MasterSetupView({
   onUpdateHotelSettings,
   onAddAuditLog,
 }: MasterSetupViewProps) {
+  const safeHotel: Hotel = activeHotel || {
+    id: 'hotel-1',
+    name: 'DirectStay Hotel',
+    ownerName: 'Property Owner',
+    phoneNumber: '+91 9876543210',
+    whatsappNumber: '+91 9876543210',
+    emailAddress: 'owner@directstay.online',
+    address: 'India',
+    checkInTime: '12:00 PM',
+    checkOutTime: '11:00 AM',
+    earlyCheckInEnabled: true,
+    allowBackDatedCheckIn: false,
+    earlyCheckInType: 'hourly',
+    earlyCheckInHourlyRate: 0,
+    earlyCheckInFixedRate: 0,
+    currency: 'INR',
+    timeZone: 'Asia/Kolkata',
+    dateFormat: 'DD/MM/YYYY',
+    username: 'admin',
+  } as unknown as Hotel;
+
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -72,32 +93,33 @@ export default function MasterSetupView({
   const [showPasscodes, setShowPasscodes] = useState(false);
 
   useEffect(() => {
-    if (!activeHotel) return;
-    setHotelName(activeHotel.name || '');
-    setHotelOwnerName(activeHotel.ownerName || '');
-    setHotelPhone(activeHotel.phoneNumber || '');
-    setHotelWhatsAppNumber(activeHotel.whatsappNumber || activeHotel.phoneNumber || '');
-    setHotelEmail(activeHotel.emailAddress || '');
-    setHotelWebsite(activeHotel.website || '');
-    setHotelLogoUrl(activeHotel.logoUrl || '');
-    setHotelAddress(activeHotel.address || '');
+    const target = activeHotel || safeHotel;
+    if (!target) return;
+    setHotelName(target.name || '');
+    setHotelOwnerName(target.ownerName || '');
+    setHotelPhone(target.phoneNumber || '');
+    setHotelWhatsAppNumber(target.whatsappNumber || target.phoneNumber || '');
+    setHotelEmail(target.emailAddress || '');
+    setHotelWebsite(target.website || '');
+    setHotelLogoUrl(target.logoUrl || '');
+    setHotelAddress(target.address || '');
 
-    setHotelCheckInTime(activeHotel.checkInTime || '12:00 PM');
-    setHotelCheckOutTime(activeHotel.checkOutTime || '11:00 AM');
-    setHotelEarlyCheckInEnabled(activeHotel.earlyCheckInEnabled ?? true);
-    setHotelAllowBackDatedCheckIn(activeHotel.allowBackDatedCheckIn ?? false);
-    setHotelEarlyCheckInType(activeHotel.earlyCheckInType || 'hourly');
+    setHotelCheckInTime(target.checkInTime || '12:00 PM');
+    setHotelCheckOutTime(target.checkOutTime || '11:00 AM');
+    setHotelEarlyCheckInEnabled(target.earlyCheckInEnabled ?? true);
+    setHotelAllowBackDatedCheckIn(target.allowBackDatedCheckIn ?? false);
+    setHotelEarlyCheckInType(target.earlyCheckInType || 'hourly');
     setHotelEarlyCheckInHourlyRate(
-      activeHotel.earlyCheckInHourlyRate !== undefined ? Number(activeHotel.earlyCheckInHourlyRate) : 0
+      target.earlyCheckInHourlyRate !== undefined ? Number(target.earlyCheckInHourlyRate) : 0
     );
     setHotelEarlyCheckInFixedRate(
-      activeHotel.earlyCheckInFixedRate !== undefined ? Number(activeHotel.earlyCheckInFixedRate) : 0
+      target.earlyCheckInFixedRate !== undefined ? Number(target.earlyCheckInFixedRate) : 0
     );
-    setHotelCurrency(activeHotel.currency || 'INR');
-    setHotelTimeZone(activeHotel.timeZone || 'Asia/Kolkata');
-    setHotelDateFormat(activeHotel.dateFormat || 'DD/MM/YYYY');
+    setHotelCurrency(target.currency || 'INR');
+    setHotelTimeZone(target.timeZone || 'Asia/Kolkata');
+    setHotelDateFormat(target.dateFormat || 'DD/MM/YYYY');
 
-    setHotelUsername(activeHotel.username || 'admin');
+    setHotelUsername(target.username || 'admin');
   }, [activeHotel]);
 
   const handleSaveMaster = async (e: React.FormEvent) => {
@@ -109,7 +131,7 @@ export default function MasterSetupView({
     let updatedPassword: string | undefined = undefined;
     const isPasswordChanged = Boolean(newPasscode.trim() || confirmPasscode.trim());
     if (isPasswordChanged) {
-      if (activeHotel.password && currentPasscode !== activeHotel.password) {
+      if (safeHotel.password && currentPasscode !== safeHotel.password) {
         const msg = 'Incorrect current hotel admin password.';
         setErrorMsg(msg);
         showToast(msg, 'error', 5000, 'Password Mismatch');
@@ -134,14 +156,14 @@ export default function MasterSetupView({
 
     try {
       const updatedHotel: Hotel = {
-        ...activeHotel,
+        ...safeHotel,
         name: hotelName.trim(),
         ownerName: hotelOwnerName.trim(),
         phoneNumber: hotelPhone.trim(),
         whatsappNumber: hotelWhatsAppNumber.trim(),
         emailAddress: hotelEmail.trim(),
         website: hotelWebsite.trim(),
-        logoUrl: hotelLogoUrl.trim() || activeHotel.logoUrl,
+        logoUrl: hotelLogoUrl.trim() || safeHotel.logoUrl,
         address: hotelAddress.trim(),
         checkInTime: hotelCheckInTime.trim(),
         checkOutTime: hotelCheckOutTime.trim(),
@@ -162,21 +184,21 @@ export default function MasterSetupView({
       if (onUpdateHotelSettings) {
         onUpdateHotelSettings({
           ...(hotelSettings || {
-            logoUrl: hotelLogoUrl.trim() || activeHotel.logoUrl || '',
+            logoUrl: hotelLogoUrl.trim() || safeHotel.logoUrl || '',
             name: hotelName.trim(),
             address: hotelAddress.trim(),
-            gstNumber: activeHotel.gstNumber || '',
+            gstNumber: safeHotel.gstNumber || '',
             phoneNumber: hotelPhone.trim(),
             emailAddress: hotelEmail.trim(),
             website: hotelWebsite.trim(),
           }),
-          id: activeHotel.id,
+          id: safeHotel.id,
           name: hotelName.trim(),
           address: hotelAddress.trim(),
           phoneNumber: hotelPhone.trim(),
           emailAddress: hotelEmail.trim(),
           website: hotelWebsite.trim(),
-          logoUrl: hotelLogoUrl.trim() || activeHotel.logoUrl || '',
+          logoUrl: hotelLogoUrl.trim() || safeHotel.logoUrl || '',
           checkInTime: hotelCheckInTime.trim(),
           checkOutTime: hotelCheckOutTime.trim(),
           earlyCheckInEnabled: hotelEarlyCheckInEnabled,
@@ -237,7 +259,7 @@ export default function MasterSetupView({
 
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-luxury-beige-50 border border-luxury-brown-100 text-luxury-brown-800 text-xs font-mono font-bold">
-              Property ID: {activeHotel.id}
+              Property ID: {safeHotel.id}
             </span>
           </div>
         </div>

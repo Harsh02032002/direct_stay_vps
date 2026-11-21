@@ -11,8 +11,9 @@ import {
   LayoutDashboard, Bed, Calendar, Sparkles, DollarSign, Shield, FileSpreadsheet, 
   Settings as SettingsIcon, CheckCircle2, Lock, Unlock, Image as ImageIcon,
   Layers, Clock, PieChart, BarChart3, Filter, ShieldAlert, Wrench, Eye,
-  QrCode, Printer
+  QrCode, Printer, Building, Building2
 } from 'lucide-react';
+import BuildingFloorView from './rooms/BuildingFloorView';
 
 interface RoomManagementViewProps {
   rooms: Room[];
@@ -681,6 +682,7 @@ export default function RoomManagementView({
   // Nav Sub-Tabs Configuration
   const roomSubTabs = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, badge: `${occupancyPercent}% Occ` },
+    { id: 'buildingFloor', label: 'Building & Floor Setup', icon: Building, badge: null },
     { id: 'addRoom', label: 'Add Room', icon: Plus, badge: null },
     { id: 'categories', label: 'Room Categories / Types', icon: Tag, badge: categories.length },
     { id: 'amenities', label: 'Amenities', icon: Sparkles, badge: amenities.length },
@@ -777,7 +779,7 @@ export default function RoomManagementView({
       )}
 
       {/* --- SUB-TAB 1: DASHBOARD --- */}
-      {(activeSubTab === 'dashboard' || (!['categories', 'availability', 'amenities', 'status', 'settings', 'blockAssets', 'priceHistory'].includes(activeSubTab))) && (
+      {(activeSubTab === 'dashboard' || (!['categories', 'availability', 'amenities', 'status', 'settings', 'blockAssets', 'priceHistory', 'buildingFloor'].includes(activeSubTab))) && (
         <div className="space-y-6">
           {/* Summary Metric Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
@@ -1153,6 +1155,15 @@ export default function RoomManagementView({
             </div>
           </div>
         </div>
+      )}
+
+      {/* --- SUB-TAB: BUILDING & FLOOR ARCHITECTURE SETUP --- */}
+      {activeSubTab === 'buildingFloor' && (
+        <BuildingFloorView
+          rooms={rooms}
+          onUpdateRooms={onUpdateRooms}
+          hotelName={hotelSettings?.name}
+        />
       )}
 
       {/* --- SUB-TAB 2: ROOM CATEGORIES / TYPES --- */}

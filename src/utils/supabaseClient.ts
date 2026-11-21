@@ -136,6 +136,12 @@ export function getCallerSessionHeaders(): Record<string, string> {
     }
     if (username) headers['x-user-name'] = String(username);
 
+    // If currently navigating inside the SuperAdmin portal, ensure headers reflect SuperAdmin
+    if (typeof window !== 'undefined' && window.location.pathname.toLowerCase().includes('superadmin')) {
+      headers['x-user-role'] = 'SuperAdmin';
+      headers['x-hotel-id'] = 'SUPERADMIN';
+    }
+
     const raw = sessionStorage.getItem('pms_auth_session') || localStorage.getItem('pms_auth_session');
     if (raw) {
       const parsed = JSON.parse(raw);

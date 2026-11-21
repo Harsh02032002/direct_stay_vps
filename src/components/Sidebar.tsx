@@ -145,6 +145,8 @@ function renderSidebarIcon(iconKey: string, isActive: boolean): React.ReactNode 
       return <Share2 className={cls} />;
     case 'financialHub':
       return <Wallet className={cls} />;
+    case 'hrmModule':
+      return <Briefcase className={cls} />;
     case 'pointOfSale':
       return <Utensils className={cls} />;
     case 'propertySetup':
@@ -215,6 +217,7 @@ export default function Sidebar({
     'fo-guest-status': false,
     'financial-hub': false,
     'fin-vouchers': false,
+    'hrm-module': false,
     'property-setup': false,
     configuration: false,
     administration: false,
@@ -635,10 +638,6 @@ export default function Sidebar({
                 </div>
                 <div className="flex items-center gap-1.5 text-[11px] text-[#A89376] mt-0.5 truncate">
                   <span className="truncate">{hotelCitySnippet}</span>
-                  <span>•</span>
-                  <span className="inline-flex items-center gap-0.5 text-[#DFB962] font-semibold shrink-0">
-                    <Star className="w-2.5 h-2.5 fill-[#DFB962] text-[#DFB962]" />5
-                  </span>
                   <span>•</span>
                   <span className="shrink-0">
                     {hotels.length || 1} {hotels.length === 1 ? 'property' : 'properties'}

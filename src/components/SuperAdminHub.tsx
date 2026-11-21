@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Hotel, Room, Booking, Invoice, UserRole, SystemWebsiteConfig, Testimonial, Staff, SaaSPackage, PackageModulePermissions, CustomPage, WebsiteHeroPillar, WebsiteFeatureCard, WebsitePricingCard, WebsiteVisionPillar, WebsiteCustomSection, WebsiteCustomSectionItem, WebsiteBlogPost, SubscriptionInvoice } from '../types';
-import { INITIAL_SAAS_PACKAGES, INITIAL_CUSTOM_PAGES, INITIAL_SYSTEM_WEBSITE } from '../utils/dummyData';
+import { INITIAL_SAAS_PACKAGES, INITIAL_CUSTOM_PAGES, INITIAL_SYSTEM_WEBSITE, savePmsData } from '../utils/dummyData';
 import { sha256 } from '../utils/crypto';
 import SubscriptionInvoiceModal from './SubscriptionInvoiceModal';
 import { 
@@ -341,6 +341,7 @@ export default function SuperAdminHub({
     if (onUpdateCustomPages) {
       onUpdateCustomPages(updatedList);
     }
+    savePmsData({ customPages: updatedList });
     syncAllToSupabase({ customPages: updatedList }).then((res) => {
       if (res?.success) {
         showToast('Custom page saved to database!', 'success');
@@ -356,6 +357,7 @@ export default function SuperAdminHub({
     if (onUpdateCustomPages) {
       onUpdateCustomPages(updated);
     }
+    savePmsData({ customPages: updated });
     syncAllToSupabase({ customPages: updated }).catch(() => {});
     setPageToast(`✓ Custom page "${title}" deleted.`);
     setTimeout(() => setPageToast(null), 4000);
@@ -366,6 +368,7 @@ export default function SuperAdminHub({
     if (onUpdateCustomPages) {
       onUpdateCustomPages(updated);
     }
+    savePmsData({ customPages: updated });
     syncAllToSupabase({ customPages: updated }).catch(() => {});
   };
 
@@ -512,6 +515,7 @@ export default function SuperAdminHub({
     if (onUpdatePackages) {
       onUpdatePackages(updatedList);
     }
+    savePmsData({ packages: updatedList });
     syncAllToSupabase({ packages: updatedList }).catch(() => {});
     setShowPackageModal(false);
     setPkgToast(`✓ Package "${newPkg.name}" saved successfully!`);
@@ -546,6 +550,7 @@ export default function SuperAdminHub({
     if (onUpdatePackages) {
       onUpdatePackages(updated);
     }
+    savePmsData({ packages: updated });
     syncAllToSupabase({ packages: updated }).catch(() => {});
     setPkgToast(`✓ Package "${pkgName}" removed.`);
     setTimeout(() => setPkgToast(null), 4000);
@@ -1058,6 +1063,7 @@ export default function SuperAdminHub({
     };
     setCmsConfig(nextConfig);
     onUpdateSystemWebsite(nextConfig);
+    savePmsData({ systemWebsite: nextConfig });
     syncAllToSupabase({ systemWebsite: nextConfig }).catch(() => {});
   };
 

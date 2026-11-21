@@ -154,8 +154,12 @@ export interface Room {
   id: string;
   hotelId?: string;
   number: string;
+  roomNumber?: string;
   category: RoomCategory;
+  type?: string;
   rate: number;
+  price?: number;
+  floorNumber?: number;
   status: RoomStatus;
   cleaningStatus?: CleaningStatus;
   assignedStaff?: string;
@@ -248,6 +252,8 @@ export interface Booking {
   roomNumber: string;
   roomType: RoomCategory;
   advanceAmount: number;
+  totalAmount?: number;
+  tariff?: number;
   paymentMethod: PaymentMethod;
   bookingSource: BookingSource;
   status: BookingStatus;
@@ -316,8 +322,6 @@ export interface Booking {
   checkInTime?: string;
   checkOutTime?: string;
   isHourlyStay?: boolean;
-  isBackDated?: boolean;
-  actualLoggedAt?: string;
   stayHours?: number;
   isEarlyCheckIn?: boolean;
   earlyCheckInHours?: number;
@@ -420,6 +424,8 @@ export interface CFormData {
   status: 'Pending' | 'Generated' | 'Submitted';
   generatedAt?: string;
 }
+
+export type CheckInRecord = GuestCheckIn;
 
 export interface GuestCheckIn {
   id: string; // Same as Booking ID or custom
@@ -658,12 +664,16 @@ export interface Staff {
   hotelId?: string;
   name: string;
   mobile: string;
+  phone?: string;
+  email?: string;
   address?: string;
   department: Department;
   designation: string;
   role?: string; // staff role mapped to roleName in RolePermission
   allowedModules?: string[]; // explicit list of PMS module IDs this staff member can access
   joiningDate: string;
+  joinDate?: string;
+  shift?: string;
   username: string;
   password?: string;
   plainPassword?: string;

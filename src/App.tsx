@@ -48,6 +48,7 @@ import PosView from './components/PosView';
 import FinanceView from './components/FinanceView';
 import FrontDeskView from './components/FrontDeskView';
 import { HousekeepingView } from './components/HousekeepingView';
+import FloatingWhatsAppSupport from './components/FloatingWhatsAppSupport';
 import IntegratedAdminPmsHub from './pms-integrated/IntegratedAdminPmsHub';
 import { StandalonePosLayout } from './pms-integrated/components/StandalonePosLayout';
 import {
@@ -127,11 +128,21 @@ const ADMIN_ROUTE_ALIASES: Record<string, { tab: string; subTab?: string }> = {
   'check-out': { tab: 'frontDesk', subTab: 'checkout' },
   checkout: { tab: 'frontDesk', subTab: 'checkout' },
   rooms: { tab: 'rooms' },
+  'building-floor': { tab: 'rooms', subTab: 'buildingFloor' },
+  buildingFloor: { tab: 'rooms', subTab: 'buildingFloor' },
   staff: { tab: 'staff' },
+  hrm: { tab: 'staff' },
+  attendance: { tab: 'staff', subTab: 'attendance' },
+  payroll: { tab: 'staff', subTab: 'payroll' },
+  roster: { tab: 'staff', subTab: 'roster' },
+  leaves: { tab: 'staff', subTab: 'leaves' },
+  users: { tab: 'staff', subTab: 'allUsers' },
+  'all-users': { tab: 'staff', subTab: 'allUsers' },
+  'user-roles': { tab: 'staff', subTab: 'roles' },
+  roles: { tab: 'staff', subTab: 'roles' },
   userlist: { tab: 'userList' },
   'user-list': { tab: 'userList' },
   userList: { tab: 'userList' },
-  users: { tab: 'userList' },
   guests: { tab: 'userList' },
   documents: { tab: 'userList', subTab: 'documents' },
   'guest-documents': { tab: 'userList', subTab: 'documents' },
@@ -148,6 +159,8 @@ const ADMIN_ROUTE_ALIASES: Record<string, { tab: string; subTab?: string }> = {
   reports: { tab: 'reports' },
   notifications: { tab: 'notifications' },
   profile: { tab: 'profile' },
+  properties: { tab: 'profile', subTab: 'properties' },
+  'profile-setup': { tab: 'profile', subTab: 'master' },
   'tax-setup': { tab: 'profile', subTab: 'tax' },
   tax: { tab: 'profile', subTab: 'tax' },
   'payment-mode': { tab: 'profile', subTab: 'payment_mode' },
@@ -1421,6 +1434,14 @@ export default function App() {
         targetPath = financeSubTab && financeSubTab !== 'dashboard'
           ? `/admin/finance/${financeSubTab}`
           : '/admin/finance';
+      } else if (activeTab === 'rooms') {
+        targetPath = roomSubTab && roomSubTab !== 'dashboard'
+          ? `/admin/rooms/${roomSubTab}`
+          : '/admin/rooms';
+      } else if (activeTab === 'staff') {
+        targetPath = staffSubTab && staffSubTab !== 'directory'
+          ? `/admin/staff/${staffSubTab}`
+          : '/admin/staff';
       } else if (activeTab === 'profile') {
         targetPath = profileSection && profileSection !== 'general'
           ? `/admin/profile/${profileSection}`
@@ -1435,7 +1456,7 @@ export default function App() {
     if (currentCleanPath !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
-  }, [isAuthenticated, unauthView, currentRole, activeTab, superAdminSubTab, ownerSubTab, frontDeskSubTab, financeSubTab, posSubTab, profileSection, isStandalonePosMode, isNotFoundRoute, isPublicWebsiteForced, publicHotelBookingId, portalLoginMode]);
+  }, [isAuthenticated, unauthView, currentRole, activeTab, superAdminSubTab, ownerSubTab, frontDeskSubTab, financeSubTab, roomSubTab, staffSubTab, posSubTab, profileSection, isStandalonePosMode, isNotFoundRoute, isPublicWebsiteForced, publicHotelBookingId, portalLoginMode]);
 
   const handleUpdatePackages = (updatedPackages: SaaSPackage[]) => {
     setPackages(updatedPackages);
@@ -3256,7 +3277,6 @@ export default function App() {
       'finance',
       'expenses',
       'reports',
-      'staff',
       'auditLogs',
     ]);
 
@@ -3549,6 +3569,8 @@ export default function App() {
           <RoomManagementView
             rooms={rooms}
             currentRole={currentRole}
+            activeSubTab={roomSubTab}
+            onSubTabChange={setRoomSubTab}
             onUpdateRooms={handleUpdateRooms}
             maxRoomsLimit={activeMaxRooms}
             packageName={activePackageName}
@@ -3748,6 +3770,10 @@ export default function App() {
             onUpdateStaff={handleUpdateStaff}
             onUpdateRolePermissions={handleUpdateRolePermissions}
             onUpdateAuditLogs={handleAddAuditLogDirectly}
+            checkins={checkins}
+            bookings={bookings}
+            rooms={rooms}
+            invoices={rawInvoices.filter(i => !i.hotelId || i.hotelId === effectiveTenantHotelId)}
           />
         );
       case 'userList':
@@ -4176,6 +4202,7 @@ export default function App() {
             loggedInUser={loggedInUser}
             hotels={hotels}
             selectedHotelId={selectedHotelId}
+            onSelectHotel={setSelectedHotelId}
             rawStaff={rawStaff}
             hotelSettings={hotelSettings}
             onUpdateGlobalHotels={handleUpdateGlobalHotels}
@@ -5199,6 +5226,12 @@ export default function App() {
 
         {/* Standardized Global Luxury Toast Stack */}
         {renderGlobalToastOverlay()}
+
+        {/* Floating WhatsApp Support Button */}
+        <FloatingWhatsAppSupport
+          currentRole={currentRole}
+          hotelName={hotelSettings?.name}
+        />
       </div>
     </div>
   );

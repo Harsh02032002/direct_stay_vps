@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Staff, Department, StaffStatus, RolePermission } from '../types';
+import { Staff, Department, StaffStatus, RolePermission, CheckInRecord, Booking, Room, Invoice } from '../types';
 import { sha256 } from '../utils/crypto';
 import { showToast } from '../utils/toast';
 import { 
   Users, UserPlus, Boxes, PackageCheck, AlertTriangle, ShieldCheck, 
   Trash2, Plus, Edit2, RotateCcw, ThumbsUp, Activity, Smartphone, MapPin,
   Lock, Settings, ShieldAlert, Key, UserCheck, Trash, Eye, EyeOff, Share2, Copy, CheckCircle2, Sparkles, X,
-  CalendarDays, Clock, Check
+  CalendarDays, Clock, Check, Palmtree, Briefcase
 } from 'lucide-react';
+import StaffAttendanceView from './hrm/StaffAttendanceView';
+import StaffRosterView from './hrm/StaffRosterView';
+import StaffLeavesView from './hrm/StaffLeavesView';
+import AllUsersView from './hrm/AllUsersView';
+import RolePermissionsView from './hrm/RolePermissionsView';
 
 interface StaffManagementViewProps {
   staff: Staff[];
@@ -19,6 +24,10 @@ interface StaffManagementViewProps {
   onUpdateStaff: (updated: Staff[]) => void;
   onUpdateRolePermissions: (updated: RolePermission[]) => void;
   onUpdateAuditLogs?: (action: string, details: string) => void;
+  checkins?: CheckInRecord[];
+  bookings?: Booking[];
+  rooms?: Room[];
+  invoices?: Invoice[];
 }
 
 interface InventoryItem {
@@ -84,23 +93,29 @@ export default function StaffManagementView({
   onSelectSubTab,
   onUpdateStaff,
   onUpdateRolePermissions,
-  onUpdateAuditLogs
+  onUpdateAuditLogs,
+  checkins = [],
+  bookings = [],
+  rooms = [],
+  invoices = []
 }: StaffManagementViewProps) {
-  const [activeTab, setActiveTab] = useState<'staff' | 'salary'>('staff');
+  const [internalSubTab, setInternalSubTab] = useState<string>(() => {
+    if (activeSubTab) return activeSubTab;
+    return 'directory';
+  });
   const [salaryFilter, setSalaryFilter] = useState<'All' | 'Paid' | 'Pending'>('All');
   const [salaryMonth, setSalaryMonth] = useState(() => new Date().toISOString().substring(0, 7));
 
   useEffect(() => {
     if (activeSubTab) {
-      if (activeSubTab === 'salary' || activeSubTab === 'payroll') setActiveTab('salary');
-      else setActiveTab('staff');
+      setInternalSubTab(activeSubTab);
     }
   }, [activeSubTab]);
 
-  const handleTabClick = (t: 'staff' | 'salary') => {
-    setActiveTab(t);
+  const handleSubTabChange = (t: string) => {
+    setInternalSubTab(t);
     if (onSelectSubTab) {
-      onSelectSubTab(t === 'staff' ? 'directory' : 'salary');
+      onSelectSubTab(t);
     }
   };
   
@@ -464,34 +479,132 @@ export default function StaffManagementView({
 
   return (
     <div className="space-y-6">
-      {/* Visual Header */}
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center border-b border-luxury-brown-100 pb-4 no-print gap-3">
-        <div>
-          <span className="text-xs uppercase font-mono tracking-widest text-[#C5A059] font-bold block mb-1">HRM & Payroll</span>
-          <h1 className="text-2xl font-serif text-luxury-brown-950 font-semibold tracking-wide flex items-center gap-2">
-            <Users className="w-6 h-6 text-luxury-gold-600" /> Staff & Salary Management
-          </h1>
-          <p className="text-xs text-luxury-brown-500">Manage hotel staff directory, login credentials, and monthly salary payouts</p>
+      {/* Dynamic Sub-Module Navigation Header */}
+      <div className="bg-white border border-luxury-brown-100 rounded-3xl p-5 shadow-sm space-y-4 no-print">
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-3">
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-luxury-gold-500/10 text-luxury-gold-700 border border-luxury-gold-500/20 text-[10px] font-mono uppercase tracking-wider font-bold mb-1.5">
+              {['allUsers', 'roles'].includes(internalSubTab) ? (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5 text-luxury-gold-600" /> Administration Central
+                </>
+              ) : (
+                <>
+                  <Briefcase className="w-3.5 h-3.5 text-luxury-gold-600" /> Human Resource Management (HRM)
+                </>
+              )}
+            </div>
+            <h1 className="text-2xl font-serif text-luxury-brown-950 font-bold tracking-wide flex items-center gap-2">
+              {['allUsers', 'roles'].includes(internalSubTab)
+                ? 'System Administration & User Governance'
+                : 'Hotel Human Resources & Personnel Hub'}
+            </h1>
+            <p className="text-xs text-luxury-brown-500 mt-0.5">
+              {['allUsers', 'roles'].includes(internalSubTab)
+                ? 'Centralized access control, employee credentials, RBAC module rights, and guest customer accounts.'
+                : 'Employee directory, biometric shift clock-ins, monthly salary payouts, weekly duty rosters, and leave approvals.'}
+            </p>
+          </div>
+
+          <div className="inline-flex items-center gap-2 bg-luxury-beige-50 border border-luxury-brown-100 px-3.5 py-1.5 rounded-xl text-xs shrink-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-mono text-luxury-brown-700 font-bold">{hotelName}</span>
+          </div>
         </div>
-        
-        {/* Navigation Selector Tabs — ONLY Staff & Salary */}
-        <div className="flex flex-wrap gap-1.5 p-1 bg-luxury-beige-100 rounded-xl">
-          <button
-            onClick={() => handleTabClick('staff')}
-            className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'staff' ? 'bg-luxury-brown-950 text-white shadow-xs' : 'text-luxury-brown-700 hover:bg-white/60'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" /> Staff
-          </button>
-          <button
-            onClick={() => handleTabClick('salary')}
-            className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'salary' ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-xs' : 'text-luxury-brown-700 hover:bg-white/60'
-            }`}
-          >
-            💰 Salary
-          </button>
+
+        {/* Sub-Tabs Pill Navigation Bar */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-2 border-t border-luxury-brown-50 scrollbar-thin">
+          {['allUsers', 'roles'].includes(internalSubTab) ? (
+            <>
+              <button
+                type="button"
+                onClick={() => handleSubTabChange('allUsers')}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  internalSubTab === 'allUsers'
+                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
+                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5 text-luxury-gold-500" />
+                <span>Users Directory (Staff + Guests)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSubTabChange('roles')}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  internalSubTab === 'roles'
+                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
+                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-luxury-gold-500" />
+                <span>User Roles &amp; RBAC Matrix</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => handleSubTabChange('directory')}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  internalSubTab === 'directory' || internalSubTab === 'staff'
+                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
+                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5 text-luxury-gold-500" />
+                <span>Staff Directory &amp; Onboarding</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSubTabChange('attendance')}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  internalSubTab === 'attendance'
+                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
+                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5 text-luxury-gold-500" />
+                <span>Attendance &amp; Daily Logs</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSubTabChange('payroll')}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  internalSubTab === 'payroll' || internalSubTab === 'salary'
+                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
+                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
+                }`}
+              >
+                <ThumbsUp className="w-3.5 h-3.5 text-luxury-gold-500" />
+                <span>Monthly Payroll &amp; Salaries</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSubTabChange('roster')}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  internalSubTab === 'roster'
+                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
+                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
+                }`}
+              >
+                <CalendarDays className="w-3.5 h-3.5 text-luxury-gold-500" />
+                <span>Shift Roster &amp; Timings</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSubTabChange('leaves')}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  internalSubTab === 'leaves'
+                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
+                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
+                }`}
+              >
+                <Palmtree className="w-3.5 h-3.5 text-luxury-gold-500" />
+                <span>Leave Management</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -501,8 +614,58 @@ export default function StaffManagementView({
         </div>
       )}
 
+      {/* --- HRM SUB-VIEWS --- */}
+      {internalSubTab === 'attendance' && (
+        <StaffAttendanceView
+          staff={staff}
+          hotelName={hotelName}
+          onAddAuditLog={onUpdateAuditLogs}
+        />
+      )}
+
+      {internalSubTab === 'roster' && (
+        <StaffRosterView
+          staff={staff}
+          hotelName={hotelName}
+          onAddAuditLog={onUpdateAuditLogs}
+        />
+      )}
+
+      {internalSubTab === 'leaves' && (
+        <StaffLeavesView
+          staff={staff}
+          hotelName={hotelName}
+          onAddAuditLog={onUpdateAuditLogs}
+        />
+      )}
+
+      {/* --- ADMINISTRATION SUB-VIEWS --- */}
+      {internalSubTab === 'allUsers' && (
+        <AllUsersView
+          staff={staff}
+          checkins={checkins}
+          bookings={bookings}
+          hotelName={hotelName}
+          onOpenAddStaff={() => {
+            setIsAddingStaff(true);
+            setEditingStaffId(null);
+          }}
+          onOpenEditStaff={handleOpenEditStaff}
+          onSendWhatsAppCredentials={handleSendWhatsAppCredentials}
+          onAddAuditLog={onUpdateAuditLogs}
+        />
+      )}
+
+      {internalSubTab === 'roles' && (
+        <RolePermissionsView
+          rolePermissions={rolePermissions}
+          onUpdateRolePermissions={onUpdateRolePermissions}
+          onAddAuditLog={onUpdateAuditLogs}
+        />
+      )}
+
       {/* --- RENDER TAB 1: PERSONNEL SETUP --- */}
-      {activeTab === 'staff' && (
+      {(internalSubTab === 'directory' || internalSubTab === 'staff') && (
         <div className="space-y-6">
           <div className="flex justify-between items-center bg-white border rounded-xl p-4 shadow-3xs">
             <div className="flex items-center gap-2">
@@ -546,12 +709,27 @@ export default function StaffManagementView({
             </button>
           </div>
 
-          {/* Add / Edit Staff form block */}
+          {/* Add / Edit Staff Modal block */}
           {isAddingStaff && (
-            <form onSubmit={handleAddStaffSubmit} className="bg-white border-2 border-[#C5A059]/20 rounded-xl p-5 shadow-md space-y-4 max-w-2xl mx-auto">
-              <h2 className="font-serif font-bold text-sm text-luxury-brown-950 border-b pb-1">
-                {editingStaffId ? 'Update Staff Portfolio' : 'Register New Staff Portfolio'}
-              </h2>
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs overflow-y-auto no-print">
+              <div className="bg-white rounded-3xl border border-luxury-brown-100 shadow-2xl w-full max-w-2xl my-8 overflow-hidden animate-fade-in">
+                <div className="bg-luxury-brown-950 text-white p-5 flex items-center justify-between">
+                  <h2 className="font-serif font-bold text-base text-luxury-gold-400 flex items-center gap-2">
+                    <UserPlus className="w-4 h-4" />
+                    {editingStaffId ? 'Update Staff Portfolio' : 'Register New Staff Portfolio'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingStaff(false);
+                      setEditingStaffId(null);
+                    }}
+                    className="text-luxury-brown-300 hover:text-white cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <form onSubmit={handleAddStaffSubmit} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-luxury-brown-600 block uppercase">Complete Name *</label>
@@ -794,7 +972,9 @@ export default function StaffManagementView({
                 </button>
               </div>
             </form>
-          )}
+          </div>
+        </div>
+      )}
 
           {/* Post-Save / Share Staff Credentials Modal */}
           {credentialModalStaff && (
@@ -1063,7 +1243,7 @@ export default function StaffManagementView({
       )}
 
       {/* --- RENDER TAB 2: MONTHLY SALARY & PAYROLL --- */}
-      {activeTab === 'salary' && (() => {
+      {(internalSubTab === 'payroll' || internalSubTab === 'salary') && (() => {
         const getSalary = (m: Staff) => Number(m.salary ?? 15000) || 0;
         const getPayStatus = (m: Staff): 'Paid' | 'Pending' => m.salaryStatus === 'Paid' ? 'Paid' : 'Pending';
         const filteredSalaryStaff = staff.filter(m => salaryFilter === 'All' ? true : getPayStatus(m) === salaryFilter);

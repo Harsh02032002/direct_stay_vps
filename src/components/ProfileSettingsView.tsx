@@ -24,6 +24,7 @@ import WhatsAppView from './profile/WhatsAppView';
 import ShiftSetupView from './profile/ShiftSetupView';
 import CouponsView from './profile/CouponsView';
 import MasterSetupView from './profile/MasterSetupView';
+import PropertiesView from './profile/PropertiesView';
 import { showToast } from '../utils/toast';
 
 export type ConfigurationSectionType =
@@ -51,6 +52,7 @@ interface ProfileSettingsViewProps {
   onUpdateGlobalHotels: (updatedHotels: Hotel[]) => void;
   onUpdateGlobalStaff: (updatedStaff: Staff[]) => void;
   onAddAuditLog?: (action: string, details: string) => void;
+  onSelectHotel?: (hotelId: string) => void;
 }
 
 export default function ProfileSettingsView({
@@ -66,6 +68,7 @@ export default function ProfileSettingsView({
   onUpdateGlobalHotels,
   onUpdateGlobalStaff,
   onAddAuditLog,
+  onSelectHotel,
 }: ProfileSettingsViewProps) {
   // Normalize internal section
   const [internalSection, setInternalSection] = useState<ConfigurationSectionType>(() => {
@@ -105,7 +108,30 @@ export default function ProfileSettingsView({
     } catch {}
   };
 
-  const activeHotel = hotels.find((h) => h.id === selectedHotelId) || hotels[0];
+  const safeHotelFallback: Hotel = {
+    id: selectedHotelId || 'hotel-1',
+    name: hotelSettings?.name || 'Harsh hotel',
+    ownerName: 'Harshdeep Kaur',
+    phoneNumber: '+919464165011',
+    whatsappNumber: '+919464165011',
+    emailAddress: 'harshdeepbca503@gmail.com',
+    address: 'Chandigarh',
+    starRating: 5,
+    subscriptionPlan: 'Yearly',
+    subscriptionStatus: 'Active',
+    subscriptionEndDate: '2027-11-21',
+    subscriptionInvoices: [],
+    status: 'Approved',
+    isGstEnabled: true,
+    defaultGstRate: 12,
+    foodGstRate: 5,
+    invoicePrefix: 'INV',
+    nextInvoiceSequence: 1001,
+    grcPrefix: 'GRC',
+    nextGrcSequence: 1,
+  } as unknown as Hotel;
+
+  const activeHotel = hotels.find((h) => h && h.id === selectedHotelId) || hotels[0] || safeHotelFallback;
   const isHotelAdminOrOwner =
     currentRole === 'Admin' ||
     (currentRole as string) === 'Owner' ||
@@ -395,13 +421,10 @@ export default function ProfileSettingsView({
     { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
     { id: 'shift', label: 'Shift Setup', icon: Clock },
     { id: 'coupons', label: 'Coupons', icon: Tag },
+    { id: 'properties', label: 'Properties', icon: Building },
     { id: 'renewal', label: 'SaaS Invoices & Renewal', icon: RefreshCw },
     { id: 'compliance', label: 'Regulatory Docs', icon: FileCheck },
   ];
-
-  if (currentRole === 'SuperAdmin') {
-    navTabs.push({ id: 'properties', label: 'Properties', icon: Building });
-  }
 
   const effectiveSec = internalSection === 'general' ? 'master' : internalSection;
 
@@ -630,7 +653,7 @@ export default function ProfileSettingsView({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-luxury-brown-100">
-                      {activeHotel.subscriptionInvoices.map((inv) => (
+                      {(activeHotel.subscriptionInvoices || []).map((inv) => (
                         <tr key={inv.id} className="hover:bg-luxury-beige-50/40">
                           <td className="py-2.5 px-4 font-mono font-bold text-luxury-brown-950">{inv.invoiceNumber}</td>
                           <td className="py-2.5 px-4">
@@ -737,48 +760,14 @@ export default function ProfileSettingsView({
       )}
 
       {effectiveSec === 'properties' && (
-        <div className="bg-white border border-luxury-brown-100 rounded-3xl p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-luxury-brown-100">
-            <div>
-              <h3 className="text-base font-serif font-bold text-luxury-brown-950 flex items-center gap-2">
-                <Building className="w-4 h-4 text-luxury-gold-600" />
-                Properties Portfolio &amp; Multi-Property Onboarding
-              </h3>
-              <p className="text-xs text-luxury-brown-500 mt-0.5">
-                Centralized registry of hotel tenant properties managed under this account.
-              </p>
-            </div>
-            <span className="text-xs font-mono font-bold text-luxury-brown-700 bg-luxury-beige-100 px-3 py-1 rounded-xl">
-              {hotels.length} Properties Active
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-            {hotels.map((h) => (
-              <div
-                key={h.id}
-                className={`p-4 rounded-2xl border transition-all ${
-                  h.id === activeHotel.id
-                    ? 'bg-luxury-beige-50/70 border-luxury-gold-500/50 ring-1 ring-luxury-gold-500/20'
-                    : 'bg-white border-luxury-brown-100 hover:border-luxury-brown-200'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-bold text-luxury-brown-950">{h.name}</h4>
-                    <p className="text-xs text-luxury-brown-500 mt-0.5">{h.address}</p>
-                    <p className="text-[11px] font-mono text-luxury-gold-700 mt-1">Phone: {h.phoneNumber}</p>
-                  </div>
-                  {h.id === activeHotel.id && (
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold">
-                      Active Context
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <PropertiesView
+          hotels={hotels}
+          activeHotel={activeHotel}
+          selectedHotelId={selectedHotelId}
+          onSelectHotel={onSelectHotel}
+          onUpdateGlobalHotels={onUpdateGlobalHotels}
+          onAddAuditLog={onAddAuditLog}
+        />
       )}
     </div>
   );

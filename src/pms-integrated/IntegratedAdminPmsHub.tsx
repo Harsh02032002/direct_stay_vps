@@ -2396,6 +2396,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     if (normalized === 'rooms' && subTab) setRoomSubTab(subTab);
     if (normalized === 'housekeeping' && subTab) setHousekeepingSubTab(subTab);
     if (normalized === 'reports' && subTab) setReportsSubTab(subTab);
+    if (normalized === 'staff' && subTab && setStaffSubTab) setStaffSubTab(subTab);
   };
 
   // 1. Save or Update Full Booking (Step 1 / Step 2)
