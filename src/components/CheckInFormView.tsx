@@ -5010,76 +5010,7 @@ export default function CheckInFormView({
                       </div>
                     </div>
 
-                    {/* Same-Day / Hourly Stay Duration Options (Shown when Check-In Date === Departure Date) */}
-                    {isSameDayStay && (
-                      <div className="p-3 rounded-xl bg-gradient-to-r from-amber-50/80 via-indigo-50/60 to-purple-50/50 border border-indigo-200 space-y-2 animate-fadeIn">
-                        <div className="flex flex-wrap items-center justify-between gap-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10.5px] font-mono font-extrabold uppercase px-2 py-0.5 rounded bg-indigo-700 text-white tracking-wider">
-                              ⚡ Day-Use / Hourly Stay (Same Date)
-                            </span>
-                            <span className="text-[10px] font-mono text-slate-600">
-                              (Check-in &amp; Check-out on {formatDdmmyyyy(checkInDate)})
-                            </span>
-                          </div>
-                          <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100/90 border border-amber-300 px-2 py-0.5 rounded-full">
-                            Duration: {stayHours || computedStayHours || 3} Hours
-                          </span>
-                        </div>
 
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
-                          <div className="flex items-center gap-2">
-                            <label className="text-[11px] font-mono font-bold uppercase text-slate-700 whitespace-nowrap">
-                              Stay Hours:
-                            </label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={24}
-                              value={stayHours}
-                              onChange={e => {
-                                const v = e.target.value;
-                                if (v === '') {
-                                  setStayHours('');
-                                } else {
-                                  handleSelectStayHours(Math.max(1, Math.min(24, parseInt(v, 10) || 1)));
-                                }
-                              }}
-                              placeholder={String(computedStayHours || 3)}
-                              className="w-20 px-2 py-1 border border-slate-300 rounded-lg text-xs font-mono font-bold bg-white text-slate-900 focus:border-indigo-500 focus:outline-none"
-                            />
-                            <span className="text-xs font-mono text-slate-600">Hours</span>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[10px] font-mono text-slate-500 mr-1">Quick Select:</span>
-                            {[2, 3, 4, 6, 8, 12].map(hrs => (
-                              <button
-                                key={hrs}
-                                type="button"
-                                onClick={() => handleSelectStayHours(hrs)}
-                                className={`px-2 py-1 text-[10px] font-mono font-bold rounded-md border transition-all cursor-pointer ${
-                                  (stayHours === hrs || (!stayHours && computedStayHours === hrs))
-                                    ? 'bg-indigo-700 text-white border-indigo-800 shadow-2xs'
-                                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                                }`}
-                              >
-                                {hrs}h
-                              </button>
-                            ))}
-                            {stayHours !== '' && (
-                              <button
-                                type="button"
-                                onClick={() => setStayHours('')}
-                                className="text-[10px] font-mono text-rose-600 hover:text-rose-800 underline ml-1 cursor-pointer"
-                              >
-                                Reset
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
 
                     {/* Existing Reservation Details Read-Only Summary Card */}
                     {selectedBooking && (
@@ -7612,6 +7543,77 @@ export default function CheckInFormView({
                         </select>
                       </div>
                     </div>
+
+                    {/* Same-Day / Hourly Stay Duration Options (Shown when Check-In Date === Departure Date) */}
+                    {isSameDayStay && (
+                      <div className="p-3 rounded-xl bg-gradient-to-r from-amber-50/80 via-indigo-50/60 to-purple-50/50 border border-indigo-200 space-y-2 animate-fadeIn">
+                        <div className="flex flex-wrap items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10.5px] font-mono font-extrabold uppercase px-2 py-0.5 rounded bg-indigo-700 text-white tracking-wider">
+                              ⚡ Day-Use / Hourly Stay (Same Date)
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-600">
+                              (Check-in &amp; Check-out on {formatDdmmyyyy(checkInDate)})
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100/90 border border-amber-300 px-2 py-0.5 rounded-full">
+                            Duration: {stayHours || computedStayHours || 3} Hours
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
+                          <div className="flex items-center gap-2">
+                            <label className="text-[11px] font-mono font-bold uppercase text-slate-700 whitespace-nowrap">
+                              Stay Hours:
+                            </label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={24}
+                              value={stayHours}
+                              onChange={e => {
+                                const v = e.target.value;
+                                if (v === '') {
+                                  setStayHours('');
+                                } else {
+                                  handleSelectStayHours(Math.max(1, Math.min(24, parseInt(v, 10) || 1)));
+                                }
+                              }}
+                              placeholder={String(computedStayHours || 3)}
+                              className="w-20 px-2 py-1 border border-slate-300 rounded-lg text-xs font-mono font-bold bg-white text-slate-900 focus:border-indigo-500 focus:outline-none"
+                            />
+                            <span className="text-xs font-mono text-slate-600">Hours</span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-mono text-slate-500 mr-1">Quick Select:</span>
+                            {[2, 3, 4, 6, 8, 12].map(hrs => (
+                              <button
+                                key={hrs}
+                                type="button"
+                                onClick={() => handleSelectStayHours(hrs)}
+                                className={`px-2 py-1 text-[10px] font-mono font-bold rounded-md border transition-all cursor-pointer ${
+                                  (stayHours === hrs || (!stayHours && computedStayHours === hrs))
+                                    ? 'bg-indigo-700 text-white border-indigo-800 shadow-2xs'
+                                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                                }`}
+                              >
+                                {hrs}h
+                              </button>
+                            ))}
+                            {stayHours !== '' && (
+                              <button
+                                type="button"
+                                onClick={() => setStayHours('')}
+                                className="text-[10px] font-mono text-rose-600 hover:text-rose-800 underline ml-1 cursor-pointer"
+                              >
+                                Reset
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Travel Agent / Partner (linked to Travel Agents master list) */}
                     {walkInBookingSource === 'Travel Agent' && (
