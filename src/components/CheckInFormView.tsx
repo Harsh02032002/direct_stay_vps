@@ -181,6 +181,8 @@ export default function CheckInFormView({
   onUpdateInventoryMovements,
   travelAgents = [],
 }: CheckInFormViewProps) {
+  const allowBackDatedCheckIn = Boolean(hotelSettings?.allowBackDatedCheckIn);
+
   const waterBottleInventoryProduct = (inventoryProducts || []).find(
     p =>
       p.name?.toLowerCase().includes('water bottle') ||
@@ -794,9 +796,9 @@ export default function CheckInFormView({
     if (!rawNewDate) return;
     const todayIst = getTodayDateStr();
     let nextIn = rawNewDate;
-    if (!isEditingExistingDates && nextIn < todayIst) {
+    if (!isEditingExistingDates && !allowBackDatedCheckIn && nextIn < todayIst) {
       nextIn = todayIst;
-      showToast('Past arrival dates cannot be selected for new bookings.', 'warning');
+      showToast('Past arrival dates cannot be selected. Enable back-dated check-in in Property Setup.', 'warning');
     }
     const prevDuration = Math.max(1, calcStayDays(checkInDate, checkOutDate));
     setCheckInDate(nextIn);
@@ -804,7 +806,7 @@ export default function CheckInFormView({
       setCheckOutDate(isSameDayStay ? nextIn : getFutureDateStr(prevDuration, nextIn));
     }
     // Prevent past time if switching back to today on a new booking
-    if (!isEditingExistingDates && nextIn === todayIst) {
+    if (!isEditingExistingDates && !allowBackDatedCheckIn && nextIn === todayIst) {
       const nowIst = getIstNowParts();
       if (to24hTime(arrivalTime, nowIst.hhmm) < nowIst.hhmm) {
         setArrivalTime(nowIst.displayTime);
@@ -816,9 +818,9 @@ export default function CheckInFormView({
     if (!newHhmm) return;
     const todayIst = getTodayDateStr();
     const nowIst = getIstNowParts();
-    if (!isEditingExistingDates && checkInDate === todayIst && newHhmm < nowIst.hhmm) {
+    if (!isEditingExistingDates && !allowBackDatedCheckIn && checkInDate === todayIst && newHhmm < nowIst.hhmm) {
       setArrivalTime(nowIst.displayTime);
-      showToast('Past arrival time cannot be selected for today\'s new booking.', 'warning');
+      showToast('Past arrival time cannot be selected. Enable back-dated check-in in Property Setup.', 'warning');
       return;
     }
     setArrivalTime(to12hTime(newHhmm, nowIst.displayTime));
@@ -3363,6 +3365,8 @@ export default function CheckInFormView({
       arrivalTime,
       departureTime,
       isHourlyStay: checkInDate === checkOutDate,
+      isBackDated: checkInDate < getTodayDateStr() || (checkInDate === getTodayDateStr() && to24hTime(arrivalTime, getIstNowParts().hhmm) < getIstNowParts().hhmm),
+      actualLoggedAt: new Date().toISOString(),
       stayHours: checkInDate === checkOutDate ? (Number(stayHours) || computedStayHours || 3) : undefined,
       isEarlyCheckIn: earlyCheckInInfo.isEarly,
       earlyCheckInHours: earlyCheckInInfo.earlyHours,
@@ -7424,8 +7428,13 @@ export default function CheckInFormView({
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
                       <div className="md:col-span-4 space-y-1">
                         <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-[#263449]">
+                          <label className="text-xs font-bold text-[#263449] flex items-center gap-1.5">
                             Choose Date <span className="text-[#A8812B]">*</span>
+                            {allowBackDatedCheckIn && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-sans font-bold flex items-center gap-0.5" title="Back-Date & Past-Time Check-In Enabled in Property Setup">
+                                🕒 Back-Time Allowed
+                              </span>
+                            )}
                           </label>
                           <span className="text-[10px] font-mono font-bold text-[#8B691E]">
                             {formatDdmmyyyy(checkInDate)} / {arrivalTime}
@@ -7435,7 +7444,7 @@ export default function CheckInFormView({
                           <input
                             type="date"
                             required
-                            min={!isEditingExistingDates ? todayIstStr : undefined}
+                            min={!isEditingExistingDates && !allowBackDatedCheckIn ? todayIstStr : undefined}
                             value={checkInDate}
                             onChange={e => handleArrivalDateChange(e.target.value)}
                             className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
@@ -7443,7 +7452,7 @@ export default function CheckInFormView({
                           <input
                             type="time"
                             value={to24hTime(arrivalTime, getIstNowParts().hhmm)}
-                            min={!isEditingExistingDates && checkInDate === todayIstStr ? getIstNowParts().hhmm : undefined}
+                            min={!isEditingExistingDates && !allowBackDatedCheckIn && checkInDate === todayIstStr ? getIstNowParts().hhmm : undefined}
                             onChange={e => handleArrivalTimeChange(e.target.value)}
                             className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />

@@ -5940,6 +5940,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         loggedInUser={loggedInUser}
         hasExistingInvoice={Boolean(findPrimaryInvoiceForBooking(checkInBooking))}
         billSettings={billSettings}
+        allowBackDatedCheckIn={hotelSettings?.allowBackDatedCheckIn ?? false}
         onClose={() => setCheckInBooking(null)}
         onLogOverride={(details) =>
           logAudit('Front Desk', 'Authorised Room Check-In Override', details, 'warning')

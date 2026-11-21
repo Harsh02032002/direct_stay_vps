@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Plus, Upload, UserCheck, Trash2, CheckCircle2, Lock, AlertTriangle } from 'lucide-react';
+import { X, Plus, Upload, UserCheck, Trash2, CheckCircle2, Lock, AlertTriangle, Clock } from 'lucide-react';
 import { BookingRecord, GuestPerson, RoomAsset } from '../types';
 import { showToast } from '../../utils/toast';
 import { SAMPLE_AADHAAR_SVG_URL } from '../mock-data/initialData';
@@ -13,6 +13,7 @@ interface QuickCheckInModalProps {
   loggedInUser?: string;
   hasExistingInvoice?: boolean;
   billSettings?: BillSettings;
+  allowBackDatedCheckIn?: boolean;
   onClose: () => void;
   onLogOverride?: (details: string) => void;
   onConfirmCheckIn: (
@@ -36,6 +37,7 @@ export default function QuickCheckInModal({
   loggedInUser = 'Front Desk',
   hasExistingInvoice = false,
   billSettings,
+  allowBackDatedCheckIn = false,
   onClose,
   onLogOverride,
   onConfirmCheckIn,
@@ -251,6 +253,67 @@ export default function QuickCheckInModal({
               />
               <span>Fill Customer Info</span>
             </label>
+          </div>
+
+          {/* 🕒 Arrival Date & Back-Time Input */}
+          <div className="p-3.5 rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50/60 via-stone-50 to-amber-50/40 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#17120F] flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-[#C49A3A]" /> Check-In Date & Arrival Time
+                {allowBackDatedCheckIn && (
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9px] font-mono font-bold">
+                    Back-Time Active
+                  </span>
+                )}
+              </span>
+              <span className="text-[10px] font-mono text-slate-500">
+                {checkInDateInput} at {checkInTimeInput}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="text-[10px] font-mono font-bold uppercase text-slate-500 block mb-1">
+                  Arrival Date
+                </label>
+                <input
+                  type="date"
+                  min={!allowBackDatedCheckIn ? new Date().toISOString().slice(0, 10) : undefined}
+                  value={checkInDateInput}
+                  onChange={(e) => {
+                    const nextVal = e.target.value;
+                    const todayStr = new Date().toISOString().slice(0, 10);
+                    if (!allowBackDatedCheckIn && nextVal < todayStr) {
+                      showToast('Past arrival date blocked. Enable back-dated check-in in Property Setup.', 'warning');
+                      return;
+                    }
+                    setCheckInDateInput(nextVal);
+                  }}
+                  className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-mono font-bold bg-white focus:outline-none focus:border-[#C49A3A]"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-mono font-bold uppercase text-slate-500 block mb-1">
+                  Arrival Time (Back-Time)
+                </label>
+                <input
+                  type="time"
+                  value={checkInTimeInput}
+                  onChange={(e) => {
+                    const nextVal = e.target.value;
+                    const todayStr = new Date().toISOString().slice(0, 10);
+                    const nowHhmm = getCurrentHHMM();
+                    if (!allowBackDatedCheckIn && checkInDateInput === todayStr && nextVal < nowHhmm) {
+                      showToast('Past arrival time blocked. Enable back-dated check-in in Property Setup.', 'warning');
+                      return;
+                    }
+                    setCheckInTimeInput(nextVal);
+                  }}
+                  className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-mono font-bold bg-white focus:outline-none focus:border-[#C49A3A]"
+                />
+              </div>
+            </div>
           </div>
 
           {guests.map((g, idx) => {

@@ -68,6 +68,7 @@ export default function ProfileSettingsView({
   const [hotelCheckInTime, setHotelCheckInTime] = useState('');
   const [hotelCheckOutTime, setHotelCheckOutTime] = useState('');
   const [hotelEarlyCheckInEnabled, setHotelEarlyCheckInEnabled] = useState<boolean>(true);
+  const [hotelAllowBackDatedCheckIn, setHotelAllowBackDatedCheckIn] = useState<boolean>(false);
   const [hotelEarlyCheckInType, setHotelEarlyCheckInType] = useState<'hourly' | 'fixed'>('hourly');
   const [hotelEarlyCheckInHourlyRate, setHotelEarlyCheckInHourlyRate] = useState<number>(0);
   const [hotelEarlyCheckInFixedRate, setHotelEarlyCheckInFixedRate] = useState<number>(0);
@@ -186,6 +187,7 @@ export default function ProfileSettingsView({
       setHotelCheckInTime(activeHotel.checkInTime || '12:00 PM');
       setHotelCheckOutTime(activeHotel.checkOutTime || '11:00 AM');
       setHotelEarlyCheckInEnabled(activeHotel.earlyCheckInEnabled ?? true);
+      setHotelAllowBackDatedCheckIn(activeHotel.allowBackDatedCheckIn ?? false);
       setHotelEarlyCheckInType(activeHotel.earlyCheckInType || 'hourly');
       setHotelEarlyCheckInHourlyRate(activeHotel.earlyCheckInHourlyRate !== undefined ? Number(activeHotel.earlyCheckInHourlyRate) : 0);
       setHotelEarlyCheckInFixedRate(activeHotel.earlyCheckInFixedRate !== undefined ? Number(activeHotel.earlyCheckInFixedRate) : 0);
@@ -376,6 +378,7 @@ export default function ProfileSettingsView({
           checkInTime: hotelCheckInTime.trim(),
           checkOutTime: hotelCheckOutTime.trim(),
           earlyCheckInEnabled: hotelEarlyCheckInEnabled,
+          allowBackDatedCheckIn: hotelAllowBackDatedCheckIn,
           earlyCheckInType: hotelEarlyCheckInType,
           earlyCheckInHourlyRate: Math.max(0, Number(hotelEarlyCheckInHourlyRate) || 0),
           earlyCheckInFixedRate: Math.max(0, Number(hotelEarlyCheckInFixedRate) || 0),
@@ -1361,6 +1364,21 @@ export default function ProfileSettingsView({
                         />
                         <span>Enable Early Check-In Surcharge</span>
                       </label>
+                    </div>
+
+                    <div>
+                      <label className="inline-flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-amber-300 text-xs font-bold text-luxury-brown-900 shadow-xs">
+                        <input
+                          type="checkbox"
+                          checked={hotelAllowBackDatedCheckIn}
+                          onChange={(e) => setHotelAllowBackDatedCheckIn(e.target.checked)}
+                          className="w-4 h-4 accent-amber-600 rounded cursor-pointer"
+                        />
+                        <span>Allow Back-Dated Check-In & Past-Time Entry</span>
+                      </label>
+                      <span className="text-[11px] text-slate-500 block mt-1">
+                        Permit front desk receptionists to select past arrival dates and retrospective arrival times on check-in forms.
+                      </span>
                     </div>
 
                     {hotelEarlyCheckInEnabled && (

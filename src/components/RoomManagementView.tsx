@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Room, RoomStatus, UserRole, Booking, HotelSettings, AuditLog, CleaningStatus } from '../types';
 import CalendarBookingView from './CalendarBookingView';
 import { showToast } from '../utils/toast';
@@ -203,6 +203,16 @@ export default function RoomManagementView({
   const [autoMarkDirtyOnCheckout, setAutoMarkDirtyOnCheckout] = useState(true);
   const [requireInspectionToClean, setRequireInspectionToClean] = useState(true);
   const [overbookingLimitPercent, setOverbookingLimitPercent] = useState(0);
+  const [allowBackDatedCheckIn, setAllowBackDatedCheckIn] = useState(hotelSettings?.allowBackDatedCheckIn ?? false);
+
+  useEffect(() => {
+    if (hotelSettings) {
+      if (hotelSettings.checkInTime) setDefaultCheckInTime(hotelSettings.checkInTime);
+      if (hotelSettings.checkOutTime) setDefaultCheckOutTime(hotelSettings.checkOutTime);
+      if (hotelSettings.allowBackDatedCheckIn !== undefined) setAllowBackDatedCheckIn(hotelSettings.allowBackDatedCheckIn);
+      if (hotelSettings.autoMarkDirtyOnCheckout !== undefined) setAutoMarkDirtyOnCheckout(hotelSettings.autoMarkDirtyOnCheckout);
+    }
+  }, [hotelSettings]);
 
   // Category Manager State
   const [newCatName, setNewCatName] = useState('');
@@ -607,7 +617,9 @@ export default function RoomManagementView({
       onUpdateHotelSettings({
         ...hotelSettings,
         checkInTime: defaultCheckInTime,
-        checkOutTime: defaultCheckOutTime
+        checkOutTime: defaultCheckOutTime,
+        autoMarkDirtyOnCheckout,
+        allowBackDatedCheckIn
       });
     }
     showToast('Room Module settings saved successfully!', 'success');
@@ -1620,6 +1632,43 @@ export default function RoomManagementView({
                   />
                   <label htmlFor="chkInspect" className="text-luxury-brown-800 font-medium cursor-pointer">
                     Require Housekeeping Supervisor inspection before marking room <strong className="text-emerald-800 font-mono">Available</strong>
+                  </label>
+                </div>
+              </div>
+
+              {/* 🕒 BACK-DATED CHECK-IN & PAST-TIME ENTRY POLICY */}
+              <div className="bg-gradient-to-r from-amber-50/70 via-stone-50 to-amber-50/40 p-4 rounded-xl space-y-3 border border-luxury-gold-200/80 shadow-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <span className="font-serif font-bold text-luxury-brown-950 text-sm flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-luxury-gold-600" /> Back-Dated & Past-Time Check-In Policy
+                    </span>
+                    <p className="text-[11px] text-luxury-brown-600">
+                      Enable front desk receptionists to select past arrival dates and retrospective arrival times on check-in & booking forms.
+                    </p>
+                  </div>
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold tracking-wider uppercase shrink-0 ${
+                    allowBackDatedCheckIn
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : 'bg-slate-100 text-slate-600 border border-slate-300'
+                  }`}>
+                    {allowBackDatedCheckIn ? '● Active' : '○ Disabled'}
+                  </span>
+                </div>
+
+                <div className="flex items-start gap-3 pt-1">
+                  <input
+                    type="checkbox"
+                    id="chkAllowBackDated"
+                    checked={allowBackDatedCheckIn}
+                    onChange={e => setAllowBackDatedCheckIn(e.target.checked)}
+                    className="mt-0.5 rounded text-luxury-gold-600 focus:ring-0 w-4 h-4 cursor-pointer"
+                  />
+                  <label htmlFor="chkAllowBackDated" className="text-luxury-brown-900 font-medium cursor-pointer text-xs">
+                    <strong>Allow Back-Date & Back-Time Check-In Entries</strong>
+                    <span className="block text-[11px] text-luxury-brown-500 mt-0.5 font-normal">
+                      When checked, the arrival date picker unlocks past dates (before today) and the arrival time picker allows past timestamps for retrospective guest arrival logging.
+                    </span>
                   </label>
                 </div>
               </div>

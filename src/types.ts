@@ -133,6 +133,7 @@ export interface Hotel {
   grcPrefix?: string;
   nextGrcSequence?: number;
   autoMarkDirtyOnCheckout?: boolean;
+  allowBackDatedCheckIn?: boolean;
   grcTerms?: string[];
   placeOfSupply?: string;
   gstSlabs?: number[];
@@ -248,6 +249,8 @@ export interface Booking {
   status: BookingStatus;
   notes?: string;
   isCheckedIn?: boolean;
+  isBackDated?: boolean;
+  actualLoggedAt?: string;
   
   // Payment Tracking
   bookingAmount?: number;
@@ -309,6 +312,8 @@ export interface Booking {
   checkInTime?: string;
   checkOutTime?: string;
   isHourlyStay?: boolean;
+  isBackDated?: boolean;
+  actualLoggedAt?: string;
   stayHours?: number;
   isEarlyCheckIn?: boolean;
   earlyCheckInHours?: number;
@@ -445,6 +450,8 @@ export interface GuestCheckIn {
   arrivalTime?: string;
   departureTime?: string;
   isHourlyStay?: boolean;
+  isBackDated?: boolean;
+  actualLoggedAt?: string;
   stayHours?: number;
   isEarlyCheckIn?: boolean;
   earlyCheckInHours?: number;
@@ -1012,6 +1019,7 @@ export interface HotelSettings {
   grcPrefix?: string;
   nextGrcSequence?: number;
   autoMarkDirtyOnCheckout?: boolean;
+  allowBackDatedCheckIn?: boolean;
   grcTerms?: string[];
   placeOfSupply?: string;
   gstSlabs?: number[];

@@ -133,6 +133,44 @@ const getFutureDateStr = (daysAhead: number, baseDateStr?: string) => {
   return `${year}-${month}-${day}`;
 };
 
+const to24hTime = (raw?: string, fallback = '12:00'): string => {
+  const s = String(raw || '').trim().toUpperCase();
+  if (!s) return fallback;
+  const m12 = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const min = m12[2];
+    const ap = m12[3];
+    if (ap === 'PM' && h < 12) h += 12;
+    if (ap === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${min}`;
+  }
+  const m24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24) return `${String(parseInt(m24[1], 10)).padStart(2, '0')}:${m24[2]}`;
+  return fallback;
+};
+
+const to12hTime = (raw?: string, fallback = '12:00 PM'): string => {
+  const s = String(raw || '').trim();
+  if (!s) return fallback;
+  const m24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24) {
+    let h = parseInt(m24[1], 10);
+    const min = m24[2];
+    const ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${String(h).padStart(2, '0')}:${min} ${ap}`;
+  }
+  const m12 = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const min = m12[2];
+    const ap = m12[3].toUpperCase();
+    return `${String(h).padStart(2, '0')}:${min} ${ap}`;
+  }
+  return fallback;
+};
+
 export default function ReservationView({
   bookings,
   rooms,
@@ -194,6 +232,7 @@ export default function ReservationView({
   const [nationality, setNationality] = useState('Indian');
   const [companyName, setCompanyName] = useState('');
   const [gstNumber, setGstNumber] = useState('');
+  const allowBackDatedCheckIn = Boolean(hotelSettings?.allowBackDatedCheckIn);
   const [purposeOfVisit, setPurposeOfVisit] = useState('Personal / Leisure');
   const [checkInDate, setCheckInDate] = useState(getTodayDateStr());
   const [checkOutDate, setCheckOutDate] = useState(getFutureDateStr(1));
@@ -986,9 +1025,9 @@ export default function ReservationView({
   // Sync pricing when dates change
   const handleCheckInDateChange = (val: string) => {
     let cleanVal = val;
-    if (!editingBooking && cleanVal && cleanVal < getTodayDateStr()) {
+    if (!editingBooking && !allowBackDatedCheckIn && cleanVal && cleanVal < getTodayDateStr()) {
       cleanVal = getTodayDateStr();
-      showToast('Arrival date cannot be in the past.', 'warning');
+      showToast('Arrival date cannot be in the past. Enable back-dated check-in in Property Setup.', 'warning');
     }
     setCheckInDate(cleanVal);
     let nextCheckOut = checkOutDate;
@@ -1606,6 +1645,8 @@ export default function ReservationView({
         isEarlyCheckIn: earlyCheckInInfo.isEarly,
         earlyCheckInHours: earlyCheckInInfo.hoursEarly,
         earlyCheckInCharge: earlyCheckInFee,
+        isBackDated: checkInDate < getTodayDateStr(),
+        actualLoggedAt: new Date().toISOString(),
         nights: nightsCount,
         adults: Number(adults) || 1,
         children: Number(children) || 0,
@@ -1812,6 +1853,8 @@ export default function ReservationView({
         isEarlyCheckIn: earlyCheckInInfo.isEarly,
         earlyCheckInHours: earlyCheckInInfo.hoursEarly,
         earlyCheckInCharge: earlyCheckInFee,
+        isBackDated: checkInDate < getTodayDateStr(),
+        actualLoggedAt: new Date().toISOString(),
         nights: nightsCount,
         adults: Number(adults) || 2,
         children: Number(children) || 0,
@@ -4625,16 +4668,45 @@ export default function ReservationView({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                   <div className="space-y-1">
                     <div className="min-h-[22px] flex items-center justify-between">
-                      <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold">Arrival Date *</label>
+                      <label className="text-[10px] font-mono text-luxury-brown-600 block uppercase font-bold flex items-center gap-1">
+                        Arrival Date *
+                        {allowBackDatedCheckIn && (
+                          <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[8.5px] font-sans font-bold" title="Back-Date & Past-Time Allowed">
+                            🕒 Back-Time Allowed
+                          </span>
+                        )}
+                      </label>
+                      <span className="text-[10px] font-mono text-[#8B691E] font-bold">
+                        {checkInTime}
+                      </span>
                     </div>
-                    <input
-                      type="date"
-                      required
-                      min={editingBooking ? undefined : getTodayDateStr()}
-                      value={checkInDate}
-                      onChange={(e) => handleCheckInDateChange(e.target.value)}
-                      className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
-                    />
+                    <div className="grid grid-cols-[1fr_95px] gap-1">
+                      <input
+                        type="date"
+                        required
+                        min={editingBooking || allowBackDatedCheckIn ? undefined : getTodayDateStr()}
+                        value={checkInDate}
+                        onChange={(e) => handleCheckInDateChange(e.target.value)}
+                        className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
+                      />
+                      <input
+                        type="time"
+                        value={to24hTime(checkInTime, '12:00')}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const today = getTodayDateStr();
+                          const now = new Date();
+                          const nowHhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                          if (!editingBooking && !allowBackDatedCheckIn && checkInDate === today && val < nowHhmm) {
+                            showToast('Past arrival time blocked. Enable back-dated check-in in Property Setup.', 'warning');
+                            return;
+                          }
+                          setCheckInTime(to12hTime(val, '12:00 PM'));
+                        }}
+                        className="w-full h-9 px-2 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
+                        title="Arrival Time (Back-Time)"
+                      />
+                    </div>
                   </div>
 
                   <div className="space-y-1">

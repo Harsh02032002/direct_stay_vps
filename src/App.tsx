@@ -2103,6 +2103,8 @@ export default function App() {
     waterBottleRate: activeHotel.waterBottleRate !== undefined ? Number(activeHotel.waterBottleRate) : 20,
     grcPrefix: activeHotel.grcPrefix || 'GRC',
     nextGrcSequence: activeHotel.nextGrcSequence || 1,
+    autoMarkDirtyOnCheckout: activeHotel.autoMarkDirtyOnCheckout ?? true,
+    allowBackDatedCheckIn: activeHotel.allowBackDatedCheckIn ?? false,
     grcTerms: Array.isArray(activeHotel.grcTerms) ? activeHotel.grcTerms : undefined,
     placeOfSupply: activeHotel.placeOfSupply || '',
     panNumber: activeHotel.panNumber || '',
@@ -2122,6 +2124,8 @@ export default function App() {
     defaultGstRate: 5,
     foodGstRate: 5,
     gstSlabs: [0, 5, 12, 18],
+    autoMarkDirtyOnCheckout: true,
+    allowBackDatedCheckIn: false,
     invoiceConditions: normalizeInvoiceConditions(undefined, {
       isGstEnabled: true,
       defaultGstRate: 5
@@ -2886,6 +2890,14 @@ export default function App() {
           waterBottleRate: updated.waterBottleRate !== undefined ? Number(updated.waterBottleRate) : h.waterBottleRate,
           grcPrefix: updated.grcPrefix !== undefined ? updated.grcPrefix : h.grcPrefix,
           nextGrcSequence: updated.nextGrcSequence !== undefined ? Number(updated.nextGrcSequence) : h.nextGrcSequence,
+          autoMarkDirtyOnCheckout:
+            updated.autoMarkDirtyOnCheckout !== undefined
+              ? Boolean(updated.autoMarkDirtyOnCheckout)
+              : (h.autoMarkDirtyOnCheckout ?? true),
+          allowBackDatedCheckIn:
+            updated.allowBackDatedCheckIn !== undefined
+              ? Boolean(updated.allowBackDatedCheckIn)
+              : (h.allowBackDatedCheckIn ?? false),
           grcTerms: Array.isArray(updated.grcTerms) ? updated.grcTerms : h.grcTerms,
           placeOfSupply: updated.placeOfSupply !== undefined ? updated.placeOfSupply : h.placeOfSupply,
           panNumber: updated.panNumber !== undefined ? updated.panNumber : h.panNumber,
