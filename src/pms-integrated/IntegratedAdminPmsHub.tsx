@@ -4724,6 +4724,8 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           onUpdateRooms={(r) => onUpdateRooms && onUpdateRooms(r)}
           bookings={appBookings}
           onUpdateBookings={(b) => onUpdateBookings && onUpdateBookings(b)}
+          activeSubTab={roomSubTab}
+          onSubTabChange={(st) => setRoomSubTab && setRoomSubTab(st)}
           hotelSettings={{
             id: selectedHotelId,
             name: hotelName || 'Hotel Royal Palace',
@@ -4732,14 +4734,14 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
             email: hotelEmail || '',
             address: hotelAddress || '',
             ...effectiveHotelProfile,
+            ...(hotelSettings || {}),
           } as any}
-          onUpdateHotelSettings={() => {
+          onUpdateHotelSettings={(updated) => {
+            if (onUpdateHotelSettings) onUpdateHotelSettings(updated);
             logAudit('Room Management', 'Settings Updated', 'Updated room & hotel tariff settings', 'info');
           }}
           auditLogs={appAuditLogs}
           onAddAuditLog={(action, details) => logAudit('Room Management', action, details, 'info')}
-          activeSubTab={roomSubTab}
-          onSubTabChange={setRoomSubTab}
         />
       )}
 
