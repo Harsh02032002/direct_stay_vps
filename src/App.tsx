@@ -48,7 +48,7 @@ import PosView from './components/PosView';
 import FinanceView from './components/FinanceView';
 import FrontDeskView from './components/FrontDeskView';
 import { HousekeepingView } from './components/HousekeepingView';
-import FloatingWhatsAppSupport from './components/FloatingWhatsAppSupport';
+
 import IntegratedAdminPmsHub from './pms-integrated/IntegratedAdminPmsHub';
 import { StandalonePosLayout } from './pms-integrated/components/StandalonePosLayout';
 import {
@@ -5226,12 +5226,6 @@ export default function App() {
 
         {/* Standardized Global Luxury Toast Stack */}
         {renderGlobalToastOverlay()}
-
-        {/* Floating WhatsApp Support Button */}
-        <FloatingWhatsAppSupport
-          currentRole={currentRole}
-          hotelName={hotelSettings?.name}
-        />
       </div>
     </div>
   );
