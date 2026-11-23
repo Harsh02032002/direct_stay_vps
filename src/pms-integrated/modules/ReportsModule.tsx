@@ -26,6 +26,7 @@ import {
 import { exportToCsv, formatCurrency, formatDate } from '../utils/formatters';
 import { useHotelTaxSettings } from '../utils/taxSettings';
 import type { GuestCheckIn, PosItem, PosOrder, Room } from '../../types';
+import DailyCollectionSheet from '../../components/DailyCollectionSheet';
 import { ReportsHub } from './ReportsHub';
 import {
   REPORTS_CATALOG,
@@ -65,6 +66,7 @@ interface ReportsModuleProps {
 }
 
 const REPORT_TABS = [
+  { id: 'daily_collection_sheet', label: 'Daily Reception & Food Register' },
   { id: 'daily_sales', label: 'Daily Sales Report (GST & Payments)' },
   { id: 'daily_cash', label: 'Daily Cash Book' },
   { id: 'advance_reservations', label: 'Advance Reservations' },
@@ -927,6 +929,21 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 0. DAILY RECEPTION COLLECTION & SETTLEMENT SHEET */}
+      {currentTab === 'daily_collection_sheet' && (
+        <DailyCollectionSheet
+          rooms={(appRooms || []) as any}
+          bookings={bookings as any}
+          checkins={(appCheckins || []) as any}
+          invoices={invoices as any}
+          expenses={[]}
+          posOrders={(appPosOrders || []) as any}
+          handovers={[]}
+          staff={[]}
+          hotelSettings={{ name: 'Hotel Raj Residency', ownerName: 'Adarsh Sir' } as any}
+        />
+      )}
 
       {/* 0. DEDICATED DAILY SALES REPORT (Exact layout from Raghunath Sir's Video Reference) */}
       {currentTab === 'daily_sales' && (

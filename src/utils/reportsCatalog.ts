@@ -44,6 +44,7 @@ export interface ReportCatalogEntry {
 
 /** Report views implemented inside ReportsModule (id -> display title) */
 export const REPORT_VIEW_TITLES: Record<string, string> = {
+  daily_collection_sheet: 'Daily Collection & Kitchen Register',
   daily_sales: 'Daily Sales Report (GST & Payments)',
   daily_cash: 'Daily Cash Book',
   advance_reservations: 'Advance Reservations',
@@ -221,6 +222,15 @@ export const REPORTS_CATALOG: ReportCatalogEntry[] = [
   },
 
   // ---------------- CASHIER ----------------
+  {
+    id: 'daily_collection_sheet',
+    title: 'Daily Collection & Kitchen Register',
+    description: 'Day-end reception ledger: room tariff, GST, payment modes, kitchen food bill breakdown (UPI, Cash, Due), and cash drawer reconciliation.',
+    category: 'Cashier',
+    iconKey: 'sales',
+    target: { type: 'report', reportId: 'daily_collection_sheet' },
+    isNew: true,
+  },
   {
     id: 'daily_cash',
     title: 'Daily Cash Book',

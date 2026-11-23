@@ -683,8 +683,10 @@ export default function CheckInFormView({
     extraChargeTouchedRef.current = false;
   }, [selectedRoomNumber, rooms, selectedBooking, editingCheckIn]);
 
-  // Handle direct adjusted tariff or auto-calculate discount
-  const discountPerNight = Math.max(0, standardRate - roomRate);
+  // Negotiated room rate is the direct base room tariff (e.g. ₹1800 instead of ₹2000 rack); discount applies ONLY when explicitly enabled
+  const discountPerNight = discountEnabled && Number(discountInputValue) > 0
+    ? Math.max(0, standardRate - roomRate)
+    : 0;
 
   // 6. Stay Details state (Strict Asia/Kolkata timezone + hotel configured checkout time)
   const defaultHotelCheckOutTime = to12hTime(hotelSettings?.checkOutTime, '11:00 AM');
@@ -3138,15 +3140,15 @@ export default function CheckInFormView({
       : 0;
     const onlineDeskNow = Math.max(0, effectiveDeskReceivedNow - cashDeskNow);
 
-    // Construct booked rooms list
+    // Construct booked rooms list with agreed negotiated rate directly as originalRate
     const finalBookedRooms: BookedRoom[] = checkInMode === 'single'
       ? [
           {
             roomNumber: selectedRoomNumber,
             category: roomType as any,
             rate: roomRate,
-            originalRate: standardRate,
-            discountAmountOfRoom: discountPerNight * stayNights,
+            originalRate: roomRate,
+            discountAmountOfRoom: (discountEnabled || manualDiscount > 0) ? totalEffectiveDiscount : 0,
             guestsCount: totalOccupants,
             extraGuestsCount,
             extraPersonChargeApplied: extraPersonChargesTotal,
@@ -3161,8 +3163,8 @@ export default function CheckInFormView({
           roomNumber: gr.roomNumber,
           category: gr.category as any,
           rate: gr.rate,
-          originalRate: gr.originalRate,
-          discountAmountOfRoom: (gr.originalRate - gr.rate) * stayNights,
+          originalRate: gr.rate,
+          discountAmountOfRoom: 0,
           guestsCount: gr.adults + gr.children,
           extraGuestsCount: Math.max(0, (gr.adults + gr.children) - 2),
           extraPersonChargeApplied: 0,
@@ -3376,11 +3378,11 @@ export default function CheckInFormView({
       roomRate: checkInMode === 'single' ? roomRate : (groupRoomChargesPerNight / (groupRooms.length || 1)),
       originalRate:
         checkInMode === 'single'
-          ? standardRate
-          : groupRooms.reduce((s, gr) => s + (Number(gr.originalRate) || Number(gr.rate) || 0), 0) /
+          ? roomRate
+          : groupRooms.reduce((s, gr) => s + (Number(gr.rate) || 0), 0) /
             Math.max(1, groupRooms.length),
-      discount: totalEffectiveDiscount,
-      discountAmount: totalEffectiveDiscount,
+      discount: (discountEnabled || manualDiscount > 0 || settlementEnabled) ? totalEffectiveDiscount : 0,
+      discountAmount: (discountEnabled || manualDiscount > 0 || settlementEnabled) ? totalEffectiveDiscount : 0,
       overrideReason: settlementEnabled
         ? settlementReason.trim()
         : discountEnabled && discountReason.trim()
@@ -3666,7 +3668,7 @@ export default function CheckInFormView({
       triggerContext: 'checkin',
       invoiceType: requestedCheckInNoGst ? 'Bill of Supply' : 'Booking Invoice',
       overrideGstRate: gstPercent,
-      overrideDiscount: totalEffectiveDiscount,
+      overrideDiscount: (discountEnabled || manualDiscount > 0 || settlementEnabled) ? totalEffectiveDiscount : 0,
       overrideAdvancePaid: totalCollected,
       overridePaymentMethod: String(resolvedSummaryPaymentMethod),
       createSeparateInvoice: mustCreateSeparateInvAtCheckIn,
@@ -6429,7 +6431,7 @@ export default function CheckInFormView({
                       ₹{Math.max(0, (roomRate * stayNights) - manualDiscount)} ({stayNights} N)
                     </span>
                     <p className="text-[10px] text-slate-500 italic">
-                      {standardRate > roomRate ? `Tariff cut: -₹${(standardRate - roomRate) * stayNights}` : 'Standard rate'}
+                      {roomRate !== standardRate ? `Agreed room tariff: ₹${roomRate}/N` : 'Standard catalog rate'}
                       {manualDiscount > 0 ? ` | Extra Disc: -₹${manualDiscount}` : ''}
                     </p>
                   </div>

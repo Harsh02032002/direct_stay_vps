@@ -32,6 +32,11 @@ const toLocalYmd = (raw?: string): string => {
   const s = String(raw || '').trim();
   if (!s) return '';
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const mDmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (mDmy) {
+    const [, d, mth, y] = mDmy;
+    return `${y}-${mth.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
   const dt = new Date(s);
   if (!Number.isNaN(dt.getTime())) {
     return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
@@ -225,7 +230,10 @@ export default function DailyCollectionSheet({
       return oDate === selectedDate;
     });
 
-    // Transform mapped rows into exact table items matching Raghunath Sir's sheet
+    // Track all matched POS order IDs to ensure non-room orders can also be shown
+    const allMatchedOrderIds = new Set<string>();
+
+    // Transform mapped rows into exact table items matching the audit register
     const processed = Array.from(rowsMap.values()).map((row, idx) => {
       const c = row.checkin;
       const inv = row.invoice;
@@ -235,7 +243,7 @@ export default function DailyCollectionSheet({
       const roomNumber = row.roomNumber || 'N/A';
       const nights = row.nights || 1;
 
-      // Catalog Rack Tariff vs Agreed / Charged Rate (supports both single and multi-room bookings like "101, 102")
+      // Agreed / Charged Room Tariff (Direct negotiated rate, e.g. ₹1800, matching physical register)
       const splitRoomNums = String(roomNumber)
         .split(',')
         .map((rn: string) => rn.trim())
@@ -247,23 +255,6 @@ export default function DailyCollectionSheet({
           ? b.bookedRooms
           : []) as any[];
 
-      let rackTariff = 0;
-      if (bookedRoomsArr.length > 0) {
-        rackTariff = bookedRoomsArr.reduce((sum, br) => {
-          const rmObj = rooms.find(r => r.number === String(br.roomNumber || '').trim());
-          const origRate = Number(br.originalRate || rmObj?.rate || br.rate || 0);
-          return sum + origRate * nights;
-        }, 0);
-      } else if (splitRoomNums.length > 0) {
-        rackTariff = splitRoomNums.reduce((sum, rn) => {
-          const rmObj = rooms.find(r => r.number === rn);
-          return sum + (rmObj ? Number(rmObj.rate || 0) * nights : 0);
-        }, 0);
-      }
-      if (!rackTariff || rackTariff <= 0) {
-        rackTariff = (row.roomRate || 2000) * nights;
-      }
-
       let roomTariff = 0;
       if (inv && Number(inv.roomCharges) > 0) {
         roomTariff = Number(inv.roomCharges);
@@ -274,7 +265,20 @@ export default function DailyCollectionSheet({
       } else {
         roomTariff = (row.roomRate || 0) * nights;
       }
-      if (!roomTariff || roomTariff <= 0) roomTariff = rackTariff;
+      if (!roomTariff || roomTariff <= 0) {
+        if (bookedRoomsArr.length > 0) {
+          roomTariff = bookedRoomsArr.reduce((sum, br) => {
+            const rmObj = rooms.find(r => r.number === String(br.roomNumber || '').trim());
+            return sum + Number(br.rate || rmObj?.rate || 0) * nights;
+          }, 0);
+        } else if (splitRoomNums.length > 0) {
+          roomTariff = splitRoomNums.reduce((sum, rn) => {
+            const rmObj = rooms.find(r => r.number === rn);
+            return sum + (rmObj ? Number(rmObj.rate || 0) * nights : 0);
+          }, 0);
+        }
+      }
+      if (!roomTariff || roomTariff <= 0) roomTariff = (row.roomRate || 2000) * nights;
 
       // GST on stay
       let gstAmount: number | string = 0;
@@ -404,19 +408,42 @@ export default function DailyCollectionSheet({
         if (inv.extraBedCharges) extraBed = Math.max(extraBed, inv.extraBedCharges);
       }
 
-      // Kitchen / Food Amounts
+      // Kitchen / Food Amounts breakdown (UPI, CASH, DUE, TOTAL FOOD AMT)
       let kitchenUpi = 0;
       let kitchenCash = 0;
       let kitchenDue = 0;
 
-      // Find POS orders matching this room
-      const roomOrders = ordersOnDate.filter(
-        (o) => o.roomNumber === roomNumber || o.guestName?.toLowerCase() === guestName.toLowerCase()
-      );
+      const cleanNum = (str: any) => String(str || '').replace(/[^\d]/g, '').trim();
+      const rowRoomClean = cleanNum(roomNumber);
+      const cleanSplitRooms = splitRoomNums.map(cleanNum).filter(Boolean);
+
+      // Find POS orders matching this room, stay or guest
+      const roomOrders = ordersOnDate.filter((o) => {
+        const oRoomClean = cleanNum(o.roomNumber);
+        const oGuest = String(o.guestName || '').toLowerCase().trim();
+        const rGuest = String(guestName || '').toLowerCase().trim();
+        const isRoomMatch =
+          Boolean(rowRoomClean && oRoomClean && (rowRoomClean === oRoomClean || cleanSplitRooms.includes(oRoomClean)));
+        const isCheckinMatch =
+          Boolean((c && (o.checkinId === c.id || (o as any).checkInId === c.id)) ||
+          (b && (o as any).bookingId === b.id) ||
+          (inv && (o as any).linkedInvoiceId === inv.id));
+        const isGuestMatch = Boolean(oGuest && rGuest && (oGuest.includes(rGuest) || rGuest.includes(oGuest)));
+
+        return isRoomMatch || isCheckinMatch || (isGuestMatch && Boolean(o.roomNumber));
+      });
+
       roomOrders.forEach((o) => {
-        const pMethod = (o.paymentMethod || '').toLowerCase();
-        const amt = Number((o as any).total ?? (o as any).totalAmount ?? 0);
-        if (!(o as any).isPaid || pMethod.includes('due') || pMethod.includes('room')) {
+        const oId = String(o.id || (o as any)._id);
+        allMatchedOrderIds.add(oId);
+
+        const pMethod = String(o.paymentMethod || '').toLowerCase();
+        const pStatus = String(o.paymentStatus || '').toLowerCase();
+        const isPaid = (o as any).isPaid === true || pStatus === 'paid';
+        const amt = Number(o.grandTotal ?? (o as any).totalAmount ?? (o as any).total ?? (o as any).subtotal ?? 0);
+        if (amt <= 0) return;
+
+        if (!isPaid || pMethod.includes('due') || pMethod.includes('room') || pMethod.includes('credit')) {
           kitchenDue += amt;
         } else if (pMethod.includes('cash')) {
           kitchenCash += amt;
@@ -425,11 +452,49 @@ export default function DailyCollectionSheet({
         }
       });
 
-      // If food charges on invoice exist and no separate POS orders
-      if (roomOrders.length === 0 && inv && inv.foodCharges > 0) {
-        const f = inv.foodCharges;
-        if (inv.isPaid) kitchenUpi = f;
-        else kitchenDue = f;
+      // Also check extraCharges (Guest Folio) for food charges not already counted via POS orders
+      const extrasList = (c?.extraCharges || []).concat(inv?.extraCharges || []);
+      extrasList.forEach((ec: any) => {
+        const cat = String(ec.category || ec.description || '').toLowerCase();
+        const isFood =
+          cat.includes('food') ||
+          cat.includes('kitchen') ||
+          cat.includes('restaurant') ||
+          cat.includes('thali') ||
+          cat.includes('breakfast') ||
+          cat.includes('lunch') ||
+          cat.includes('dinner') ||
+          cat.includes('room service');
+        if (!isFood) return;
+
+        const ecId = String(ec.id || '');
+        const ecSrc = String(ec.sourceId || '');
+        if (ecSrc && allMatchedOrderIds.has(ecSrc)) return;
+        if (ecId && allMatchedOrderIds.has(ecId)) return;
+        if (Array.from(allMatchedOrderIds).some((oid) => ecId.includes(oid))) return;
+
+        const amt = Number(ec.amount) || 0;
+        if (amt <= 0) return;
+
+        if (balance > 0) {
+          kitchenDue += amt;
+        } else if (cashPay > 0 && upiPay === 0) {
+          kitchenCash += amt;
+        } else {
+          kitchenUpi += amt;
+        }
+      });
+
+      // If food charges on invoice exist and no separate POS orders or folio charges found
+      if (roomOrders.length === 0 && kitchenUpi === 0 && kitchenCash === 0 && kitchenDue === 0 && inv && Number(inv.foodCharges) > 0) {
+        const f = Number(inv.foodCharges);
+        if (inv.isPaid) {
+          const invMethod = String(inv.paymentMethod || '').toLowerCase();
+          if (invMethod.includes('cash')) kitchenCash = f;
+          else kitchenUpi = f;
+        } else {
+          kitchenDue = f;
+        }
       }
 
       const totalFoodAmt = kitchenUpi + kitchenCash + kitchenDue;
@@ -462,7 +527,6 @@ export default function DailyCollectionSheet({
         no: idx + 1,
         guestName,
         roomNumber,
-        rackTariff,
         roomTariff,
         gst: gstAmount,
         cash: cashPay,
@@ -480,6 +544,56 @@ export default function DailyCollectionSheet({
         totalFoodAmt,
         checkinTarget
       };
+    });
+
+    // 5. Append any walk-in / non-room food orders on the selected date so no food sales are omitted
+    const unallocatedOrders = ordersOnDate.filter(
+      (o) => !allMatchedOrderIds.has(String(o.id || (o as any)._id))
+    );
+
+    unallocatedOrders.forEach((o) => {
+      const amt = Number(o.grandTotal ?? (o as any).totalAmount ?? (o as any).total ?? (o as any).subtotal ?? 0);
+      if (amt <= 0) return;
+      const pMethod = String(o.paymentMethod || '').toLowerCase();
+      const pStatus = String(o.paymentStatus || '').toLowerCase();
+      const isPaid = (o as any).isPaid === true || pStatus === 'paid';
+      let kUpi = 0;
+      let kCash = 0;
+      let kDue = 0;
+      if (!isPaid || pMethod.includes('due') || pMethod.includes('room') || pMethod.includes('credit')) {
+        kDue = amt;
+      } else if (pMethod.includes('cash')) {
+        kCash = amt;
+      } else {
+        kUpi = amt;
+      }
+
+      processed.push({
+        no: processed.length + 1,
+        guestName: String(o.guestName || `WALK-IN FOOD (${o.orderType || 'KITCHEN'})`).toUpperCase(),
+        roomNumber: o.roomNumber ? String(o.roomNumber) : (o.tableNo ? `TBL ${o.tableNo}` : 'KITCHEN'),
+        roomTariff: 0,
+        gst: Number(o.taxAmount || 0),
+        cash: 0,
+        upi: 0,
+        icici: 0,
+        balance: !isPaid ? amt : 0,
+        nights: 0,
+        waterBottle: 0,
+        extraPerson: 0,
+        laundry: 0,
+        extraBed: 0,
+        kitchenUpi: kUpi,
+        kitchenCash: kCash,
+        kitchenDue: kDue,
+        totalFoodAmt: amt,
+        checkinTarget: null,
+      });
+    });
+
+    // Re-index row numbers
+    processed.forEach((p, i) => {
+      p.no = i + 1;
     });
 
     if (!searchTerm.trim()) return processed;
@@ -626,7 +740,7 @@ export default function DailyCollectionSheet({
       `"TOTAL CASH COLLECTED",${totalCashCollected}`,
       `"CLOSING COUNTER SUBTOTAL",${closingCounterSubtotal}`,
       `"EXPENSES",${totalExpenseAmt}`,
-      `"OWNER HANDOVER (RAJ SIR)",${ownerHandover}`,
+      `"CASH TAKEN BY ${ownerName.toUpperCase()}",${ownerHandover}`,
       `"FINAL CLOSING COUNTER BALANCE",${finalClosingBalance}`,
       `"NOTE - ${activeExpenseNote}"`
     ].join('\n');
@@ -645,8 +759,8 @@ export default function DailyCollectionSheet({
     window.print();
   };
 
-  const hotelName = hotelSettings?.name || 'Dasrath Palace';
-  const ownerName = (hotelSettings as any)?.ownerName || 'Raj Sir';
+  const hotelName = hotelSettings?.name || 'Hotel Raj Residency';
+  const ownerName = (hotelSettings as any)?.ownerName || 'Adarsh Sir';
 
   return (
     <div className="space-y-6">
@@ -778,7 +892,7 @@ export default function DailyCollectionSheet({
               </div>
               <div>
                 <label className="text-[11px] text-luxury-brown-300 block mb-1 font-bold">
-                  Owner Handover / Raj Sir (₹)
+                  Cash Taken by {ownerName} (₹)
                 </label>
                 <input
                   type="number"
@@ -789,11 +903,11 @@ export default function DailyCollectionSheet({
               </div>
               <div>
                 <label className="text-[11px] text-luxury-brown-300 block mb-1 font-bold">
-                  Daily Expense Settlement Note
+                  Daily Expense / Handover Note
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. 300 - GARBAGE CLEANING (NAGAR NIGAM)"
+                  placeholder={`e.g. 8,500 - CASH TAKEN BY ${ownerName.toUpperCase()}`}
                   value={activeExpenseNote}
                   onChange={(e) => setCustomNote(e.target.value)}
                   className="w-full p-2.5 bg-black/40 border border-white/20 rounded-lg font-mono text-xs uppercase text-white focus:outline-none focus:border-luxury-gold-400"
@@ -932,14 +1046,13 @@ export default function DailyCollectionSheet({
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[3%] min-w-[45px] text-center whitespace-nowrap">NO.</th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[14%] min-w-[170px] text-left whitespace-nowrap">CUSTOMER NAME</th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[5%] min-w-[75px] whitespace-nowrap">ROOM NO.</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 w-[6%] min-w-[85px] text-right whitespace-nowrap" title="Standard Catalog Rack Tariff">ROOM TARIFF</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 w-[6%] min-w-[85px] text-right whitespace-nowrap" title="Owner Price / Final Agreed Rate">OWNER PRICE</th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 w-[7%] min-w-[85px] text-right whitespace-nowrap" title="Agreed Room Tariff">ROOM TARIFF</th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[5%] min-w-[65px] whitespace-nowrap">GST</th>
                 <th colSpan={3} className="border-r border-luxury-brown-800 p-2 bg-[#2D2214] text-amber-300 font-black tracking-wide whitespace-nowrap">
                   ROOM PAYMENT MODE
                 </th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[6%] min-w-[90px] text-right whitespace-nowrap">BALANCE</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[4%] min-w-[55px] whitespace-nowrap">DAYS</th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[4%] min-w-[55px] whitespace-nowrap">NO. OF DAYS</th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[6%] min-w-[100px] text-right whitespace-nowrap">WATER BOTTLE</th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[4%] min-w-[50px] whitespace-nowrap">EP</th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[5%] min-w-[80px] text-right whitespace-nowrap">LAUNDRY</th>
@@ -962,14 +1075,14 @@ export default function DailyCollectionSheet({
                 <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">UPI</th>
                 <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">CASH</th>
                 <th className="border-r border-luxury-brown-800 p-1.5 min-w-[55px] text-right whitespace-nowrap">DUE</th>
-                <th className="p-1.5 min-w-[90px] text-right whitespace-nowrap">TOTAL FOOD</th>
+                <th className="p-1.5 min-w-[90px] text-right whitespace-nowrap">TOTAL FOOD AMT</th>
               </tr>
             </thead>
 
             <tbody className="divide-y divide-luxury-brown-100/70 bg-white">
               {reportRows.length === 0 ? (
                 <tr>
-                  <td colSpan={onEditCheckout ? 19 : 18} className="p-10 text-center bg-luxury-beige-50/20">
+                  <td colSpan={onEditCheckout ? 18 : 17} className="p-10 text-center bg-luxury-beige-50/20">
                     <div className="max-w-md mx-auto space-y-2.5 py-4">
                       <div className="w-12 h-12 rounded-2xl bg-amber-100/70 text-amber-700 flex items-center justify-center mx-auto">
                         <FileSpreadsheet className="w-6 h-6" />
@@ -1004,14 +1117,8 @@ export default function DailyCollectionSheet({
                         {r.roomNumber}
                       </span>
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-slate-500">
-                      {(r as any).rackTariff > 0 ? `₹${(r as any).rackTariff.toLocaleString()}` : '—'}
-                    </td>
                     <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-bold text-luxury-brown-950">
                       {r.roomTariff > 0 ? `₹${r.roomTariff.toLocaleString()}` : '—'}
-                      {(r as any).rackTariff > r.roomTariff && (
-                        <span className="block text-[9px] text-emerald-700 font-semibold">(-₹{((r as any).rackTariff - r.roomTariff).toLocaleString()})</span>
-                      )}
                     </td>
                     <td className="p-2 border-r border-luxury-brown-100/70 text-center font-mono">
                       {r.gst && r.gst !== '0' ? (
@@ -1099,9 +1206,6 @@ export default function DailyCollectionSheet({
                 <td colSpan={3} className="p-3 text-right uppercase tracking-wider text-xs border-r border-luxury-brown-800">
                   GRAND TOTAL:
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 text-slate-300">
-                  ₹{totals.rackTariff.toLocaleString()}
-                </td>
                 <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 font-bold text-luxury-gold-200">
                   ₹{totals.roomTariff.toLocaleString()}
                 </td>
@@ -1181,17 +1285,17 @@ export default function DailyCollectionSheet({
                 <tr className="hover:bg-luxury-beige-50/40">
                   <td className="p-2.5 font-bold uppercase text-rose-800">Expenses Deducted (-)</td>
                   <td className="p-2.5 text-right font-black text-rose-700">
-                    {totalExpenseAmt > 0 ? `₹${totalExpenseAmt.toLocaleString()}` : '₹0'}
+                    {totalExpenseAmt > 0 ? `₹${totalExpenseAmt.toLocaleString()}` : '—'}
                   </td>
                 </tr>
                 <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-luxury-brown-700">{ownerName.toUpperCase()} (Handover) (-)</td>
+                  <td className="p-2.5 font-bold uppercase text-luxury-brown-700">{ownerName.toUpperCase()} (Cash Taken) (-)</td>
                   <td className="p-2.5 text-right font-black text-luxury-brown-950">
                     {ownerHandover > 0 ? `₹${ownerHandover.toLocaleString()}` : '—'}
                   </td>
                 </tr>
                 <tr className="bg-emerald-50 border-t-2 border-emerald-300 !text-emerald-900 font-black text-sm">
-                  <td className="p-3 uppercase tracking-wide">Final In-Hand Closing Balance</td>
+                  <td className="p-3 uppercase tracking-wide">Closing Counter Balance</td>
                   <td className="p-3 text-right font-mono font-black !text-emerald-800 text-base">
                     ₹{finalClosingBalance.toLocaleString()}
                   </td>
@@ -1204,7 +1308,7 @@ export default function DailyCollectionSheet({
           <div className="border border-luxury-brown-200/90 rounded-2xl bg-luxury-beige-50/40 p-4 space-y-3 shadow-2xs">
             <div className="flex items-center justify-between border-b border-luxury-brown-200 pb-2">
               <span className="text-xs font-serif font-black uppercase text-luxury-brown-950 tracking-wider">
-                Daily Note & Settlement Details
+                NOTE - Daily Cash & Settlement Memo
               </span>
               <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold rounded-full border border-emerald-300">
                 Audit Verified
@@ -1213,7 +1317,7 @@ export default function DailyCollectionSheet({
             
             <div className="p-3 bg-white rounded-xl border border-luxury-brown-200 min-h-[64px] flex items-center">
               <p className="text-xs font-mono font-bold text-luxury-brown-900 uppercase leading-relaxed">
-                {activeExpenseNote || 'No special daily notes logged for this audit session.'}
+                {customNote || (ownerHandover > 0 ? `${ownerHandover.toLocaleString('en-IN')} - CASH TAKEN BY ${ownerName.toUpperCase()}` : activeExpenseNote)}
               </p>
             </div>
 
