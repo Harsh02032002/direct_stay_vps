@@ -804,9 +804,7 @@ export default function CheckInFormView({
     }
     const prevDuration = Math.max(1, calcStayDays(checkInDate, checkOutDate));
     setCheckInDate(nextIn);
-    if (!checkOutDate || nextIn > checkOutDate) {
-      setCheckOutDate(isSameDayStay ? nextIn : getFutureDateStr(prevDuration, nextIn));
-    }
+    setCheckOutDate(isSameDayStay ? nextIn : getFutureDateStr(prevDuration, nextIn));
     // Prevent past time if switching back to today on a new booking
     if (!isEditingExistingDates && !allowBackDatedCheckIn && nextIn === todayIst) {
       const nowIst = getIstNowParts();
@@ -2515,7 +2513,7 @@ export default function CheckInFormView({
     }
 
     const todayIst = getTodayDateStr();
-    if (!isEditingExistingDates && checkInDate < todayIst) {
+    if (!isEditingExistingDates && !allowBackDatedCheckIn && checkInDate < todayIst) {
       showToast('Past arrival dates cannot be selected for new bookings.', 'error');
       return;
     }
@@ -2830,7 +2828,7 @@ export default function CheckInFormView({
       return;
     }
     const todayIst = getTodayDateStr();
-    if (!isEditingExistingDates && checkInDate < todayIst) {
+    if (!isEditingExistingDates && !allowBackDatedCheckIn && checkInDate < todayIst) {
       showToast('Past arrival dates cannot be selected for new check-ins.', 'error');
       return;
     }
@@ -5780,8 +5778,9 @@ export default function CheckInFormView({
                       <input
                         type="date"
                         required
+                        min={!isEditingExistingDates && !allowBackDatedCheckIn ? todayIstStr : undefined}
                         value={checkInDate}
-                        onChange={(e) => setCheckInDate(e.target.value)}
+                        onChange={(e) => handleArrivalDateChange(e.target.value)}
                         className="w-full h-10 px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white text-luxury-brown-950 font-mono focus:ring-1 focus:ring-[#C5A059] focus:outline-none"
                       />
                     </div>
@@ -5819,8 +5818,9 @@ export default function CheckInFormView({
                       </div>
                       <input
                         type="date"
+                        min={checkInDate || (!isEditingExistingDates && !allowBackDatedCheckIn ? todayIstStr : undefined)}
                         value={checkOutDate}
-                        onChange={(e) => setCheckOutDate(e.target.value)}
+                        onChange={(e) => handleDepartureDateChange(e.target.value)}
                         className="w-full h-10 px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white text-luxury-brown-950 font-mono focus:ring-1 focus:ring-[#C5A059] focus:outline-none"
                       />
                     </div>

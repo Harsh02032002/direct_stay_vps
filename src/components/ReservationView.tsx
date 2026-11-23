@@ -1029,13 +1029,11 @@ export default function ReservationView({
       cleanVal = getTodayDateStr();
       showToast('Arrival date cannot be in the past. Enable back-dated check-in in Property Setup.', 'warning');
     }
+    const prevNights = Math.max(1, calNightsForDates(checkInDate, checkOutDate));
     setCheckInDate(cleanVal);
-    let nextCheckOut = checkOutDate;
-    if (checkOutDate && checkOutDate < cleanVal) {
-      nextCheckOut = cleanVal;
-      setCheckOutDate(cleanVal);
-    }
-    const nightsCount = calNightsForDates(cleanVal, nextCheckOut);
+    const nextCheckOut = getFutureDateStr(prevNights, cleanVal);
+    setCheckOutDate(nextCheckOut);
+    const nightsCount = prevNights;
     if (isMultiRoomMode && multiRoomSelections.length > 0) {
       syncMultiRoomBookingPrice(multiRoomSelections, nightsCount);
     } else {
@@ -1488,7 +1486,7 @@ export default function ReservationView({
       return;
     }
 
-    if (!editingBooking && checkInDate && checkInDate < getTodayDateStr()) {
+    if (!editingBooking && !allowBackDatedCheckIn && checkInDate && checkInDate < getTodayDateStr()) {
       setFormError('Arrival date cannot be in the past for new advance bookings.');
       return;
     }

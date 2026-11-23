@@ -564,6 +564,34 @@ export default function PosView({
     return { folioChargeId };
   };
 
+  // Remove POS Room Charge from linked guest folio if order is cancelled or voided
+  const removePosOrderFromGuestFolio = (orderObj: PosOrder) => {
+    if (!onUpdateCheckins || !checkins || checkins.length === 0) return;
+    const folioChargeId = orderObj.folioChargeId || `EC-POS-${orderObj.id}`;
+    let modified = false;
+    const updatedCheckins = checkins.map(c => {
+      const existingCharges = Array.isArray(c.extraCharges) ? c.extraCharges : [];
+      const matchCharge = existingCharges.find(
+        ec =>
+          ec.id === folioChargeId ||
+          (ec.sourceType === 'pos_order' && ec.sourceId === orderObj.id) ||
+          ec.id === `EC-POS-${orderObj.id}`
+      );
+      if (!matchCharge) return c;
+      modified = true;
+      const nextCharges = existingCharges.filter(ec => ec !== matchCharge);
+      const chargeAmt = Number(matchCharge.amount || 0);
+      return {
+        ...c,
+        extraCharges: nextCharges,
+        pendingAmount: Math.max(0, Number(c.pendingAmount || 0) - chargeAmt)
+      };
+    });
+    if (modified) {
+      onUpdateCheckins(updatedCheckins);
+    }
+  };
+
   // Click Menu Item Handlers
   const handleItemClick = (item: PosItem) => {
     if (!item.available) return;
@@ -2239,6 +2267,7 @@ export default function PosView({
                                 variant: 'danger'
                               });
                               if (!confirmed) return;
+                              removePosOrderFromGuestFolio(order);
                               const updated = orders.map(o =>
                                 o.id === order.id ? { ...o, status: 'Cancelled' as const, isClosed: true } : o
                               );
@@ -2256,12 +2285,63 @@ export default function PosView({
                         </>
                       )}
                       {order.isSettled && (
+                        <div className="inline-flex items-center space-x-1.5">
+                          <button
+                            onClick={() => setViewingReceiptOrder(order)}
+                            className="px-2.5 py-1 bg-slate-900 text-white hover:bg-slate-800 rounded text-[11px] font-bold flex items-center space-x-1 inline-flex"
+                          >
+                            <Printer className="w-3 h-3" />
+                            <span>Invoice</span>
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const confirmed = await showConfirmToast(
+                                `Void settled Food Bill #${order.orderNumber} (₹${order.grandTotal.toFixed(2)})? This will reverse any room folio charges.`,
+                                {
+                                  title: 'Void Food Bill',
+                                  confirmLabel: 'Void Bill',
+                                  variant: 'danger'
+                                }
+                              );
+                              if (!confirmed) return;
+                              removePosOrderFromGuestFolio(order);
+                              const updated = orders.map(o =>
+                                o.id === order.id ? { ...o, status: 'Cancelled' as const, isClosed: true, isSettled: false } : o
+                              );
+                              onUpdateOrders(updated);
+                              onAddAuditLog?.(
+                                'POS Order Voided',
+                                `Voided Settled POS Order #${order.orderNumber} (${order.orderType}) for ${order.guestName || 'Guest'} — Amount: ₹${order.grandTotal.toFixed(2)}.`
+                              );
+                              showNotice(`Food Bill #${order.orderNumber} voided successfully.`);
+                            }}
+                            className="px-2 py-1 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded text-[11px] font-bold"
+                            title="Void / Cancel this food bill"
+                          >
+                            Void
+                          </button>
+                        </div>
+                      )}
+                      {order.status === 'Cancelled' && (
                         <button
-                          onClick={() => setViewingReceiptOrder(order)}
-                          className="px-2.5 py-1 bg-slate-900 text-white hover:bg-slate-800 rounded text-[11px] font-bold flex items-center space-x-1 inline-flex"
+                          onClick={async () => {
+                            const confirmed = await showConfirmToast(
+                              `Permanently delete cancelled Food Bill #${order.orderNumber}?`,
+                              {
+                                title: 'Delete Order Record',
+                                confirmLabel: 'Delete Permanently',
+                                variant: 'danger'
+                              }
+                            );
+                            if (!confirmed) return;
+                            const updated = orders.filter(o => o.id !== order.id);
+                            onUpdateOrders(updated);
+                            showNotice(`Food Bill #${order.orderNumber} deleted.`);
+                          }}
+                          className="px-2 py-1 bg-slate-100 text-slate-500 hover:bg-rose-100 hover:text-rose-700 rounded text-[10px] font-semibold"
+                          title="Permanently remove record"
                         >
-                          <Printer className="w-3 h-3" />
-                          <span>Invoice</span>
+                          Delete
                         </button>
                       )}
                     </td>
