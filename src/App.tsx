@@ -3073,8 +3073,17 @@ export default function App() {
   const handleRestoreDeletedItem = (deletedItem: DeletedItemRecord) => {
     if (deletedItem.itemType === 'Booking' && deletedItem.data) {
       const restoredBooking: Booking = deletedItem.data;
+      const linked = (deletedItem as any)?.metadata?.linkedCheckin || (restoredBooking as any)?.linkedCheckin;
       setRawBookings(prev => [restoredBooking, ...prev.filter(b => b.id !== restoredBooking.id)]);
-      savePmsData({ bookings: [restoredBooking, ...rawBookings.filter(b => b.id !== restoredBooking.id)] });
+      if (linked) {
+        setRawCheckins(prev => [linked, ...prev.filter(c => c.id !== linked.id)]);
+        savePmsData({
+          bookings: [restoredBooking, ...rawBookings.filter(b => b.id !== restoredBooking.id)],
+          checkins: [linked, ...rawCheckins.filter(c => c.id !== linked.id)],
+        });
+      } else {
+        savePmsData({ bookings: [restoredBooking, ...rawBookings.filter(b => b.id !== restoredBooking.id)] });
+      }
       if (restoredBooking.roomNumber && restoredBooking.checkInDate === new Date().toISOString().split('T')[0]) {
         const updatedRooms = rooms.map(r => r.number === restoredBooking.roomNumber && r.status === 'Available' ? { ...r, status: 'Reserved' as const } : r);
         handleUpdateRooms(updatedRooms);

@@ -3312,35 +3312,72 @@ export default function ReservationView({
               </button>
             )}
 
-            {!item.isStandaloneCheckin && (currentRole === 'Admin' || currentRole === 'SuperAdmin' || currentRole === 'Manager') && (
+            {(currentRole === 'Admin' || currentRole === 'SuperAdmin' || currentRole === 'Manager') && (
               <button
                 type="button"
                 onClick={() => {
                   setOpenMenuId(null);
-                  if (window.confirm(`Move booking #${bk.id} (${bk.guestName}) to Deleted Folder? It can be restored later.`)) {
+                  const recordLabel = item.isStandaloneCheckin ? 'walk-in / stay' : 'booking';
+                  const recordId = item.linkedCheckin?.id || bk.id;
+                  if (window.confirm(`Move ${recordLabel} #${recordId} (${bk.guestName}) to Deleted Folder? It can be restored later.`)) {
                     if (onMoveToDeletedFolder) {
-                      onMoveToDeletedFolder({
-                        itemType: 'Booking',
-                        itemId: bk.id,
-                        title: `Booking #${bk.id} (${bk.roomType} - Room ${bk.roomNumber || 'Auto'})`,
-                        guestName: bk.guestName,
-                        roomNumber: bk.roomNumber,
-                        amount: bk.bookingAmount,
-                        reason: 'Moved to Deleted Folder from Reservations List',
-                        data: bk,
-                      });
+                      if (item.isStandaloneCheckin && item.linkedCheckin) {
+                        onMoveToDeletedFolder({
+                          itemType: 'Guest',
+                          itemId: item.linkedCheckin.id,
+                          title: `Walk-in #${item.linkedCheckin.id} (Room ${item.displayRoomsLabel || bk.roomNumber || 'Auto'})`,
+                          guestName: bk.guestName,
+                          roomNumber: item.displayRoomsLabel || bk.roomNumber,
+                          amount: bk.bookingAmount || (item.financials as any)?.totalPayable || (item.financials as any)?.totalAmount || 0,
+                          reason: 'Moved to Deleted Folder from Reservations List',
+                          data: item.linkedCheckin,
+                        });
+                      } else {
+                        onMoveToDeletedFolder({
+                          itemType: 'Booking',
+                          itemId: bk.id,
+                          title: `Booking #${bk.id} (${bk.roomType} - Room ${bk.roomNumber || 'Auto'})`,
+                          guestName: bk.guestName,
+                          roomNumber: bk.roomNumber,
+                          amount: bk.bookingAmount || (item.financials as any)?.totalPayable || (item.financials as any)?.totalAmount || 0,
+                          reason: 'Moved to Deleted Folder from Reservations List',
+                          data: bk,
+                          metadata: item.linkedCheckin ? { linkedCheckin: item.linkedCheckin } : undefined,
+                        } as any);
+                      }
                     }
                     const rmNums = getReservationRoomNumbers(bk);
                     if (rmNums.length > 0) {
                       onUpdateRooms(
                         rooms.map(r =>
-                          rmNums.includes(String(r.number).trim()) && r.status === 'Reserved'
+                          rmNums.includes(String(r.number).trim()) && (r.status === 'Reserved' || (r.status === 'Occupied' && st !== 'Checked-Out'))
                             ? { ...r, status: 'Available' as const }
                             : r
                         )
                       );
                     }
-                    onUpdateBookings(bookings.filter(b => b.id !== bk.id));
+                    if (bookings.some(b => b.id === bk.id)) {
+                      onUpdateBookings(bookings.filter(b => b.id !== bk.id));
+                    }
+                    if (onUpdateCheckins && (item.linkedCheckin || checkins.length > 0)) {
+                      const targetCheckinId = item.linkedCheckin?.id || bk.id;
+                      const targetGrpId = item.linkedCheckin?.groupBookingId || bk.groupBookingId;
+                      onUpdateCheckins(
+                        checkins.filter(c => {
+                          if (c.id === targetCheckinId) return false;
+                          if (targetGrpId && c.groupBookingId === targetGrpId) return false;
+                          if (c.bookingId && c.bookingId === bk.id) return false;
+                          if (c.id === bk.id) return false;
+                          return true;
+                        })
+                      );
+                    }
+                    if (onAddAuditLog) {
+                      onAddAuditLog(
+                        'Record Moved to Deleted Folder',
+                        `${recordLabel.toUpperCase()} #${recordId} (${bk.guestName}, Room ${item.displayRoomsLabel || bk.roomNumber}) moved to Deleted Folder.`
+                      );
+                    }
                   }
                 }}
                 className="w-full px-3.5 py-2 text-left hover:bg-rose-50 flex items-center gap-2.5 text-slate-500 hover:text-rose-700 cursor-pointer border-t border-slate-100 mt-1"

@@ -27,7 +27,7 @@ import { deduplicateInvoicesByBooking } from '../utils/invoiceConditions';
 import { showToast } from '../utils/toast';
 import { invoiceRecordToPrintHtml } from '../utils/pdfDownload';
 import { openPrintWindow } from '../utils/printDocument';
-import { X, Plus, Trash2, Check, Sparkles, CreditCard, Wallet, Receipt, Printer, UtensilsCrossed } from 'lucide-react';
+import { X, Plus, Trash2, Check, Sparkles, CreditCard, Wallet, Receipt, Printer, UtensilsCrossed, User, Building2 } from 'lucide-react';
 
 interface EditCheckoutModalProps {
   guest: GuestCheckIn;
@@ -119,6 +119,31 @@ export default function EditCheckoutModal({
     [invoices, guest, matchedBooking]
   );
 
+  const [editGuestName, setEditGuestName] = useState<string>(() => guest.guestName || matchedBooking?.guestName || '');
+  const [editGuestMobile, setEditGuestMobile] = useState<string>(() => guest.mobile || matchedBooking?.mobile || '');
+  const [editGuestEmail, setEditGuestEmail] = useState<string>(
+    () => guest.emailAddress || (guest as any).email || matchedBooking?.email || ''
+  );
+  const [editGuestCompanyName, setEditGuestCompanyName] = useState<string>(
+    () => guest.companyName || matchedBooking?.companyName || existingStayInv?.companyName || ''
+  );
+  const [editGuestGstNumber, setEditGuestGstNumber] = useState<string>(
+    () => guest.gstNumber || matchedBooking?.gstNumber || existingStayInv?.guestGstNumber || ''
+  );
+  const [editGuestAddress, setEditGuestAddress] = useState<string>(
+    () => guest.address || matchedBooking?.address || (existingStayInv as any)?.billingAddress || ''
+  );
+  const [editGuestIdType, setEditGuestIdType] = useState<string>(() => guest.idType || 'Aadhaar');
+  const [editGuestIdNumber, setEditGuestIdNumber] = useState<string>(
+    () => guest.idNumber || matchedBooking?.aadhaarNumber || ''
+  );
+  const [editGuestNumGuests, setEditGuestNumGuests] = useState<number>(
+    () => Number((guest as any).numberOfGuests || guest.adults || matchedBooking?.adults || 1)
+  );
+
+  const [editCheckInDate, setEditCheckInDate] = useState<string>(() =>
+    toLocalYmd(guest.checkInDate)
+  );
   const [editCheckOutDate, setEditCheckOutDate] = useState<string>(() =>
     toLocalYmd(guest.checkOutDate || guest.checkedOutDateTime)
   );
@@ -262,6 +287,11 @@ export default function EditCheckoutModal({
 
     const tempCheckin: GuestCheckIn = {
       ...guest,
+      guestName: editGuestName.trim() || guest.guestName,
+      mobile: editGuestMobile.trim() || guest.mobile,
+      companyName: editGuestCompanyName.trim(),
+      gstNumber: editGuestGstNumber.trim(),
+      checkInDate: editCheckInDate,
       checkOutDate: editCheckOutDate,
       roomRate: editRoomRate,
       roomRateIncludesGst,
@@ -277,6 +307,11 @@ export default function EditCheckoutModal({
     const tempBooking = matchedBooking
       ? ({
           ...matchedBooking,
+          guestName: editGuestName.trim() || matchedBooking.guestName,
+          mobile: editGuestMobile.trim() || matchedBooking.mobile,
+          companyName: editGuestCompanyName.trim(),
+          gstNumber: editGuestGstNumber.trim(),
+          checkInDate: editCheckInDate,
           checkOutDate: editCheckOutDate,
           roomRateIncludesGst,
           isWithoutGst: editGstMode === 'non_gst',
@@ -451,6 +486,17 @@ export default function EditCheckoutModal({
 
     const updatedGuest: GuestCheckIn = {
       ...guest,
+      guestName: editGuestName.trim() || guest.guestName,
+      mobile: editGuestMobile.trim() || guest.mobile,
+      emailAddress: editGuestEmail.trim(),
+      companyName: editGuestCompanyName.trim(),
+      gstNumber: editGuestGstNumber.trim(),
+      address: editGuestAddress.trim(),
+      idType: editGuestIdType,
+      idNumber: editGuestIdNumber.trim(),
+      numberOfGuests: editGuestNumGuests,
+      adults: editGuestNumGuests,
+      checkInDate: editCheckInDate,
       checkOutDate: editCheckOutDate,
       roomRate: editRoomRate,
       roomRateIncludesGst: editGstMode === 'including_gst',
@@ -467,7 +513,7 @@ export default function EditCheckoutModal({
       pendingAmount: liveCalc.balanceDue,
       checkedOutDateTime: guest.checkedOutDateTime ? resolvedCheckedOutIso : `${editCheckOutDate}T12:00:00`,
       checkedOutBy: guest.checkedOutBy || loggedInUser || 'Front Desk',
-    };
+    } as any;
 
     if (checkins.some((c) => c.id === guest.id)) {
       onUpdateCheckins(checkins.map((c) => (c.id === guest.id ? updatedGuest : c)));
@@ -485,6 +531,15 @@ export default function EditCheckoutModal({
         if (!isMatch) return b;
         return {
           ...b,
+          guestName: editGuestName.trim() || b.guestName,
+          mobile: editGuestMobile.trim() || b.mobile,
+          email: editGuestEmail.trim() || b.email,
+          companyName: editGuestCompanyName.trim(),
+          gstNumber: editGuestGstNumber.trim(),
+          address: editGuestAddress.trim() || b.address,
+          aadhaarNumber: editGuestIdNumber.trim() || b.aadhaarNumber,
+          adults: editGuestNumGuests,
+          checkInDate: editCheckInDate,
           checkOutDate: editCheckOutDate,
           nights: liveCalc.nights,
           roomRateIncludesGst: editGstMode === 'including_gst',
@@ -523,13 +578,13 @@ export default function EditCheckoutModal({
       hotelId: guest.hotelId || hotelSettings?.id,
       bookingId: matchedBooking?.id || guest.id,
       checkInId: guest.id,
-      guestName: guest.guestName,
-      guestMobile: guest.mobile,
-      guestAddress: [guest.address, guest.city, guest.state].filter(Boolean).join(', '),
-      companyName: guest.companyName,
-      guestGstNumber: guest.gstNumber,
+      guestName: editGuestName.trim() || guest.guestName,
+      guestMobile: editGuestMobile.trim() || guest.mobile,
+      guestAddress: editGuestAddress.trim() || [guest.address, guest.city, guest.state].filter(Boolean).join(', '),
+      companyName: editGuestCompanyName.trim(),
+      guestGstNumber: editGuestGstNumber.trim(),
       roomNumbers: liveCalc.roomNumbers,
-      checkInDate: guest.checkInDate,
+      checkInDate: editCheckInDate,
       checkOutDate: editCheckOutDate,
       nights: liveCalc.nights,
       bill: liveCalc.bill,
@@ -547,6 +602,14 @@ export default function EditCheckoutModal({
     const syncedInvoice: Invoice = {
       ...(existingStayInv || {}),
       ...(rebuiltInvoice as Invoice),
+      guestName: editGuestName.trim() || guest.guestName,
+      guestPhone: editGuestMobile.trim() || guest.mobile,
+      guestEmail: editGuestEmail.trim() || (guest as any).emailAddress,
+      companyName: editGuestCompanyName.trim(),
+      guestGstNumber: editGuestGstNumber.trim(),
+      billingAddress: editGuestAddress.trim() || (existingStayInv as any)?.billingAddress,
+      checkInDate: editCheckInDate,
+      checkOutDate: editCheckOutDate,
       isWithoutGst: editGstMode === 'non_gst',
       gstRate: editGstMode === 'non_gst' ? 0 : liveCalc.gstRate,
       roomRateIncludesGst: editGstMode === 'including_gst',
@@ -608,7 +671,7 @@ export default function EditCheckoutModal({
                 Post Check-Out Settlement &amp; Folio Editor
               </span>
               <h3 className="text-base font-serif font-bold text-white" style={{ color: '#FFFFFF' }}>
-                Edit Check-Out — {guest.guestName} (Room {guest.roomNumber})
+                Edit Check-Out — {editGuestName || guest.guestName} (Room {guest.roomNumber})
               </h3>
             </div>
           </div>
@@ -623,17 +686,151 @@ export default function EditCheckoutModal({
 
         {/* Body */}
         <form onSubmit={handleSave} className="p-5 space-y-5 overflow-y-auto flex-1">
+          {/* Guest Information & Corporate GST Details */}
+          <div className="bg-[#FAF7F2] p-4 rounded-xl border border-luxury-brown-200 space-y-3">
+            <div className="flex items-center justify-between border-b border-luxury-brown-200/70 pb-2">
+              <span className="text-[11px] font-mono uppercase font-bold text-luxury-brown-900 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-[#C49A3A]" /> Guest Information &amp; Corporate GST Details
+              </span>
+              <span className="text-[10px] text-slate-500 font-mono">Invoice Recipient &amp; Tax Info</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
+                  Guest Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editGuestName}
+                  onChange={(e) => setEditGuestName(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449] font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
+                  Mobile Number *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editGuestMobile}
+                  onChange={(e) => setEditGuestMobile(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449] font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={editGuestEmail}
+                  onChange={(e) => setEditGuestEmail(e.target.value)}
+                  placeholder="direct.walkin@grandpavilion.in"
+                  className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
+                  Company Name (Optional GST Bill)
+                </label>
+                <input
+                  type="text"
+                  value={editGuestCompanyName}
+                  onChange={(e) => setEditGuestCompanyName(e.target.value)}
+                  placeholder="Corporate / Company Name"
+                  className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
+                  Customer GSTIN Number
+                </label>
+                <input
+                  type="text"
+                  value={editGuestGstNumber}
+                  onChange={(e) => setEditGuestGstNumber(e.target.value.toUpperCase())}
+                  placeholder="22AAAAA0000A1Z5"
+                  className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449] font-mono font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
+                  Occupants (Guests)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={editGuestNumGuests}
+                  onChange={(e) => setEditGuestNumGuests(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449] font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
+                  ID Document Type
+                </label>
+                <select
+                  value={editGuestIdType}
+                  onChange={(e) => setEditGuestIdType(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449]"
+                >
+                  <option value="Aadhaar">Aadhaar Card</option>
+                  <option value="Passport">Passport</option>
+                  <option value="Driving License">Driving License</option>
+                  <option value="Voter ID">Voter ID</option>
+                  <option value="Other">Other ID</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
+                  ID Proof Number
+                </label>
+                <input
+                  type="text"
+                  value={editGuestIdNumber}
+                  onChange={(e) => setEditGuestIdNumber(e.target.value.toUpperCase())}
+                  placeholder="1234569870"
+                  className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449] font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">
+                  Address
+                </label>
+                <input
+                  type="text"
+                  value={editGuestAddress}
+                  onChange={(e) => setEditGuestAddress(e.target.value)}
+                  placeholder="BHATAGAON R, C.G."
+                  className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449]"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Top Stay & Tariff Row */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3.5 bg-[#FAF7F2] p-4 rounded-xl border border-luxury-brown-200">
             <div className="space-y-1">
-              <label className="text-[10px] font-mono uppercase font-bold text-slate-500 block">
-                Check-In Date
+              <label className="text-[10px] font-mono uppercase font-bold text-luxury-brown-800 block">
+                Check-In Date *
               </label>
               <input
-                type="text"
-                readOnly
-                value={guest.checkInDate}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono font-bold bg-slate-100 text-slate-600"
+                type="date"
+                value={editCheckInDate}
+                onChange={(e) => setEditCheckInDate(e.target.value)}
+                className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-950"
               />
             </div>
 
@@ -643,7 +840,7 @@ export default function EditCheckoutModal({
               </label>
               <input
                 type="date"
-                min={guest.checkInDate}
+                min={editCheckInDate}
                 value={editCheckOutDate}
                 onChange={(e) => setEditCheckOutDate(e.target.value)}
                 className="w-full px-3 py-2 border border-[#C49A3A] rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-950"
