@@ -797,6 +797,12 @@ export const PosModule: React.FC<PosModuleProps> = ({
   const [gstEnabled, setGstEnabled] = useState(true);
   const [customerGstin, setCustomerGstin] = useState('');
   const [companyName, setCompanyName] = useState('');
+  // Back-Dated Food Billing Date & Time
+  const [customOrderDate, setCustomOrderDate] = useState<string>(() => getIstTodayStr());
+  const [customOrderTime, setCustomOrderTime] = useState<string>(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
   const [payMode, setPayMode] = useState<
     'Cash' | 'UPI' | 'Card' | 'Bank Transfer' | 'Room Charge' | 'Hybrid'
   >('Cash');
@@ -1071,6 +1077,9 @@ export const PosModule: React.FC<PosModuleProps> = ({
     setGstEnabled(true);
     setCustomerGstin('');
     setCompanyName('');
+    setCustomOrderDate(getIstTodayStr());
+    const _now = new Date();
+    setCustomOrderTime(`${String(_now.getHours()).padStart(2, '0')}:${String(_now.getMinutes()).padStart(2, '0')}`);
     setPayMode('Cash');
     setAmountReceived('');
     setPayReference('');
@@ -1339,7 +1348,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
       isHeld: true,
       bomDeducted: false,
       holdNote: instructions.trim() || `Held on ${orderType === 'Dine In' ? `Table ${tableNumber}` : orderType}`,
-      dateTime: getIstDateTimeStr(),
+      dateTime: customOrderDate && customOrderTime ? `${customOrderDate} ${customOrderTime}` : getIstDateTimeStr(),
     };
     onCreatePosOrder(heldOrd);
     setCart([]);
@@ -1952,7 +1961,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
         paymentStatus: payStatus,
         kotStatus: 'KOT Sent',
         instructions,
-        dateTime: getIstDateTimeStr(),
+        dateTime: customOrderDate && customOrderTime ? `${customOrderDate} ${customOrderTime}` : getIstDateTimeStr(),
         payments,
         amountPaid: isRoomPost ? 0 : totalReceivedWithDeposit,
         balanceDue,
@@ -6424,6 +6433,46 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     />
                   </div>
                 )}
+              </div>
+
+              {/* Back-Dated Order Date & Time (Allows Past Date/Time Entries) */}
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-amber-600" />
+                      Order Date &amp; Time (Back-Date Allowed)
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      Record retroactive or past-dated food &amp; restaurant billing entries
+                    </div>
+                  </div>
+                  {customOrderDate !== getIstTodayStr() && (
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                      Back-Dated
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Bill Date</label>
+                    <input
+                      type="date"
+                      value={customOrderDate}
+                      onChange={(e) => setCustomOrderDate(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-800 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Bill Time</label>
+                    <input
+                      type="time"
+                      value={customOrderTime}
+                      onChange={(e) => setCustomOrderTime(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-800 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* GST Toggle + B2C / B2B Details */}

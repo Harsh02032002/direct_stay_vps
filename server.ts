@@ -2753,6 +2753,30 @@ async function startServer() {
           }
         }
 
+        // Protect rooms: ensure room sync is additive and non-destructive so client tabs with partial rooms never wipe existing rooms
+        if (Array.isArray(data.rooms) && Array.isArray(prevData.rooms)) {
+          const roomMap = new Map<string, any>();
+          for (const r of prevData.rooms) {
+            if (r) {
+              const hId = r.hotelId || "";
+              const num = String(r.number || r.id || "").trim();
+              if (num) roomMap.set(`${hId}:${num}`, r);
+            }
+          }
+          for (const r of data.rooms) {
+            if (r) {
+              const hId = r.hotelId || callerHotelId || "";
+              const num = String(r.number || r.id || "").trim();
+              if (num) {
+                const key = `${hId}:${num}`;
+                const prev = roomMap.get(key);
+                roomMap.set(key, { ...prev, ...r, hotelId: hId });
+              }
+            }
+          }
+          data.rooms = Array.from(roomMap.values());
+        }
+
         // Super Admin credentials can never be written through the generic state sync
         delete (data as any).superAdminPass;
         delete (data as any).superAdminEmail;

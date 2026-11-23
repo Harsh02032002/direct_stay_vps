@@ -21,7 +21,7 @@ const normalizeCategory = (cat?: string): string => {
   if (!cat) return 'Standard';
   const trimmed = cat.trim();
   const lower = trimmed.toLowerCase();
-  if (lower === 'delux' || lower === 'deluxe') return 'Deluxe';
+  if (lower === 'delux' || lower === 'deluxe' || lower === 'super dilux' || lower === 'super deluxe' || lower === 'premium standard') return 'Deluxe';
   if (lower === 'executive' || lower === 'executive room' || lower === 'executive suite') return 'Executive';
   if (lower === 'standard' || lower === 'standard room') return 'Standard';
   if (lower === 'family' || lower === 'family room' || lower === 'family suite' || lower === 'familyroom') return 'Family';
@@ -238,6 +238,22 @@ export default function TodayBookingsView({
 
   // Delete Booking State
   const [bookingToDelete, setBookingToDelete] = useState<Booking | null>(null);
+
+  // Dedicated Quick Food Bill Modal State
+  const [foodBillModalData, setFoodBillModalData] = useState<{
+    room: Room;
+    booking?: Booking;
+    checkin?: GuestCheckIn;
+  } | null>(null);
+  const [foodBillItemDesc, setFoodBillItemDesc] = useState('');
+  const [foodBillBaseAmount, setFoodBillBaseAmount] = useState<number>(0);
+  const [foodBillDate, setFoodBillDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [foodBillTime, setFoodBillTime] = useState<string>(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
+  const [foodBillApplyGst, setFoodBillApplyGst] = useState<boolean>(true);
+  const [foodBillGstRate, setFoodBillGstRate] = useState<number>(5);
 
   // --- ROOM UPGRADE FEATURE STATES ---
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
@@ -796,6 +812,64 @@ export default function TodayBookingsView({
     showToast(`Added Room Damage Fine ₹${amt.toLocaleString('en-IN')} (${desc}) to guest bill`, 'success');
     setDamageItemDesc('');
     setDamageFineAmount(0);
+  };
+
+  // Dedicated Food Bill Handlers (Point 3 & 4: Back-date entry & 5% GST option)
+  const handleOpenFoodBillModal = (room: Room, activeBooking?: Booking) => {
+    const linkedStay = checkins.find(c => String(c.roomNumber) === String(room.number) && !c.checkedOutDateTime) ||
+                       checkins.find(c => c.id === activeBooking?.id);
+    setFoodBillModalData({ room, booking: activeBooking, checkin: linkedStay });
+    setFoodBillItemDesc('');
+    setFoodBillBaseAmount(0);
+    setFoodBillDate(new Date().toISOString().split('T')[0]);
+    const d = new Date();
+    setFoodBillTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+    setFoodBillApplyGst(true);
+    setFoodBillGstRate(5);
+  };
+
+  const handleSubmitFoodBill = () => {
+    if (!foodBillModalData) return;
+    const baseAmt = Number(foodBillBaseAmount);
+    if (!baseAmt || baseAmt <= 0) {
+      showToast('Please enter a valid Food Amount (₹) greater than 0.', 'warning');
+      return;
+    }
+    const gstAmt = foodBillApplyGst ? Math.round(baseAmt * (foodBillGstRate / 100) * 100) / 100 : 0;
+    const totalFoodBill = Math.round((baseAmt + gstAmt) * 100) / 100;
+    const itemDesc = foodBillItemDesc.trim() || 'Restaurant / Room Service Food Bill';
+    const taxNote = foodBillApplyGst ? ` (Incl. ${foodBillGstRate}% GST: ₹${gstAmt})` : ' (Without GST)';
+    const dateNote = ` [Date: ${foodBillDate} ${foodBillTime}]`;
+
+    const newCharge: ExtraCharge = {
+      id: `EC-FOOD-${Date.now()}`,
+      category: 'Food',
+      description: `${itemDesc}${taxNote}${dateNote}`,
+      amount: totalFoodBill,
+      dateTime: `${foodBillDate}T${foodBillTime}:00`
+    };
+
+    if (foodBillModalData.checkin && onUpdateCheckins) {
+      const stay = foodBillModalData.checkin;
+      const prevExtras = stay.extraCharges || [];
+      const updatedStay: GuestCheckIn = {
+        ...stay,
+        extraCharges: [...prevExtras, newCharge],
+        pendingAmount: (stay.pendingAmount || 0) + totalFoodBill
+      };
+      const nextCheckins = checkins.map(c => c.id === stay.id ? updatedStay : c);
+      onUpdateCheckins(nextCheckins);
+    }
+
+    if (onAddAuditLog) {
+      onAddAuditLog(
+        'Food Bill Posted',
+        `Posted Food Bill of ₹${totalFoodBill} (Base: ₹${baseAmt}, GST: ₹${gstAmt}) for Room ${foodBillModalData.room.number} (${foodBillModalData.booking?.guestName || 'Guest'}). Bill Date: ${foodBillDate} ${foodBillTime}.`
+      );
+    }
+
+    showToast(`Food bill of ₹${totalFoodBill} posted to Room ${foodBillModalData.room.number} successfully!`, 'success');
+    setFoodBillModalData(null);
   };
 
   // Remove extra charge inside Checkout Modal
@@ -1983,7 +2057,7 @@ export default function TodayBookingsView({
                                   Room {room.number}
                                 </h4>
                                 <p className="text-[11px] text-luxury-brown-400">
-                                  {room.floor ? `${room.floor} Floor` : '1st Floor'} • {room.bedType || 'King Size Bed'}
+                                  {room.floor ? (room.floor.toLowerCase().includes('floor') ? room.floor : `${room.floor} Floor`) : '1st Floor'} • {room.bedType || 'King Size Bed'}
                                 </p>
                               </div>
                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${badgeClass}`}>
@@ -2047,7 +2121,7 @@ export default function TodayBookingsView({
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => showToast(`Room Service / POS Food opened for Room ${room.number}`, 'info')}
+                                  onClick={() => handleOpenFoodBillModal(room, activeBooking)}
                                   className="px-2 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer transition shadow-2xs"
                                   title="Add Food / Room Service"
                                 >
@@ -2075,7 +2149,7 @@ export default function TodayBookingsView({
                                 )}
                                 <button
                                   type="button"
-                                  onClick={() => showToast(`POS Food Order opened for Room ${room.number}`, 'info')}
+                                  onClick={() => handleOpenFoodBillModal(room, activeBooking)}
                                   className="px-2 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer transition shadow-2xs"
                                   title="Add Food / Room Service"
                                 >
@@ -4557,6 +4631,182 @@ export default function TodayBookingsView({
           >
             <X className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* QUICK FOOD BILL MODAL (Back-Dated Entry + 5% GST Option) */}
+      {foodBillModalData && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full border border-luxury-brown-100 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-luxury-brown-950 via-luxury-brown-900 to-luxury-brown-950 text-white p-5 border-b border-luxury-gold-500/30 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center">
+                  <Utensils className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif font-black text-base text-luxury-gold-300">
+                    Post Food Bill &amp; Room Service
+                  </h3>
+                  <p className="text-xs text-luxury-brown-200 font-mono">
+                    Room #{foodBillModalData.room.number} â€¢ {foodBillModalData.room.category} â€¢ {foodBillModalData.booking?.guestName || foodBillModalData.checkin?.guestName || 'Occupied Guest'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFoodBillModalData(null)}
+                className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 text-xs">
+              {/* Item Description */}
+              <div className="space-y-1">
+                <label className="font-bold text-luxury-brown-900 block">
+                  Food Item Description / KOT Summary *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 2x Paneer Butter Masala, 4x Tandoori Roti, 1x Jeera Rice"
+                  value={foodBillItemDesc}
+                  onChange={(e) => setFoodBillItemDesc(e.target.value)}
+                  className="w-full px-3 py-2 bg-luxury-beige-50 border border-luxury-brown-200 rounded-xl text-xs text-luxury-brown-950 focus:outline-none focus:ring-1 focus:ring-luxury-gold-500"
+                />
+              </div>
+
+              {/* Base Food Amount */}
+              <div className="space-y-1">
+                <label className="font-bold text-luxury-brown-900 block">
+                  Food Base Amount (â‚¹) *
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="e.g. 450"
+                  value={foodBillBaseAmount || ''}
+                  onChange={(e) => setFoodBillBaseAmount(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-full px-3 py-2 bg-luxury-beige-50 border border-luxury-brown-200 rounded-xl text-xs font-mono font-bold text-luxury-brown-950 focus:outline-none focus:ring-1 focus:ring-luxury-gold-500"
+                />
+              </div>
+
+              {/* Back-Dated Entry: Date & Time Picker */}
+              <div className="p-3 bg-amber-50/60 border border-amber-200/80 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800 text-[11px] flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-amber-600" />
+                    Bill Date &amp; Time (Back-Date Allowed)
+                  </span>
+                  {foodBillDate !== new Date().toISOString().split('T')[0] && (
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                      Back-Dated
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-500 font-semibold block mb-0.5">Order Date:</label>
+                    <input
+                      type="date"
+                      value={foodBillDate}
+                      onChange={(e) => setFoodBillDate(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 font-semibold block mb-0.5">Order Time:</label>
+                    <input
+                      type="time"
+                      value={foodBillTime}
+                      onChange={(e) => setFoodBillTime(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* GST Option (5% GST vs Without GST) */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800 text-[11px]">
+                    GST Billing Option
+                  </span>
+                  <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[10px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setFoodBillApplyGst(true)}
+                      className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                        foodBillApplyGst
+                          ? 'bg-emerald-600 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      5% GST (CGST + SGST)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFoodBillApplyGst(false)}
+                      className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                        !foodBillApplyGst
+                          ? 'bg-amber-600 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Without GST (0%)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Calculation Breakdown */}
+                {(() => {
+                  const base = Number(foodBillBaseAmount) || 0;
+                  const gst = foodBillApplyGst ? Math.round(base * (foodBillGstRate / 100) * 100) / 100 : 0;
+                  const total = Math.round((base + gst) * 100) / 100;
+                  return (
+                    <div className="pt-2 border-t border-slate-200 space-y-1 text-slate-600 font-mono text-[11px]">
+                      <div className="flex justify-between">
+                        <span>Food Base Amount:</span>
+                        <strong className="text-slate-800">â‚¹{base.toLocaleString()}</strong>
+                      </div>
+                      {foodBillApplyGst && (
+                        <div className="flex justify-between text-emerald-700">
+                          <span>5% GST (2.5% CGST + 2.5% SGST):</span>
+                          <strong>â‚¹{gst.toLocaleString()}</strong>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-xs font-black text-slate-900 pt-1 border-t border-slate-200">
+                        <span>Total Payable Food Bill:</span>
+                        <span className="text-emerald-700 font-sans font-extrabold text-sm">â‚¹{total.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-luxury-beige-50 p-4 border-t border-luxury-brown-100 flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setFoodBillModalData(null)}
+                className="px-4 py-2 border border-luxury-brown-250 bg-white text-luxury-brown-850 hover:bg-luxury-beige-100 rounded-xl transition-colors font-medium text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitFoodBill}
+                disabled={!foodBillBaseAmount || foodBillBaseAmount <= 0}
+                className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 disabled:opacity-50 text-white font-bold rounded-xl transition-all text-xs flex items-center gap-1.5 shadow-md cursor-pointer"
+              >
+                <Check className="w-4 h-4" /> Post Food Bill to Room #{foodBillModalData.room.number}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

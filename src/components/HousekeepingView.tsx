@@ -19,7 +19,7 @@ const normalizeCategory = (cat?: string): string => {
   if (!cat) return 'Standard';
   const trimmed = cat.trim();
   const lower = trimmed.toLowerCase();
-  if (lower === 'delux' || lower === 'deluxe') return 'Deluxe';
+  if (lower === 'delux' || lower === 'deluxe' || lower === 'super dilux' || lower === 'super deluxe' || lower === 'premium standard') return 'Deluxe';
   if (lower === 'executive' || lower === 'executive room' || lower === 'executive suite') return 'Executive';
   if (lower === 'standard' || lower === 'standard room') return 'Standard';
   if (lower === 'family' || lower === 'family room' || lower === 'family suite' || lower === 'familyroom') return 'Family';

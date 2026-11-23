@@ -216,6 +216,13 @@ export default function PosView({
   // POS Order GST Include / Exclude Toggle (Point 10)
   const [applyGstOnOrder, setApplyGstOnOrder] = useState<boolean>(true);
 
+  // Back-Dated Food Order Date & Time State
+  const [orderDateInput, setOrderDateInput] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [orderTimeInput, setOrderTimeInput] = useState<string>(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
+
   // Toast Notification Message
   const [posNoticeMessage, setPosNoticeMessage] = useState<string | null>(null);
 
@@ -689,6 +696,9 @@ export default function PosView({
     setCustomerPhone('');
     setDeliveryAddress('');
     setOrderNotes('');
+    setOrderDateInput(new Date().toISOString().split('T')[0]);
+    const d = new Date();
+    setOrderTimeInput(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
   };
 
   // Sync Room Guest Name & Mobile when Room selected
@@ -858,8 +868,8 @@ export default function PosView({
         paymentMethod: isRoomBilled ? 'Room Charge' : paymentMethod,
         paymentStatus: (isRoomBilled ? 'Posted to Room' : 'Unpaid') as any,
         status: 'Saved',
-        date: new Date().toISOString().split('T')[0],
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        date: orderDateInput || new Date().toISOString().split('T')[0],
+        time: orderTimeInput || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         hotelId: selectedHotelId,
         isSaved: true,
         kotSent: false,
@@ -1729,6 +1739,40 @@ export default function PosView({
                   </div>
                 </div>
 
+                {/* Back-Dated Food Bill Date & Time Section */}
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-slate-700 uppercase tracking-wider text-[10px] flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-amber-600" /> Bill / Order Date & Time (Back-Date Allowed)
+                    </span>
+                    {orderDateInput !== new Date().toISOString().split('T')[0] && (
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[9px] font-bold border border-amber-300">
+                        Back-Dated Entry
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-slate-500 font-semibold block mb-0.5">Order Date:</label>
+                      <input
+                        type="date"
+                        value={orderDateInput}
+                        onChange={e => setOrderDateInput(e.target.value)}
+                        className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 font-semibold block mb-0.5">Order Time:</label>
+                      <input
+                        type="time"
+                        value={orderTimeInput}
+                        onChange={e => setOrderTimeInput(e.target.value)}
+                        className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {/* Dynamic Inputs based on Order Type */}
                 {orderType === 'Dine In' && (
                   <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1904,7 +1948,7 @@ export default function PosView({
                 </div>
                 <div className="flex justify-between items-center py-1 gap-2">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="font-semibold text-slate-700">KOT GST:</span>
+                    <span className="font-semibold text-slate-700">Food GST Option:</span>
                     <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[10px] font-bold">
                       <button
                         type="button"
@@ -1915,7 +1959,7 @@ export default function PosView({
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        Include GST ({foodGstRate}%)
+                        5% GST (2.5% CGST + 2.5% SGST)
                       </button>
                       <button
                         type="button"
@@ -1926,7 +1970,7 @@ export default function PosView({
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        Exclude GST (0%)
+                        Without GST (Exempt)
                       </button>
                     </div>
                   </div>
@@ -1934,6 +1978,12 @@ export default function PosView({
                     {applyGstOnOrder ? `₹${cartTax.toFixed(2)}` : '₹0.00'}
                   </span>
                 </div>
+                {applyGstOnOrder && cartTax > 0 && (
+                  <div className="flex justify-between text-[10px] text-slate-500 font-medium pl-1">
+                    <span>CGST (2.5%): ₹{(cartTax / 2).toFixed(2)}</span>
+                    <span>SGST (2.5%): ₹{(cartTax / 2).toFixed(2)}</span>
+                  </div>
+                )}
                 {totalDiscountAmount > 0 && (
                   <div className="flex justify-between text-rose-600 font-semibold">
                     <span>Discount:</span>

@@ -2161,7 +2161,7 @@ export default function App() {
     grcPrefix: activeHotel.grcPrefix || 'GRC',
     nextGrcSequence: activeHotel.nextGrcSequence || 1,
     autoMarkDirtyOnCheckout: activeHotel.autoMarkDirtyOnCheckout ?? true,
-    allowBackDatedCheckIn: activeHotel.allowBackDatedCheckIn ?? false,
+    allowBackDatedCheckIn: activeHotel.allowBackDatedCheckIn ?? true,
     grcTerms: Array.isArray(activeHotel.grcTerms) ? activeHotel.grcTerms : undefined,
     placeOfSupply: activeHotel.placeOfSupply || '',
     panNumber: activeHotel.panNumber || '',

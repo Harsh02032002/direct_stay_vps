@@ -204,7 +204,7 @@ export default function RoomManagementView({
   const [autoMarkDirtyOnCheckout, setAutoMarkDirtyOnCheckout] = useState(true);
   const [requireInspectionToClean, setRequireInspectionToClean] = useState(true);
   const [overbookingLimitPercent, setOverbookingLimitPercent] = useState(0);
-  const [allowBackDatedCheckIn, setAllowBackDatedCheckIn] = useState(hotelSettings?.allowBackDatedCheckIn ?? false);
+  const [allowBackDatedCheckIn, setAllowBackDatedCheckIn] = useState(hotelSettings?.allowBackDatedCheckIn ?? true);
 
   useEffect(() => {
     if (hotelSettings) {
