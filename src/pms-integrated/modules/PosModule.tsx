@@ -5937,6 +5937,20 @@ export const PosModule: React.FC<PosModuleProps> = ({
                           >
                             <Printer className="w-3 h-3" /> Invoice
                           </button>
+                          {ord.kotStatus !== 'Cancelled' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setVoidModalOrder(ord);
+                                setVoidReasonInput('');
+                                setRefundAmountInput(ord.amountPaid || '');
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-bold text-[11px] cursor-pointer"
+                              title="Void / Cancel this order"
+                            >
+                              Void
+                            </button>
+                          )}
                           {ord.kotStatus !== 'Cancelled' &&
                             ord.paymentStatus !== 'Unpaid (Room Folio)' &&
                             (ord.balanceDue ?? 0) > 0 && (

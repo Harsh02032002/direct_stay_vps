@@ -1044,8 +1044,13 @@ export default function ReservationView({
   const handleCheckOutDateChange = (val: string) => {
     let cleanVal = val;
     if (cleanVal && checkInDate && cleanVal < checkInDate) {
-      cleanVal = checkInDate;
-      showToast('Departure date cannot be before Arrival date.', 'warning');
+      if (!editingBooking && !allowBackDatedCheckIn) {
+        cleanVal = checkInDate;
+        showToast('Departure date cannot be before Arrival date.', 'warning');
+      } else {
+        // When back-dated/editing is allowed, auto-shift arrival date so stay remains valid
+        setCheckInDate(cleanVal);
+      }
     }
     setCheckOutDate(cleanVal);
     const nightsCount = calNightsForDates(checkInDate, cleanVal);
@@ -4734,7 +4739,7 @@ export default function ReservationView({
                     </div>
                     <input
                       type="date"
-                      min={checkInDate || getTodayDateStr()}
+                      min={editingBooking || allowBackDatedCheckIn ? undefined : (checkInDate || getTodayDateStr())}
                       value={checkOutDate}
                       onChange={(e) => handleCheckOutDateChange(e.target.value)}
                       className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"

@@ -829,9 +829,14 @@ export default function CheckInFormView({
   const handleDepartureDateChange = (rawNewOut: string) => {
     if (!rawNewOut) return;
     if (rawNewOut < checkInDate) {
-      setCheckOutDate(checkInDate);
-      showToast('Departure date cannot be earlier than arrival date.', 'warning');
-      return;
+      if (!isEditingExistingDates && !allowBackDatedCheckIn) {
+        setCheckOutDate(checkInDate);
+        showToast('Departure date cannot be earlier than arrival date.', 'warning');
+        return;
+      } else {
+        // When back-dated checkin is allowed, auto-align arrival date with departure date
+        setCheckInDate(rawNewOut);
+      }
     }
     setCheckOutDate(rawNewOut);
     if (rawNewOut === checkInDate && !stayHours) {
@@ -5818,7 +5823,7 @@ export default function CheckInFormView({
                       </div>
                       <input
                         type="date"
-                        min={checkInDate || (!isEditingExistingDates && !allowBackDatedCheckIn ? todayIstStr : undefined)}
+                        min={!isEditingExistingDates && !allowBackDatedCheckIn ? (checkInDate || todayIstStr) : undefined}
                         value={checkOutDate}
                         onChange={(e) => handleDepartureDateChange(e.target.value)}
                         className="w-full h-10 px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white text-luxury-brown-950 font-mono focus:ring-1 focus:ring-[#C5A059] focus:outline-none"
@@ -7496,7 +7501,7 @@ export default function CheckInFormView({
                           <input
                             type="date"
                             required
-                            min={checkInDate || todayIstStr}
+                            min={!isEditingExistingDates && !allowBackDatedCheckIn ? (checkInDate || todayIstStr) : undefined}
                             value={checkOutDate}
                             onChange={e => handleDepartureDateChange(e.target.value)}
                             className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
