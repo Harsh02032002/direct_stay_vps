@@ -43,6 +43,7 @@ import {
   ShieldAlert,
   FileSpreadsheet,
   UserCheck,
+  UtensilsCrossed,
 } from 'lucide-react';
 import { openWhatsAppChat } from '../pms-integrated/utils/formatters';
 import { getCurrentTimeStr, calculateEarlyCheckIn } from '../utils/stayTimeUtils';
@@ -5872,6 +5873,28 @@ export default function ReservationView({
                 >
                   <Download className="w-3.5 h-3.5 text-[#C49A3A]" /> Download PDF
                 </button>
+
+                {((Number(viewingInvoice.foodCharges) || 0) > 0 || (viewingInvoice.ledgerLines || []).some(l => l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || ''))) && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openPrintWindow(
+                        invoiceRecordToPrintHtml(
+                          viewingInvoice,
+                          hotelSettings,
+                          null,
+                          bookings.find(b => b.id === viewingInvoice.bookingId) || null,
+                          'food_only'
+                        ),
+                        true
+                      )
+                    }
+                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
+                    title="Print Food Charges Only on a separate official invoice"
+                  >
+                    <UtensilsCrossed className="w-3.5 h-3.5 text-white" /> Separate Food Bill
+                  </button>
+                )}
 
                 <button
                   onClick={() =>
