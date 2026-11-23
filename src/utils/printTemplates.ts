@@ -46,6 +46,7 @@ export interface InvoicePrintData {
   bill: BillResult;
   copyLabel?: string; // ORIGINAL FOR RECIPIENT
   footerNote?: string;
+  documentTitle?: string;
 }
 
 export interface GrcPrintData {
@@ -161,7 +162,17 @@ export function renderInvoiceHtml(d: InvoicePrintData): string {
   const chargeLines = b.lines.filter(l => l.type !== 'receipt');
   const itemizedChargeRows = chargeLines.length > 0
     ? chargeLines.map(l => {
-        const itemDesc = esc(l.description).replace(/\n/g, '<br/>');
+        let rawDesc = l.description || '';
+        // If client requested: only "Food Bill" without items details
+        if (l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(rawDesc)) {
+          // Strip any parentheses containing item lists e.g. "(1x DAL TADKA, ...)"
+          rawDesc = rawDesc.replace(/\s*\([^)]*(?:x|\d)[^)]*\)/gi, '').trim();
+          rawDesc = rawDesc.replace(/^Food & (?:Beverage|Restaurant)(?:\s*Charges)?/i, 'Food Bill');
+          if (!rawDesc.toLowerCase().includes('food bill')) {
+            rawDesc = 'Food Bill';
+          }
+        }
+        const itemDesc = esc(rawDesc).replace(/\n/g, '<br/>');
         const unitLabel = l.roomNumber ? `Room ${esc(l.roomNumber)}` : (d.roomNumber ? `Room ${esc(d.roomNumber)}` : 'Room Unit');
         const datesLabel = esc(l.dateLabel) || shortDates(d.checkIn, d.checkOut);
         const qtyNights = d.nights && d.nights > 1 ? String(d.nights) : '1';
@@ -218,7 +229,7 @@ export function renderInvoiceHtml(d: InvoicePrintData): string {
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>BOOKING CONFIRMATION &amp; INVOICE ${esc(d.invoiceNumber)}</title>
+<title>${esc(d.documentTitle || (isTax ? 'BOOKING CONFIRMATION & INVOICE' : 'BOOKING CONFIRMATION & BILL OF SUPPLY'))} ${esc(d.invoiceNumber)}</title>
 <style>
 ${BASE_CSS}
   @page {
@@ -273,7 +284,7 @@ ${BASE_CSS}
         </td>
         <td style="vertical-align:top; width:42%; text-align:right;">
           <div style="font-size:14.5px; font-weight:800; color:#000; letter-spacing:0.3px; text-transform:uppercase; margin-bottom:4px;">
-            BOOKING CONFIRMATION &amp; INVOICE
+            ${esc(d.documentTitle || (isTax ? 'BOOKING CONFIRMATION & INVOICE' : 'BOOKING CONFIRMATION & BILL OF SUPPLY'))}
           </div>
           <div style="font-size:11.5px; color:#222; font-weight:600; margin-bottom:3px;">
             Conf #: ${esc(d.reservationNo || d.invoiceNumber || '52055852')} &nbsp;|&nbsp; Date: ${esc(d.invoiceDate)}

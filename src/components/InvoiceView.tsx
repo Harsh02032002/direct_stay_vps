@@ -19,7 +19,7 @@ import InvoiceConditionsModal from './InvoiceConditionsModal';
 import { 
   FileText, Plus, Search, Mail, Phone, Printer, Download, Landmark, 
   Trash2, Check, CreditCard, ChevronRight, Sparkles, Receipt, 
-  Percent, AlertTriangle, Users, ClipboardCheck, Calendar, X, Edit, FileCheck2
+  Percent, AlertTriangle, Users, ClipboardCheck, Calendar, X, Edit, FileCheck2, UtensilsCrossed
 } from 'lucide-react';
 
 interface InvoiceViewProps {
@@ -2391,6 +2391,41 @@ export default function InvoiceView({
                     <Edit className="w-3.5 h-3.5 text-[#C49A3A]" /> Edit Invoice Details
                   </button>
                 </div>
+
+                {((Number(selectedInvoice.foodCharges) || 0) > 0 || (selectedInvoice.ledgerLines || []).some(l => l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || ''))) && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const matchedCheckin = checkins.find(c => c.id === selectedInvoice.bookingId) || null;
+                        const matchedBooking = bookings.find(b => b.id === selectedInvoice.bookingId) || null;
+                        openPrintWindow(
+                          invoiceRecordToPrintHtml(selectedInvoice, hotelSettings, matchedCheckin, matchedBooking, 'food_only'),
+                          true
+                        );
+                      }}
+                      className="p-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                      title="Print Food & Beverage charges on a separate official invoice"
+                    >
+                      <UtensilsCrossed className="w-3.5 h-3.5" /> Print Separate Food Bill
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const matchedCheckin = checkins.find(c => c.id === selectedInvoice.bookingId) || null;
+                        const matchedBooking = bookings.find(b => b.id === selectedInvoice.bookingId) || null;
+                        openPrintWindow(
+                          invoiceRecordToPrintHtml(selectedInvoice, hotelSettings, matchedCheckin, matchedBooking, 'room_only'),
+                          true
+                        );
+                      }}
+                      className="p-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                      title="Print Room Charges only (without Food charges)"
+                    >
+                      <Printer className="w-3.5 h-3.5" /> Print Room Bill (Excl. Food)
+                    </button>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-2">
                   <button

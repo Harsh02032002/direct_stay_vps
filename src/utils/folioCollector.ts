@@ -324,7 +324,7 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
     push({
       id: String(po.id || po.orderNumber),
       kind: 'food',
-      description: `Food & Beverage — Order #${po.orderNumber || po.id}${items ? ` (${items})` : ''}${po.isWithoutGst ? ' [GST Exempt]' : ''}`,
+      description: `Food Bill — Order #${po.orderNumber || po.id}${po.isWithoutGst ? ' [GST Exempt]' : ''}`,
       amount: posPreTax(po, po.isWithoutGst ? 0 : s.foodGstRate),
       date: String(po.date || po.createdAt || po.dateTime || '').slice(0, 10),
       roomNumber: String(po.roomNumber || primaryRoom),

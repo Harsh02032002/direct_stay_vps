@@ -25,6 +25,7 @@ import {
 } from '../utils/stayBilling';
 import { defaultGrcTerms, renderGrcHtml } from '../utils/printTemplates';
 import { openPrintWindow } from '../utils/printDocument';
+import { invoiceRecordToPrintHtml } from '../utils/pdfDownload';
 import TodayBookingsView from './TodayBookingsView';
 import ReservationView from './ReservationView';
 import CheckInFormView from './CheckInFormView';
@@ -44,7 +45,7 @@ import {
   ShieldCheck, Search, Plus, Printer, Phone, Calendar, ArrowRight, Eye, 
   Filter, Check, Key, Shield, RefreshCw, Clock, DollarSign, Download, 
   Trash2, Tag, ChevronRight, AlertCircle, ShoppingBag, Droplets, Bed, CheckCircle2, X, Receipt, Edit, Undo2, ArrowRightLeft,
-  Smartphone, Share2, Copy, ExternalLink, QrCode
+  Smartphone, Share2, Copy, ExternalLink, QrCode, UtensilsCrossed
 } from 'lucide-react';
 
 interface FrontDeskViewProps {
@@ -383,6 +384,8 @@ export default function FrontDeskView({
   const [editGuestDiscount, setEditGuestDiscount] = useState(0);
   const [editGuestPaymentMethod, setEditGuestPaymentMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Online' | 'Custom'>('UPI');
   const [editCustomPayLabel, setEditCustomPayLabel] = useState('');
+  type GstOptionMode = 'non_gst' | 'gst_extra' | 'including_gst';
+  const [editGuestGstMode, setEditGuestGstMode] = useState<GstOptionMode>('gst_extra');
 
   // Hybrid / Split payment (e.g. ₹2000 Cash + rest UPI) for In-House Edit & Check-Out modals
   type SplitMode = 'Cash' | 'UPI' | 'Card' | 'Bank' | 'Other';
@@ -518,8 +521,20 @@ export default function FrontDeskView({
         : baseSettings.roomGstRate;
 
     const ovGst = coOvNum(ov, 'gst');
+    const ovGstMode = ov?.gstMode;
     let resolvedGstRate = ovGst ?? guestDefaultGst;
-    if (existingStayInv) {
+    let isInclusiveRate = Boolean(guest.roomRateIncludesGst);
+    if (ovGstMode === 'non_gst') {
+      resolvedGstRate = 0;
+      isInclusiveRate = false;
+    } else if (ovGstMode === 'including_gst') {
+      resolvedGstRate = ovGst ?? (Number(hotelSettings?.defaultGstRate ?? 5) || 5);
+      isInclusiveRate = true;
+    } else if (ovGstMode === 'gst_extra') {
+      resolvedGstRate = ovGst ?? (Number(hotelSettings?.defaultGstRate ?? 5) || 5);
+      isInclusiveRate = false;
+    }
+    if (existingStayInv && !ovGstMode) {
       const lockedNoGst =
         existingStayInv.isWithoutGst === true ||
         (existingStayInv.gstRate !== undefined && Number(existingStayInv.gstRate) <= 0) ||
@@ -538,6 +553,7 @@ export default function FrontDeskView({
           ? resolvedGstRate
           : baseSettings.foodGstRate || resolvedGstRate
         : 0,
+      roomRateIncludesGst: isInclusiveRate,
     };
 
     const fallbackRate =
@@ -545,6 +561,9 @@ export default function FrontDeskView({
     const checkinForFolio: GuestCheckIn = {
       ...guest,
       checkOutDate: effectiveOut,
+      roomRateIncludesGst: isInclusiveRate,
+      isWithoutGst: !gstEnabled,
+      gstRate: resolvedGstRate,
       roomRate:
         guest.isGroupCheckIn && Array.isArray(guest.bookedRooms) && guest.bookedRooms.length > 0
           ? guest.roomRate
@@ -1407,6 +1426,16 @@ export default function FrontDeskView({
     setEditGuestExtraBedCount(guest.extraBedCount || 1);
     setEditGuestExtraBedRate(guest.extraBedRate || 500);
     setEditGuestDiscount(guest.discount || 0);
+    const isNoGst =
+      guest.isWithoutGst === true ||
+      (guest.gstRate !== undefined && Number(guest.gstRate) <= 0);
+    if (isNoGst) {
+      setEditGuestGstMode('non_gst');
+    } else if (guest.roomRateIncludesGst) {
+      setEditGuestGstMode('including_gst');
+    } else {
+      setEditGuestGstMode('gst_extra');
+    }
     const rawPrevMethod = String(guest.paymentMethod || 'UPI');
     if (['UPI', 'Cash', 'Card', 'Online'].includes(rawPrevMethod)) {
       setEditGuestPaymentMethod(rawPrevMethod as any);
@@ -1524,11 +1553,21 @@ export default function FrontDeskView({
     const roomRentTotal = Math.max(0, Number(editGuestRoomRate) || 0) * stayNights;
     const discountVal = Math.max(0, Number(editGuestDiscount) || 0);
     const netRoomSubtotal = Math.max(0, roomRentTotal + extraBedTotal - discountVal);
-    const dynamicGstPercent = editingInHouseGuest.gstRate !== undefined
-      ? Number(editingInHouseGuest.gstRate)
-      : (hotelSettings?.isGstEnabled === false ? 0 : Number(hotelSettings?.defaultGstRate ?? 5));
-    const gstTax = Math.round((netRoomSubtotal * dynamicGstPercent) / 100);
-    const newTotalAmount = netRoomSubtotal + gstTax;
+    const dynamicGstPercent = editGuestGstMode === 'non_gst' ? 0 : (Number(hotelSettings?.defaultGstRate ?? 5) || 5);
+    const isInclusive = editGuestGstMode === 'including_gst';
+    let gstTax = 0;
+    let newTotalAmount = 0;
+    if (isInclusive && dynamicGstPercent > 0) {
+      newTotalAmount = netRoomSubtotal;
+      const baseNet = Math.round((netRoomSubtotal / (1 + dynamicGstPercent / 100)) * 100) / 100;
+      gstTax = Math.round((netRoomSubtotal - baseNet) * 100) / 100;
+    } else if (editGuestGstMode === 'gst_extra' && dynamicGstPercent > 0) {
+      gstTax = Math.round((netRoomSubtotal * dynamicGstPercent) / 100);
+      newTotalAmount = netRoomSubtotal + gstTax;
+    } else {
+      gstTax = 0;
+      newTotalAmount = netRoomSubtotal;
+    }
     const alreadyPaid = (editingInHouseGuest.cashAmountPaid || 0) + (editingInHouseGuest.onlineAmountPaid || 0);
     // Hybrid / split payment: amount per mode typed by the receptionist (Cash / UPI / Card / Bank / custom)
     const splitEntries = editHybridPay
@@ -1616,6 +1655,10 @@ export default function FrontDeskView({
       checkOutDate: editGuestCheckOutDate,
       numGuests: Number(editGuestNumGuests) || 1,
       roomRate: Number(editGuestRoomRate) || 0,
+      roomRateIncludesGst: isInclusive,
+      isWithoutGst: editGuestGstMode === 'non_gst',
+      gstRate: dynamicGstPercent,
+      gstAmount: gstTax,
       hasExtraBed: editGuestHasExtraBed,
       extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
       extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
@@ -1692,6 +1735,9 @@ export default function FrontDeskView({
           extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
           extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
           paymentMethod: effectiveMethod,
+          roomRateIncludesGst: isInclusive,
+          isWithoutGst: editGuestGstMode === 'non_gst',
+          gstRate: dynamicGstPercent,
           bookingAmount: newTotalAmount,
           advanceAmount: advanceTotal + alreadyPaid
         };
@@ -1711,13 +1757,30 @@ export default function FrontDeskView({
           const water = Number(inv.waterCharges || 0);
           const other = Number(inv.otherCharges || 0);
           const sub = roomRentTotal + extraBedTotal + food + water + other;
-          const invGstRate = inv.gstRate ?? dynamicGstPercent;
-          const invGst = invGstRate > 0 ? parseFloat(((Math.max(0, sub - discountVal) * invGstRate) / 100).toFixed(2)) : 0;
-          const invFinal = parseFloat((Math.max(0, sub - discountVal) + invGst).toFixed(2));
+          const isInvWithoutGst = editGuestGstMode === 'non_gst';
+          const invGstRate = isInvWithoutGst ? 0 : dynamicGstPercent;
+          const netTaxable = Math.max(0, sub - discountVal);
+          let invGst = 0;
+          let invFinal = 0;
+          if (isInclusive && invGstRate > 0) {
+            invFinal = parseFloat(netTaxable.toFixed(2));
+            const baseAmt = parseFloat((netTaxable / (1 + invGstRate / 100)).toFixed(2));
+            invGst = parseFloat((netTaxable - baseAmt).toFixed(2));
+          } else if (invGstRate > 0) {
+            invGst = parseFloat(((netTaxable * invGstRate) / 100).toFixed(2));
+            invFinal = parseFloat((netTaxable + invGst).toFixed(2));
+          } else {
+            invGst = 0;
+            invFinal = parseFloat(netTaxable.toFixed(2));
+          }
           const invAdv = advanceTotal + alreadyPaid;
           const invPending = Math.max(0, parseFloat((invFinal - invAdv).toFixed(2)));
           return {
             ...inv,
+            isWithoutGst: isInvWithoutGst,
+            gstRate: invGstRate,
+            roomRateIncludesGst: isInclusive,
+            invoiceType: isInvWithoutGst ? 'Bill of Supply' : 'Tax Invoice',
             guestName: editGuestName.trim(),
             guestMobile: editGuestMobile.trim(),
             roomNumber: editGuestRoomNo,
@@ -5626,6 +5689,66 @@ export default function FrontDeskView({
                 </div>
               </div>
 
+              {/* 3-Way GST Billing Mode Selector */}
+              <div className="bg-[#FFFDF7] border border-luxury-brown-200 rounded-xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-mono uppercase font-bold text-luxury-brown-900 block">
+                    GST Billing Mode *
+                  </label>
+                  <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded border ${
+                    editGuestGstMode === 'non_gst'
+                      ? 'bg-amber-100 text-amber-900 border-amber-300'
+                      : editGuestGstMode === 'including_gst'
+                      ? 'bg-blue-100 text-blue-900 border-blue-300'
+                      : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                  }`}>
+                    {editGuestGstMode === 'non_gst'
+                      ? 'Non-GST (0% Bill of Supply)'
+                      : editGuestGstMode === 'including_gst'
+                      ? `Including GST (${Number(hotelSettings?.defaultGstRate ?? 5)}%)`
+                      : `GST Extra (+${Number(hotelSettings?.defaultGstRate ?? 5)}%)`}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditGuestGstMode('non_gst')}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      editGuestGstMode === 'non_gst'
+                        ? 'bg-amber-100 border-[#C49A3A] text-amber-950 font-bold shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="text-xs font-bold">1. Non-GST (0%)</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Bill of Supply • No Tax</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditGuestGstMode('gst_extra')}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      editGuestGstMode === 'gst_extra'
+                        ? 'bg-emerald-100 border-emerald-500 text-emerald-950 font-bold shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="text-xs font-bold">2. GST Extra (+{Number(hotelSettings?.defaultGstRate ?? 5)}%)</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Rate + GST Added on Top</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditGuestGstMode('including_gst')}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      editGuestGstMode === 'including_gst'
+                        ? 'bg-blue-100 border-blue-500 text-blue-950 font-bold shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="text-xs font-bold">3. Including GST ({Number(hotelSettings?.defaultGstRate ?? 5)}%)</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Tariff Includes GST (Net ₹{editGuestRoomRate})</div>
+                  </button>
+                </div>
+              </div>
+
               {/* Extra Bed / Mattress & Discount Row */}
               <div className="bg-[#FAFBFD] border border-luxury-brown-200 rounded-xl p-3.5 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -5846,11 +5969,21 @@ export default function FrontDeskView({
                   : 0;
                 const disc = Math.max(0, Number(editGuestDiscount) || 0);
                 const sub = Math.max(0, roomRent + extraBed - disc);
-                const gstPct = editingInHouseGuest.gstRate !== undefined
-                  ? Number(editingInHouseGuest.gstRate)
-                  : (hotelSettings?.isGstEnabled === false ? 0 : Number(hotelSettings?.defaultGstRate ?? 5));
-                const gstAmt = Math.round((sub * gstPct) / 100);
-                const grandTotal = sub + gstAmt;
+                const defaultRate = Number(hotelSettings?.defaultGstRate ?? 5) || 5;
+                const gstPct = editGuestGstMode === 'non_gst' ? 0 : defaultRate;
+                let gstAmt = 0;
+                let grandTotal = 0;
+                if (editGuestGstMode === 'including_gst' && gstPct > 0) {
+                  grandTotal = sub;
+                  const baseAmt = Math.round((sub / (1 + gstPct / 100)) * 100) / 100;
+                  gstAmt = Math.round((sub - baseAmt) * 100) / 100;
+                } else if (editGuestGstMode === 'gst_extra' && gstPct > 0) {
+                  gstAmt = Math.round((sub * gstPct) / 100);
+                  grandTotal = sub + gstAmt;
+                } else {
+                  gstAmt = 0;
+                  grandTotal = sub;
+                }
                 const alreadyPaid = (editingInHouseGuest.cashAmountPaid || 0) + (editingInHouseGuest.onlineAmountPaid || 0);
                 const totalPaid = (editHybridPay ? editSplitTotal : Math.max(0, Number(editGuestAdvance) || 0)) + alreadyPaid;
                 const netDue = Math.max(0, grandTotal - totalPaid);
@@ -6309,33 +6442,79 @@ export default function FrontDeskView({
                       );
                     }
                     const defaultRoomGst = Number(hotelSettings?.defaultGstRate ?? 5) || 5;
+                    const curGstMode = coOv.gstMode || (calc.gstRate <= 0 ? 'non_gst' : checkoutConfirmGuest.roomRateIncludesGst ? 'including_gst' : 'gst_extra');
                     return (
-                      <div className="p-3 bg-white border border-[#C49A3A]/40 rounded-xl">
-                        <label className="flex items-center justify-between gap-3 cursor-pointer">
-                          <span className="flex items-center gap-2 font-bold text-xs text-[#263449]">
-                            <input
-                              type="checkbox"
-                              checked={calc.gstRate > 0}
-                              onChange={e => {
-                                setCoOv(prev => ({
-                                  ...prev,
-                                  gst: e.target.checked ? String(defaultRoomGst) : '0',
-                                }));
-                              }}
-                              className="w-4 h-4 accent-[#15805D] rounded cursor-pointer"
-                            />
-                            GST Invoice ({defaultRoomGst}% Room GST from Settings)
+                      <div className="p-3 bg-white border border-[#C49A3A]/40 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-mono uppercase font-bold text-luxury-brown-900 block">
+                            GST Billing Mode *
+                          </label>
+                          <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded border ${
+                            curGstMode === 'non_gst'
+                              ? 'bg-amber-100 text-amber-900 border-amber-300'
+                              : curGstMode === 'including_gst'
+                              ? 'bg-blue-100 text-blue-900 border-blue-300'
+                              : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                          }`}>
+                            {curGstMode === 'non_gst' ? 'Non-GST (0% Bill of Supply)' : curGstMode === 'including_gst' ? `Including GST (${calc.gstRate}%)` : `GST Extra (+${calc.gstRate}%)`}
                           </span>
-                          <span
-                            className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-bold border ${
-                              calc.gstRate > 0
-                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                                : 'bg-amber-100 text-amber-900 border-amber-300'
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCoOv(prev => ({
+                                ...prev,
+                                gstMode: 'non_gst',
+                                gst: '0',
+                              }));
+                            }}
+                            className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                              curGstMode === 'non_gst'
+                                ? 'bg-amber-100 border-[#C49A3A] text-amber-950 font-bold shadow-xs'
+                                : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-white'
                             }`}
                           >
-                            {calc.gstRate > 0 ? `Tax Invoice (${calc.gstRate}%)` : 'Bill of Supply (0% GST)'}
-                          </span>
-                        </label>
+                            <div className="text-xs font-bold">1. Non-GST (0%)</div>
+                            <div className="text-[9px] text-slate-500 mt-0.5">Bill of Supply • No Tax</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCoOv(prev => ({
+                                ...prev,
+                                gstMode: 'gst_extra',
+                                gst: String(defaultRoomGst),
+                              }));
+                            }}
+                            className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                              curGstMode === 'gst_extra'
+                                ? 'bg-emerald-100 border-emerald-500 text-emerald-950 font-bold shadow-xs'
+                                : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-white'
+                            }`}
+                          >
+                            <div className="text-xs font-bold">2. GST Extra (+{defaultRoomGst}%)</div>
+                            <div className="text-[9px] text-slate-500 mt-0.5">Rate + GST Added on Top</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCoOv(prev => ({
+                                ...prev,
+                                gstMode: 'including_gst',
+                                gst: String(defaultRoomGst),
+                              }));
+                            }}
+                            className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                              curGstMode === 'including_gst'
+                                ? 'bg-blue-100 border-blue-500 text-blue-950 font-bold shadow-xs'
+                                : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-white'
+                            }`}
+                          >
+                            <div className="text-xs font-bold">3. Including GST ({defaultRoomGst}%)</div>
+                            <div className="text-[9px] text-slate-500 mt-0.5">Tariff Includes GST</div>
+                          </button>
+                        </div>
                       </div>
                     );
                   })()}
@@ -6362,6 +6541,51 @@ export default function FrontDeskView({
                       </div>
                     ))}
                   </div>
+
+                  {calc.foodSum > 0 && (
+                    <div className="p-3.5 bg-amber-50/80 border border-amber-300 rounded-xl space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <UtensilsCrossed className="w-4 h-4 text-amber-700" />
+                          <span className="font-serif font-bold text-amber-950 text-xs">
+                            Food &amp; Beverage Total: ₹{calc.foodSum.toLocaleString('en-IN')}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 bg-amber-200/70 text-amber-900 rounded">
+                          Separate Food Bill Available
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-amber-900">
+                        Guest ko company reimbursement ke liye Food Bill alag se chahiye to yahan se seedha print karein:
+                      </p>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const invForPrint = existingStayInv || liveEval.invoice;
+                            if (invForPrint) {
+                              openPrintWindow(invoiceRecordToPrintHtml(invForPrint as any, hotelSettings, checkoutConfirmGuest, matchedBookingForEval, 'food_only'));
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <UtensilsCrossed className="w-3.5 h-3.5" /> Print Separate Food Bill
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const invForPrint = existingStayInv || liveEval.invoice;
+                            if (invForPrint) {
+                              openPrintWindow(invoiceRecordToPrintHtml(invForPrint as any, hotelSettings, checkoutConfirmGuest, matchedBookingForEval, 'room_only'));
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Printer className="w-3.5 h-3.5" /> Print Room Bill Only
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {/* 3. Live Final Bill & GST Summary (Clean High-Contrast Light Luxury Card — Zero Invisible White Text) */}
                 <div className="bg-[#FFFDF7] text-[#263449] p-4 rounded-xl border-2 border-[#E6D9B3] space-y-2 font-mono text-xs shadow-2xs">

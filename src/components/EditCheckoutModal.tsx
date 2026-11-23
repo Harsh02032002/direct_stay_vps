@@ -25,7 +25,9 @@ import {
 } from '../utils/stayBilling';
 import { deduplicateInvoicesByBooking } from '../utils/invoiceConditions';
 import { showToast } from '../utils/toast';
-import { X, Plus, Trash2, Check, Sparkles, CreditCard, Wallet, Receipt } from 'lucide-react';
+import { invoiceRecordToPrintHtml } from '../utils/pdfDownload';
+import { openPrintWindow } from '../utils/printDocument';
+import { X, Plus, Trash2, Check, Sparkles, CreditCard, Wallet, Receipt, Printer, UtensilsCrossed } from 'lucide-react';
 
 interface EditCheckoutModalProps {
   guest: GuestCheckIn;
@@ -130,6 +132,22 @@ export default function EditCheckoutModal({
       Number(existingStayInv?.discount ?? guest.discount ?? (matchedBooking as any)?.discount ?? 0) || 0
     )
   );
+
+  type GstOptionMode = 'non_gst' | 'gst_extra' | 'including_gst';
+
+  const [editGstMode, setEditGstMode] = useState<GstOptionMode>(() => {
+    const isNoGst =
+      guest.isWithoutGst === true ||
+      (guest.gstRate !== undefined && Number(guest.gstRate) <= 0) ||
+      (existingStayInv &&
+        (existingStayInv.isWithoutGst === true ||
+          (existingStayInv.gstRate !== undefined && Number(existingStayInv.gstRate) <= 0) ||
+          (existingStayInv.gstRate === undefined && Number(existingStayInv.gst || 0) <= 0)));
+    if (isNoGst) return 'non_gst';
+    if (guest.roomRateIncludesGst || (existingStayInv as any)?.roomRateIncludesGst) return 'including_gst';
+    return 'gst_extra';
+  });
+
   const [editExtraCharges, setEditExtraCharges] = useState<ExtraCharge[]>(() =>
     Array.isArray(guest.extraCharges) ? [...guest.extraCharges] : []
   );
@@ -230,37 +248,25 @@ export default function EditCheckoutModal({
   // Live recalculated bill
   const liveCalc = useMemo(() => {
     const baseSettings = normalizeBillSettings(hotelSettings);
-    const guestDefaultGst =
-      guest.isWithoutGst === true || (guest.gstRate !== undefined && Number(guest.gstRate) <= 0)
-        ? 0
-        : guest.gstRate !== undefined && Number.isFinite(Number(guest.gstRate))
-        ? Number(guest.gstRate)
-        : hotelSettings?.isGstEnabled === false
-        ? 0
-        : baseSettings.roomGstRate;
+    const configuredGst = Number(hotelSettings?.defaultGstRate ?? baseSettings.roomGstRate ?? 5) || 5;
+    const resolvedGstRate = editGstMode === 'non_gst' ? 0 : (Number(existingStayInv?.gstRate) || configuredGst);
+    const gstEnabled = editGstMode !== 'non_gst' && resolvedGstRate > 0;
+    const roomRateIncludesGst = editGstMode === 'including_gst';
 
-    let resolvedGstRate = guestDefaultGst;
-    if (existingStayInv) {
-      const lockedNoGst =
-        existingStayInv.isWithoutGst === true ||
-        (existingStayInv.gstRate !== undefined && Number(existingStayInv.gstRate) <= 0) ||
-        (existingStayInv.gstRate === undefined && Number(existingStayInv.gst || 0) <= 0);
-      resolvedGstRate = lockedNoGst
-        ? 0
-        : Math.max(0.01, Number(existingStayInv.gstRate) || baseSettings.roomGstRate || 5);
-    }
-
-    const gstEnabled = resolvedGstRate > 0;
     const effectiveSettings: BillSettings = {
       ...baseSettings,
       roomGstRate: gstEnabled ? resolvedGstRate : 0,
-      foodGstRate: gstEnabled ? baseSettings.foodGstRate || resolvedGstRate : 0,
+      foodGstRate: gstEnabled ? (baseSettings.foodGstRate || resolvedGstRate) : 0,
+      roomRateIncludesGst,
     };
 
     const tempCheckin: GuestCheckIn = {
       ...guest,
       checkOutDate: editCheckOutDate,
       roomRate: editRoomRate,
+      roomRateIncludesGst,
+      isWithoutGst: editGstMode === 'non_gst',
+      gstRate: resolvedGstRate,
       extraCharges: editExtraCharges,
       payments: [],
       advanceAmount: 0,
@@ -272,6 +278,9 @@ export default function EditCheckoutModal({
       ? ({
           ...matchedBooking,
           checkOutDate: editCheckOutDate,
+          roomRateIncludesGst,
+          isWithoutGst: editGstMode === 'non_gst',
+          gstRate: resolvedGstRate,
           advanceAmount: 0,
           payments: [],
         } as Booking)
@@ -344,6 +353,7 @@ export default function EditCheckoutModal({
     editCheckOutDate,
     editRoomRate,
     editDiscount,
+    editGstMode,
     editExtraCharges,
     paymentRows,
   ]);
@@ -443,6 +453,9 @@ export default function EditCheckoutModal({
       ...guest,
       checkOutDate: editCheckOutDate,
       roomRate: editRoomRate,
+      roomRateIncludesGst: editGstMode === 'including_gst',
+      isWithoutGst: editGstMode === 'non_gst',
+      gstRate: editGstMode === 'non_gst' ? 0 : liveCalc.gstRate,
       discount: r2(Math.max(0, Number(editDiscount) || 0)),
       extraCharges: editExtraCharges,
       advanceAmount: advSum,
@@ -474,6 +487,9 @@ export default function EditCheckoutModal({
           ...b,
           checkOutDate: editCheckOutDate,
           nights: liveCalc.nights,
+          roomRateIncludesGst: editGstMode === 'including_gst',
+          isWithoutGst: editGstMode === 'non_gst',
+          gstRate: editGstMode === 'non_gst' ? 0 : liveCalc.gstRate,
           discount: r2(Math.max(0, Number(editDiscount) || 0)),
           advanceAmount: advSum > 0 ? advSum : b.advanceAmount,
           amountPaid: totalPaidNow,
@@ -531,6 +547,10 @@ export default function EditCheckoutModal({
     const syncedInvoice: Invoice = {
       ...(existingStayInv || {}),
       ...(rebuiltInvoice as Invoice),
+      isWithoutGst: editGstMode === 'non_gst',
+      gstRate: editGstMode === 'non_gst' ? 0 : liveCalc.gstRate,
+      roomRateIncludesGst: editGstMode === 'including_gst',
+      invoiceType: editGstMode === 'non_gst' ? 'Bill of Supply' : 'Tax Invoice',
       extraCharges: editExtraCharges,
       paymentMethod: summaryMethod as any,
       paymentHistory: nextPayments.map((p) => ({
@@ -657,6 +677,62 @@ export default function EditCheckoutModal({
                 onChange={(e) => setEditDiscount(Math.max(0, Number(e.target.value) || 0))}
                 className="w-full px-3 py-2 border border-rose-200 rounded-lg text-xs font-mono font-bold bg-white text-rose-800"
               />
+            </div>
+          </div>
+
+          {/* GST Billing Mode: Non-GST (0%), GST Extra, Including GST */}
+          <div className="p-4 rounded-xl border border-luxury-brown-200 bg-[#FFFDF7] space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-mono uppercase font-bold text-luxury-brown-900 block">
+                GST Billing Mode *
+              </label>
+              <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded border ${
+                editGstMode === 'non_gst'
+                  ? 'bg-amber-100 text-amber-900 border-amber-300'
+                  : editGstMode === 'including_gst'
+                  ? 'bg-blue-100 text-blue-900 border-blue-300'
+                  : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+              }`}>
+                {editGstMode === 'non_gst' ? 'Non-GST (0% Bill of Supply)' : editGstMode === 'including_gst' ? `Including GST (${liveCalc.gstRate}%)` : `GST Extra (+${liveCalc.gstRate}%)`}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setEditGstMode('non_gst')}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  editGstMode === 'non_gst'
+                    ? 'bg-amber-100 border-[#C49A3A] text-amber-950 font-bold shadow-xs'
+                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <div className="text-xs font-bold">1. Non-GST (0%)</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">Bill of Supply • No Tax</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditGstMode('gst_extra')}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  editGstMode === 'gst_extra'
+                    ? 'bg-emerald-100 border-emerald-500 text-emerald-950 font-bold shadow-xs'
+                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <div className="text-xs font-bold">2. GST Extra (+{Number(hotelSettings?.defaultGstRate ?? 5)}%)</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">Rate + GST Added on Top</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditGstMode('including_gst')}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  editGstMode === 'including_gst'
+                    ? 'bg-blue-100 border-blue-500 text-blue-950 font-bold shadow-xs'
+                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <div className="text-xs font-bold">3. Including GST ({Number(hotelSettings?.defaultGstRate ?? 5)}%)</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">Tariff Includes GST (Net ₹{editRoomRate})</div>
+              </button>
             </div>
           </div>
 
@@ -959,20 +1035,99 @@ export default function EditCheckoutModal({
           </div>
 
           {/* Footer Buttons */}
-          <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-200">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2.5 rounded-xl bg-[#F6DE98] hover:bg-[#E8CE84] border-2 border-[#C49A3A] text-[#17120F] text-xs font-extrabold flex items-center gap-1.5 shadow-sm cursor-pointer"
-            >
-              <Check className="w-4 h-4 text-[#8B691E]" /> Save Edited Check-Out &amp; Sync Report
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-slate-200">
+            <div className="flex flex-wrap items-center gap-2">
+              {liveCalc.charges.some(c => c.kind === 'food') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const invToPrint = existingStayInv || {
+                      id: `INV-TEMP-${guest.id}`,
+                      invoiceNumber: existingStayInv?.invoiceNumber || 'TEMP',
+                      bookingId: guest.id,
+                      hotelId: guest.hotelId,
+                      roomNumber: guest.roomNumber,
+                      guestName: guest.guestName,
+                      checkInDate: guest.checkInDate,
+                      checkOutDate: editCheckOutDate,
+                      isWithoutGst: editGstMode === 'non_gst',
+                      gstRate: editGstMode === 'non_gst' ? 0 : liveCalc.gstRate,
+                      subtotal: liveCalc.bill.subtotal,
+                      totalAmount: liveCalc.grandTotal,
+                      paidAmount: liveCalc.totalPaid,
+                      pendingAmount: liveCalc.balanceDue,
+                      billEngine: 'v2',
+                      ledgerLines: liveCalc.charges.map(c => ({
+                        type: 'charge',
+                        sourceId: c.id,
+                        kind: c.kind,
+                        description: c.description,
+                        charges: c.amount,
+                        dateLabel: c.date,
+                        roomNumber: c.roomNumber,
+                      })),
+                    };
+                    openPrintWindow(invoiceRecordToPrintHtml(invToPrint as any, hotelSettings, guest, matchedBooking, 'food_only'));
+                  }}
+                  className="px-3 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-xs font-bold text-amber-900 cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                  title="Print Separate Food & Beverage Bill"
+                >
+                  <UtensilsCrossed className="w-3.5 h-3.5 text-amber-700" /> Print Separate Food Bill
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  const invToPrint = existingStayInv || {
+                    id: `INV-TEMP-${guest.id}`,
+                    invoiceNumber: existingStayInv?.invoiceNumber || 'TEMP',
+                    bookingId: guest.id,
+                    hotelId: guest.hotelId,
+                    roomNumber: guest.roomNumber,
+                    guestName: guest.guestName,
+                    checkInDate: guest.checkInDate,
+                    checkOutDate: editCheckOutDate,
+                    isWithoutGst: editGstMode === 'non_gst',
+                    gstRate: editGstMode === 'non_gst' ? 0 : liveCalc.gstRate,
+                    subtotal: liveCalc.bill.subtotal,
+                    totalAmount: liveCalc.grandTotal,
+                    paidAmount: liveCalc.totalPaid,
+                    pendingAmount: liveCalc.balanceDue,
+                    billEngine: 'v2',
+                    ledgerLines: liveCalc.charges.map(c => ({
+                      type: 'charge',
+                      sourceId: c.id,
+                      kind: c.kind,
+                      description: c.description,
+                      charges: c.amount,
+                      dateLabel: c.date,
+                      roomNumber: c.roomNumber,
+                    })),
+                  };
+                  openPrintWindow(invoiceRecordToPrintHtml(invToPrint as any, hotelSettings, guest, matchedBooking, 'room_only'));
+                }}
+                className="px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                title="Print Room Charges Only"
+              >
+                <Printer className="w-3.5 h-3.5 text-slate-600" /> Print Room Bill
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2.5 rounded-xl bg-[#F6DE98] hover:bg-[#E8CE84] border-2 border-[#C49A3A] text-[#17120F] text-xs font-extrabold flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Check className="w-4 h-4 text-[#8B691E]" /> Save Edited Check-Out &amp; Sync Report
+              </button>
+            </div>
           </div>
         </form>
       </div>

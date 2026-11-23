@@ -477,9 +477,71 @@ export function invoiceRecordToPrintHtml(
   invoice: Invoice,
   hotelSettings?: Partial<HotelSettings> | Record<string, any> | null,
   checkinRecord?: GuestCheckIn | null,
-  bookingRecord?: Booking | null
+  bookingRecord?: Booking | null,
+  filterKind: 'all' | 'room_only' | 'food_only' = 'all'
 ): string {
-  const bill = buildBillResultFromInvoice(invoice, hotelSettings as Partial<HotelSettings>, checkinRecord);
+  let bill = buildBillResultFromInvoice(invoice, hotelSettings as Partial<HotelSettings>, checkinRecord);
+  let docTitle: string | undefined = undefined;
+
+  if (filterKind === 'food_only') {
+    const foodLines = bill.lines.filter(
+      (l) => l.type !== 'receipt' && (l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || ''))
+    );
+    const foodTaxable = r2(foodLines.reduce((acc, l) => acc + (Number(l.charges) || 0), 0));
+    const foodGstPct = invoice.isWithoutGst === true ? 0 : Number(hotelSettings?.foodGstRate ?? hotelSettings?.defaultGstRate ?? 5) || 5;
+    const foodTax = foodGstPct > 0 ? r2((foodTaxable * foodGstPct) / 100) : 0;
+    const foodCgst = r2(foodTax / 2);
+    const foodSgst = r2(foodTax - foodCgst);
+    const foodGrandTotal = r2(foodTaxable + foodTax);
+
+    bill = {
+      ...bill,
+      lines: foodLines,
+      chargeLines: foodLines,
+      taxableAmount: foodTaxable,
+      subtotal: foodTaxable,
+      discount: 0,
+      cgst: foodCgst,
+      sgst: foodSgst,
+      totalTax: foodTax,
+      grandTotal: foodGrandTotal,
+      receipts: foodGrandTotal,
+      balance: 0,
+      refundDue: 0,
+      paymentStatus: 'Paid',
+      taxRows: foodGstPct > 0 ? [{ rate: foodGstPct, taxable: foodTaxable, cgst: foodCgst, sgst: foodSgst, tax: foodTax }] : [],
+    };
+    docTitle = foodGstPct > 0 ? 'RESTAURANT & FOOD TAX INVOICE' : 'RESTAURANT & FOOD BILL OF SUPPLY';
+  } else if (filterKind === 'room_only') {
+    const nonFoodLines = bill.lines.filter(
+      (l) => l.type !== 'receipt' && !(l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || ''))
+    );
+    const roomTaxable = r2(nonFoodLines.reduce((acc, l) => acc + (Number(l.charges) || 0), 0));
+    const roomDiscount = Math.min(roomTaxable, r2(Number(invoice.discount || 0)));
+    const netRoomTaxable = Math.max(0, r2(roomTaxable - roomDiscount));
+    const roomGstPct = invoice.isWithoutGst === true ? 0 : Number(invoice.gstRate ?? hotelSettings?.defaultGstRate ?? 5) || 5;
+    const roomTax = roomGstPct > 0 ? r2((netRoomTaxable * roomGstPct) / 100) : 0;
+    const roomCgst = r2(roomTax / 2);
+    const roomSgst = r2(roomTax - roomCgst);
+    const roomGrandTotal = r2(netRoomTaxable + roomTax);
+
+    bill = {
+      ...bill,
+      lines: nonFoodLines,
+      chargeLines: nonFoodLines,
+      taxableAmount: netRoomTaxable,
+      subtotal: roomTaxable,
+      discount: roomDiscount,
+      cgst: roomCgst,
+      sgst: roomSgst,
+      totalTax: roomTax,
+      grandTotal: roomGrandTotal,
+      receipts: Math.min(roomGrandTotal, bill.receipts),
+      balance: Math.max(0, r2(roomGrandTotal - Math.min(roomGrandTotal, bill.receipts))),
+      taxRows: roomGstPct > 0 ? [{ rate: roomGstPct, taxable: netRoomTaxable, cgst: roomCgst, sgst: roomSgst, tax: roomTax }] : [],
+    };
+    docTitle = roomGstPct > 0 ? 'ROOM TARIFF TAX INVOICE' : 'ROOM TARIFF BILL OF SUPPLY';
+  }
   const nights = Number(invoice.nights) || stayNights(invoice.checkInDate, invoice.checkOutDate);
   const roomType = String(
     checkinRecord?.roomType || bookingRecord?.roomType || ''
@@ -612,6 +674,7 @@ export function invoiceRecordToPrintHtml(
     stayHours: (invoice as any).stayHours || checkinRecord?.stayHours || (bookingRecord as any)?.stayHours,
     bill,
     footerNote: invoice.notes || undefined,
+    documentTitle: docTitle,
   };
 
   return renderInvoiceHtml(printData);
@@ -658,14 +721,16 @@ export function downloadHotelInvoicePdf(
   invoice: Invoice,
   hotelSettings?: HotelSettings,
   checkinRecord?: GuestCheckIn,
-  bookingRecord?: Booking
+  bookingRecord?: Booking,
+  filterKind: 'all' | 'room_only' | 'food_only' = 'all'
 ) {
   try {
     const html = invoiceRecordToPrintHtml(
       invoice,
       hotelSettings,
       checkinRecord,
-      bookingRecord
+      bookingRecord,
+      filterKind
     );
     openPrintWindow(html, true);
   } catch (err) {
