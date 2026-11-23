@@ -15,16 +15,17 @@ import { openPrintWindow } from '../utils/printDocument';
 import InvoiceConditionsModal from './InvoiceConditionsModal';
 import CalendarBookingView from './CalendarBookingView';
 
-const PREFERRED_CATEGORY_ORDER = ['Deluxe', 'Executive', 'Standard', 'Family'];
+const PREFERRED_CATEGORY_ORDER = ['Deluxe', 'Executive', 'Family Room', 'Family', 'Standard', 'Premium Standard'];
 
 const normalizeCategory = (cat?: string): string => {
   if (!cat) return 'Standard';
   const trimmed = cat.trim();
   const lower = trimmed.toLowerCase();
-  if (lower === 'delux' || lower === 'deluxe' || lower === 'super dilux' || lower === 'super deluxe' || lower === 'premium standard') return 'Deluxe';
+  if (lower === 'delux' || lower === 'deluxe' || lower === 'super dilux' || lower === 'super deluxe') return 'Deluxe';
+  if (lower === 'premium standard' || lower === 'premium standard room') return 'Premium Standard';
   if (lower === 'executive' || lower === 'executive room' || lower === 'executive suite') return 'Executive';
   if (lower === 'standard' || lower === 'standard room') return 'Standard';
-  if (lower === 'family' || lower === 'family room' || lower === 'family suite' || lower === 'familyroom') return 'Family';
+  if (lower === 'family' || lower === 'family room' || lower === 'family suite' || lower === 'familyroom') return 'Family Room';
   return trimmed
     .split(/\s+/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())

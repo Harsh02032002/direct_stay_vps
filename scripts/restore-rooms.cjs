@@ -8,23 +8,23 @@ const hotelId = 'hotel-1793886802242';
 const full19Rooms = [
   { number: '101', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '102', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
-  { number: '103', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
-  { number: '104', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
+  { number: '103', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'Twin Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
+  { number: '104', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'Twin Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '105', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '106', category: 'Standard', floor: '4th Floor', rate: 1500, bedType: 'Double Bed', maxOccupancy: 2, baseOccupancy: 2, extraPersonCharge: 400, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '107', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '108', category: 'Executive', floor: '4th Floor', rate: 2500, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 600, amenities: ['AC', 'Wi-Fi', 'TV'] },
-  { number: '109', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
+  { number: '109', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'Twin Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '110', category: 'Executive', floor: '4th Floor', rate: 2500, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 600, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '111', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '112', category: 'Executive', floor: '4th Floor', rate: 2500, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 600, amenities: ['AC', 'Wi-Fi', 'TV'] },
-  { number: '113', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
+  { number: '113', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'Twin Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '114', category: 'Deluxe', floor: '4th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
-  { number: '115', category: 'Family', floor: '4th Floor', rate: 3000, bedType: 'Family Suite', maxOccupancy: 4, baseOccupancy: 3, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
+  { number: '115', category: 'Family Room', floor: '4th Floor', rate: 3000, bedType: 'Family Suite', maxOccupancy: 4, baseOccupancy: 3, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
   { number: '116', category: 'Executive', floor: '4th Floor', rate: 2500, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 600, amenities: ['AC', 'Wi-Fi', 'TV'] },
-  { number: '201', category: 'Deluxe', floor: '5th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
-  { number: '202', category: 'Deluxe', floor: '5th Floor', rate: 2500, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
-  { number: '203', category: 'Deluxe', floor: '5th Floor', rate: 2000, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] }
+  { number: '201', category: 'Premium Standard', floor: '5th Floor', rate: 2200, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
+  { number: '202', category: 'Premium Standard', floor: '5th Floor', rate: 2200, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] },
+  { number: '203', category: 'Premium Standard', floor: '5th Floor', rate: 2200, bedType: 'King Size Bed', maxOccupancy: 3, baseOccupancy: 2, extraPersonCharge: 500, amenities: ['AC', 'Wi-Fi', 'TV'] }
 ];
 
 const constructedRooms = full19Rooms.map(def => {
