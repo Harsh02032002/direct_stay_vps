@@ -11,7 +11,7 @@ import {
   LayoutDashboard, Bed, Calendar, Sparkles, DollarSign, Shield, FileSpreadsheet, 
   Settings as SettingsIcon, CheckCircle2, Lock, Unlock, Image as ImageIcon,
   Layers, Clock, PieChart, BarChart3, Filter, ShieldAlert, Wrench, Eye,
-  QrCode, Printer, Building, Building2
+  QrCode, Printer, Building, Building2, Utensils
 } from 'lucide-react';
 import BuildingFloorView from './rooms/BuildingFloorView';
 
@@ -205,12 +205,14 @@ export default function RoomManagementView({
   const [requireInspectionToClean, setRequireInspectionToClean] = useState(true);
   const [overbookingLimitPercent, setOverbookingLimitPercent] = useState(0);
   const [allowBackDatedCheckIn, setAllowBackDatedCheckIn] = useState(hotelSettings?.allowBackDatedCheckIn ?? true);
+  const [allowBackDatedFoodBill, setAllowBackDatedFoodBill] = useState(hotelSettings?.allowBackDatedFoodBill ?? true);
 
   useEffect(() => {
     if (hotelSettings) {
       if (hotelSettings.checkInTime) setDefaultCheckInTime(hotelSettings.checkInTime);
       if (hotelSettings.checkOutTime) setDefaultCheckOutTime(hotelSettings.checkOutTime);
       if (hotelSettings.allowBackDatedCheckIn !== undefined) setAllowBackDatedCheckIn(hotelSettings.allowBackDatedCheckIn);
+      if (hotelSettings.allowBackDatedFoodBill !== undefined) setAllowBackDatedFoodBill(hotelSettings.allowBackDatedFoodBill);
       if (hotelSettings.autoMarkDirtyOnCheckout !== undefined) setAutoMarkDirtyOnCheckout(hotelSettings.autoMarkDirtyOnCheckout);
     }
   }, [hotelSettings]);
@@ -620,7 +622,8 @@ export default function RoomManagementView({
         checkInTime: defaultCheckInTime,
         checkOutTime: defaultCheckOutTime,
         autoMarkDirtyOnCheckout,
-        allowBackDatedCheckIn
+        allowBackDatedCheckIn,
+        allowBackDatedFoodBill
       });
     }
     showToast('Room Module settings saved successfully!', 'success');
@@ -1714,6 +1717,43 @@ export default function RoomManagementView({
                     <strong>Allow Back-Date & Back-Time Check-In Entries</strong>
                     <span className="block text-[11px] text-luxury-brown-500 mt-0.5 font-normal">
                       When checked, the arrival date picker unlocks past dates (before today) and the arrival time picker allows past timestamps for retrospective guest arrival logging.
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* 🍽️ BACK-DATED FOOD BILLING & RESTAURANT ENTRY POLICY */}
+              <div className="bg-gradient-to-r from-amber-50/70 via-stone-50 to-amber-50/40 p-4 rounded-xl space-y-3 border border-luxury-gold-200/80 shadow-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <span className="font-serif font-bold text-luxury-brown-950 text-sm flex items-center gap-1.5">
+                      <Utensils className="w-4 h-4 text-luxury-gold-600" /> Back-Dated & Past-Time Food Bill Policy
+                    </span>
+                    <p className="text-[11px] text-luxury-brown-600">
+                      Enable restaurant, room service, and POS billing staff to enter past order dates & times for retroactive food billing.
+                    </p>
+                  </div>
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold tracking-wider uppercase shrink-0 ${
+                    allowBackDatedFoodBill
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : 'bg-slate-100 text-slate-600 border border-slate-300'
+                  }`}>
+                    {allowBackDatedFoodBill ? '● Active' : '○ Disabled'}
+                  </span>
+                </div>
+
+                <div className="flex items-start gap-3 pt-1">
+                  <input
+                    type="checkbox"
+                    id="chkAllowBackDatedFood"
+                    checked={allowBackDatedFoodBill}
+                    onChange={e => setAllowBackDatedFoodBill(e.target.checked)}
+                    className="mt-0.5 rounded text-luxury-gold-600 focus:ring-0 w-4 h-4 cursor-pointer"
+                  />
+                  <label htmlFor="chkAllowBackDatedFood" className="text-luxury-brown-900 font-medium cursor-pointer text-xs">
+                    <strong>Allow Back-Date & Back-Time Food Bill Entries</strong>
+                    <span className="block text-[11px] text-luxury-brown-500 mt-0.5 font-normal">
+                      When checked, POS and food billing forms unlock past dates and times so staff can log previous room service and restaurant orders.
                     </span>
                   </label>
                 </div>

@@ -134,6 +134,7 @@ export interface Hotel {
   nextGrcSequence?: number;
   autoMarkDirtyOnCheckout?: boolean;
   allowBackDatedCheckIn?: boolean;
+  allowBackDatedFoodBill?: boolean;
   grcTerms?: string[];
   placeOfSupply?: string;
   gstSlabs?: number[];
@@ -1034,6 +1035,7 @@ export interface HotelSettings {
   nextGrcSequence?: number;
   autoMarkDirtyOnCheckout?: boolean;
   allowBackDatedCheckIn?: boolean;
+  allowBackDatedFoodBill?: boolean;
   grcTerms?: string[];
   placeOfSupply?: string;
   gstSlabs?: number[];
