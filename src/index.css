@@ -637,3 +637,20 @@ main .bg-white label {
     -ms-overflow-style: none !important;
   }
 }
+
+/* ============================================================================
+   GLOBAL NUMBER & DATE INPUT WHEEL SCROLL PROTECTION
+   Prevents mouse wheel scrolling from inadvertently stepping or resetting numbers
+   and dates while navigating forms, tables, and modal dialogs.
+   ============================================================================ */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  -webkit-appearance: none !important;
+  margin: 0 !important;
+}
+
+input[type=number] {
+  -moz-appearance: textfield !important;
+  appearance: textfield !important;
+}
+

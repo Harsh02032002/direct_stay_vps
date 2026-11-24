@@ -5327,6 +5327,7 @@ export default function CheckInFormView({
                                 type="number"
                                 min={0}
                                 value={roomRate}
+                                onWheel={(e) => e.currentTarget.blur()}
                                 onChange={(e) => setRoomRate(Math.max(0, Number(e.target.value) || 0))}
                                 className="w-full px-3 py-2 border-2 border-[#9E2A2B] rounded-lg text-sm bg-white font-mono font-bold text-[#9E2A2B] focus:outline-none"
                                 placeholder="Editable room tariff"
@@ -5340,6 +5341,7 @@ export default function CheckInFormView({
                                 type="number"
                                 min={0}
                                 value={manualDiscount}
+                                onWheel={(e) => e.currentTarget.blur()}
                                 onChange={(e) => setManualDiscount(Math.max(0, Number(e.target.value) || 0))}
                                 className="w-full px-3 py-2 border-2 border-emerald-300 rounded-lg text-sm bg-white font-mono font-bold text-emerald-800 focus:outline-none"
                                 placeholder="Separate flat discount"
@@ -6410,6 +6412,7 @@ export default function CheckInFormView({
                       type="number"
                       min={0}
                       value={roomRate}
+                      onWheel={(e) => e.currentTarget.blur()}
                       onChange={(e) => setRoomRate(Math.max(0, Number(e.target.value) || 0))}
                       className="w-full px-3 py-2 border-2 border-[#9E2A2B] rounded-lg text-sm bg-white font-mono font-bold text-[#9E2A2B] focus:ring-0 focus:outline-none"
                       placeholder="Adjust Room Tariff directly"
@@ -6423,6 +6426,7 @@ export default function CheckInFormView({
                       type="number"
                       min={0}
                       value={manualDiscount}
+                      onWheel={(e) => e.currentTarget.blur()}
                       onChange={(e) => setManualDiscount(Math.max(0, Number(e.target.value) || 0))}
                       className="w-full px-3 py-2 border-2 border-emerald-300 rounded-lg text-sm bg-white font-mono font-bold text-emerald-700 focus:ring-1 focus:ring-emerald-500"
                       placeholder="Separate Discount Amount"
@@ -7448,6 +7452,7 @@ export default function CheckInFormView({
                             required
                             min={!isEditingExistingDates && !allowBackDatedCheckIn ? todayIstStr : undefined}
                             value={checkInDate}
+                            onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleArrivalDateChange(e.target.value)}
                             className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
@@ -7455,6 +7460,7 @@ export default function CheckInFormView({
                             type="time"
                             value={to24hTime(arrivalTime, getIstNowParts().hhmm)}
                             min={!isEditingExistingDates && !allowBackDatedCheckIn && checkInDate === todayIstStr ? getIstNowParts().hhmm : undefined}
+                            onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleArrivalTimeChange(e.target.value)}
                             className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
@@ -7503,12 +7509,14 @@ export default function CheckInFormView({
                             required
                             min={!isEditingExistingDates && !allowBackDatedCheckIn ? (checkInDate || todayIstStr) : undefined}
                             value={checkOutDate}
+                            onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleDepartureDateChange(e.target.value)}
                             className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
                           <input
                             type="time"
                             value={to24hTime(departureTime, to24hTime(hotelSettings?.checkOutTime, '11:00'))}
+                            onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleDepartureTimeChange(e.target.value)}
                             className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
@@ -7870,6 +7878,7 @@ export default function CheckInFormView({
                                 min={0}
                                 value={roomRate || ''}
                                 placeholder="Select room"
+                                onWheel={(e) => e.currentTarget.blur()}
                                 onChange={e => setRoomRate(Math.max(0, Number(e.target.value) || 0))}
                                 className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white"
                               />
@@ -9737,6 +9746,7 @@ export default function CheckInFormView({
                                 step="any"
                                 readOnly={isHybridCheckInPay}
                                 value={isHybridCheckInPay ? effectiveDeskReceivedNow : paidAmount || ''}
+                                onWheel={(e) => e.currentTarget.blur()}
                                 onChange={e => setPaidAmount(Math.max(0, Number(e.target.value) || 0))}
                                 placeholder="₹0.00"
                                 className={`w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold ${

@@ -1023,7 +1023,7 @@ export default function ReservationView({
     }
   };
 
-  // Sync pricing when dates change
+  // Sync pricing when dates change without resetting custom user tariffs or edited booking prices
   const handleCheckInDateChange = (val: string) => {
     let cleanVal = val;
     if (!editingBooking && !allowBackDatedCheckIn && cleanVal && cleanVal < getTodayDateStr()) {
@@ -1035,6 +1035,17 @@ export default function ReservationView({
     const nextCheckOut = getFutureDateStr(prevNights, cleanVal);
     setCheckOutDate(nextCheckOut);
     const nightsCount = prevNights;
+
+    // Preserve existing negotiated booking price when duration has not changed
+    if (editingBooking) {
+      return;
+    }
+
+    if (bookingPrice > 0 && prevNights > 0) {
+      // Stay length is preserved, keep user's entered price intact
+      return;
+    }
+
     if (isMultiRoomMode && multiRoomSelections.length > 0) {
       syncMultiRoomBookingPrice(multiRoomSelections, nightsCount);
     } else {
@@ -1053,12 +1064,29 @@ export default function ReservationView({
         setCheckInDate(cleanVal);
       }
     }
+    const prevNights = Math.max(1, calNightsForDates(checkInDate, checkOutDate));
     setCheckOutDate(cleanVal);
     const nightsCount = calNightsForDates(checkInDate, cleanVal);
+
+    if (editingBooking) {
+      if (nightsCount !== prevNights && prevNights > 0 && bookingPrice > 0) {
+        const customPerNight = Math.round(bookingPrice / prevNights);
+        setBookingPrice(customPerNight * Math.max(1, nightsCount));
+      }
+      return;
+    }
+
+    if (nightsCount === prevNights && bookingPrice > 0) {
+      return;
+    }
+
     if (isMultiRoomMode && multiRoomSelections.length > 0) {
       syncMultiRoomBookingPrice(multiRoomSelections, nightsCount);
     } else {
-      setBookingPrice(computeAutoPriceForStay(roomPrice, nightsCount, Number(adults) || 1, Number(children) || 0, activeMatchedRoom));
+      const customRate = (bookingPrice > 0 && prevNights > 0 && bookingPrice !== computeAutoPriceForStay(roomPrice, prevNights, Number(adults) || 1, Number(children) || 0, activeMatchedRoom))
+        ? Math.round(bookingPrice / prevNights)
+        : roomPrice;
+      setBookingPrice(computeAutoPriceForStay(customRate, nightsCount, Number(adults) || 1, Number(children) || 0, activeMatchedRoom));
     }
   };
 
@@ -4722,12 +4750,14 @@ export default function ReservationView({
                         required
                         min={editingBooking || allowBackDatedCheckIn ? undefined : getTodayDateStr()}
                         value={checkInDate}
+                        onWheel={(e) => e.currentTarget.blur()}
                         onChange={(e) => handleCheckInDateChange(e.target.value)}
                         className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
                       />
                       <input
                         type="time"
                         value={to24hTime(checkInTime, '12:00')}
+                        onWheel={(e) => e.currentTarget.blur()}
                         onChange={(e) => {
                           const val = e.target.value;
                           const today = getTodayDateStr();
@@ -4779,6 +4809,7 @@ export default function ReservationView({
                       type="date"
                       min={editingBooking || allowBackDatedCheckIn ? undefined : (checkInDate || getTodayDateStr())}
                       value={checkOutDate}
+                      onWheel={(e) => e.currentTarget.blur()}
                       onChange={(e) => handleCheckOutDateChange(e.target.value)}
                       className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
                     />
@@ -5114,6 +5145,7 @@ export default function ReservationView({
                           type="number"
                           min={0}
                           value={singleRate}
+                          onWheel={(e) => e.currentTarget.blur()}
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => {
                             const val = Math.max(0, Number(e.target.value) || 0);
@@ -5133,6 +5165,7 @@ export default function ReservationView({
                           type="number"
                           min={0}
                           value={doubleRate}
+                          onWheel={(e) => e.currentTarget.blur()}
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => {
                             const val = Math.max(0, Number(e.target.value) || 0);
@@ -5152,6 +5185,7 @@ export default function ReservationView({
                           type="number"
                           min={0}
                           value={extraBedRate}
+                          onWheel={(e) => e.currentTarget.blur()}
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => {
                             const val = Math.max(0, Number(e.target.value) || 0);
@@ -5175,6 +5209,7 @@ export default function ReservationView({
                           min={1}
                           required
                           value={bookingPrice}
+                          onWheel={(e) => e.currentTarget.blur()}
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => setBookingPrice(parseInt(e.target.value, 10) || 0)}
                           className="w-full px-2.5 py-1.5 border border-luxury-gold-500 rounded text-xs font-mono font-extrabold bg-white text-luxury-brown-950"
@@ -5192,6 +5227,7 @@ export default function ReservationView({
                       min={1}
                       required
                       value={bookingPrice}
+                      onWheel={(e) => e.currentTarget.blur()}
                       onFocus={(e) => e.target.select()}
                       onChange={(e) => setBookingPrice(parseInt(e.target.value, 10) || 0)}
                       className="w-full px-3 py-1.5 border border-luxury-gold-500 rounded-lg text-xs font-mono font-extrabold bg-white text-luxury-brown-950"

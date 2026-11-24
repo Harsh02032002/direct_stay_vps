@@ -770,6 +770,7 @@ export default function EditCheckoutModal({
                   min={1}
                   max={20}
                   value={editGuestNumGuests}
+                  onWheel={(e) => e.currentTarget.blur()}
                   onChange={(e) => setEditGuestNumGuests(Math.max(1, Number(e.target.value) || 1))}
                   className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-xs text-[#263449] font-mono"
                 />
@@ -829,6 +830,7 @@ export default function EditCheckoutModal({
               <input
                 type="date"
                 value={editCheckInDate}
+                onWheel={(e) => e.currentTarget.blur()}
                 onChange={(e) => setEditCheckInDate(e.target.value)}
                 className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-950"
               />
@@ -842,6 +844,7 @@ export default function EditCheckoutModal({
                 type="date"
                 min={editCheckInDate}
                 value={editCheckOutDate}
+                onWheel={(e) => e.currentTarget.blur()}
                 onChange={(e) => setEditCheckOutDate(e.target.value)}
                 className="w-full px-3 py-2 border border-[#C49A3A] rounded-lg text-xs font-mono font-bold bg-white text-luxury-brown-950"
               />
@@ -856,6 +859,7 @@ export default function EditCheckoutModal({
                   type="number"
                   min={0}
                   value={editRoomRate}
+                  onWheel={(e) => e.currentTarget.blur()}
                   onChange={(e) => setEditRoomRate(Math.max(0, Number(e.target.value) || 0))}
                   className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white"
                 />
@@ -871,6 +875,7 @@ export default function EditCheckoutModal({
                 min={0}
                 value={editDiscount || ''}
                 placeholder="0"
+                onWheel={(e) => e.currentTarget.blur()}
                 onChange={(e) => setEditDiscount(Math.max(0, Number(e.target.value) || 0))}
                 className="w-full px-3 py-2 border border-rose-200 rounded-lg text-xs font-mono font-bold bg-white text-rose-800"
               />
@@ -979,6 +984,7 @@ export default function EditCheckoutModal({
                   type="number"
                   min={0}
                   value={newChargeAmt}
+                  onWheel={(e) => e.currentTarget.blur()}
                   onChange={(e) => setNewChargeAmt(e.target.value === '' ? '' : Number(e.target.value))}
                   placeholder="0"
                   className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white"
@@ -1090,6 +1096,7 @@ export default function EditCheckoutModal({
                     <input
                       type="date"
                       value={row.date}
+                      onWheel={(e) => e.currentTarget.blur()}
                       onChange={(e) =>
                         setPaymentRows((prev) =>
                           prev.map((r) => (r.id === row.id ? { ...r, date: e.target.value } : r))
@@ -1141,6 +1148,7 @@ export default function EditCheckoutModal({
                       min={0}
                       step="any"
                       value={row.amount}
+                      onWheel={(e) => e.currentTarget.blur()}
                       onChange={(e) =>
                         setPaymentRows((prev) =>
                           prev.map((r) =>

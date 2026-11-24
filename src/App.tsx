@@ -574,6 +574,39 @@ export default function App() {
     return subscribeToasts((toasts) => setActiveToasts(toasts));
   }, []);
 
+  // Prevent mouse wheel from inadvertently stepping or resetting numbers and dates when scrolling forms/modals
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleWheelCapture = (e: WheelEvent) => {
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        active.tagName === 'INPUT' &&
+        ['number', 'date', 'datetime-local', 'time', 'month', 'week'].includes(
+          (active as HTMLInputElement).type
+        )
+      ) {
+        active.blur();
+      }
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        target.tagName === 'INPUT' &&
+        ['number', 'date', 'datetime-local', 'time', 'month', 'week'].includes(
+          (target as HTMLInputElement).type
+        )
+      ) {
+        target.blur();
+      }
+    };
+
+    window.addEventListener('wheel', handleWheelCapture, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('wheel', handleWheelCapture, { capture: true });
+    };
+  }, []);
+
   useEffect(() => {
     const onProfileNav = (e: any) => {
       if (e.detail?.section) {

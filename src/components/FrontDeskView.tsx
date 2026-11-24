@@ -5652,6 +5652,7 @@ export default function FrontDeskView({
                     type="date"
                     required
                     value={editGuestCheckInDate}
+                    onWheel={(e) => e.currentTarget.blur()}
                     onChange={e => setEditGuestCheckInDate(e.target.value)}
                     className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-[#263449] font-mono"
                   />
@@ -5662,6 +5663,7 @@ export default function FrontDeskView({
                     type="date"
                     required
                     value={editGuestCheckOutDate}
+                    onWheel={(e) => e.currentTarget.blur()}
                     onChange={e => setEditGuestCheckOutDate(e.target.value)}
                     className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-[#263449] font-mono"
                   />
@@ -5673,6 +5675,7 @@ export default function FrontDeskView({
                     min={1}
                     max={10}
                     value={editGuestNumGuests}
+                    onWheel={(e) => e.currentTarget.blur()}
                     onChange={e => setEditGuestNumGuests(Number(e.target.value))}
                     className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-[#263449] font-mono"
                   />
@@ -5683,6 +5686,7 @@ export default function FrontDeskView({
                     type="number"
                     min={0}
                     value={editGuestRoomRate}
+                    onWheel={(e) => e.currentTarget.blur()}
                     onChange={e => setEditGuestRoomRate(Number(e.target.value))}
                     className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-[#C49A3A] font-mono font-bold"
                   />
@@ -5770,6 +5774,7 @@ export default function FrontDeskView({
                           min={1}
                           max={5}
                           value={editGuestExtraBedCount}
+                          onWheel={(e) => e.currentTarget.blur()}
                           onChange={e => setEditGuestExtraBedCount(Math.max(1, Number(e.target.value) || 1))}
                           className="w-14 px-2 py-1 bg-white border border-luxury-brown-200 rounded font-mono font-bold text-[#263449]"
                         />
@@ -5780,6 +5785,7 @@ export default function FrontDeskView({
                           type="number"
                           min={0}
                           value={editGuestExtraBedRate}
+                          onWheel={(e) => e.currentTarget.blur()}
                           onChange={e => setEditGuestExtraBedRate(Math.max(0, Number(e.target.value) || 0))}
                           className="w-20 px-2 py-1 bg-white border border-luxury-brown-200 rounded font-mono font-bold text-[#C49A3A]"
                         />
@@ -5795,6 +5801,7 @@ export default function FrontDeskView({
                       type="number"
                       min={0}
                       value={editGuestDiscount}
+                      onWheel={(e) => e.currentTarget.blur()}
                       onChange={e => setEditGuestDiscount(Math.max(0, Number(e.target.value) || 0))}
                       className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-rose-700 font-mono font-bold"
                     />
@@ -5808,6 +5815,7 @@ export default function FrontDeskView({
                       min={0}
                       value={editHybridPay ? editSplitTotal : editGuestAdvance}
                       readOnly={editHybridPay}
+                      onWheel={(e) => e.currentTarget.blur()}
                       onChange={e => setEditGuestAdvance(Math.max(0, Number(e.target.value) || 0))}
                       className={`w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-emerald-700 font-mono font-bold ${
                         editHybridPay ? 'bg-emerald-50 cursor-not-allowed' : 'bg-white'
@@ -6394,32 +6402,34 @@ export default function FrontDeskView({
                 </div>
 
                 {/* Bill Adjustments: same editable fields as "Edit Invoice" */}
-                <div className="bg-[#FDF8ED] border border-[#C49A3A]/60 rounded-xl p-4 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#C49A3A]/30 pb-2">
-                    <div>
-                      <h4 className="font-serif font-bold text-[#17120F] text-sm">Bill Adjustments (edit before generating invoice)</h4>
-                      <p className="text-[11px] text-slate-600 mt-0.5">
-                        Amounts are pre-filled automatically. Change any value to edit the final bill.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setCoOv({})}
-                      className="px-3 py-1.5 bg-white hover:bg-slate-100 text-[#263449] border border-slate-300 rounded-lg font-bold text-[11px] cursor-pointer"
-                    >
-                      Reset to Auto
-                    </button>
-                  </div>
+                {(() => {
+                  const existingStayInv = invoices.find(
+                    inv =>
+                      !inv.isSeparateInvoice &&
+                      (inv.bookingId === checkoutConfirmGuest.id || inv.checkInId === checkoutConfirmGuest.id)
+                  );
+                  return (
+                    <div className="bg-[#FDF8ED] border border-[#C49A3A]/60 rounded-xl p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#C49A3A]/30 pb-2">
+                        <div>
+                          <h4 className="font-serif font-bold text-[#17120F] text-sm">Bill Adjustments (edit before generating invoice)</h4>
+                          <p className="text-[11px] text-slate-600 mt-0.5">
+                            Amounts are pre-filled automatically. Change any value to edit the final bill.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCoOv({})}
+                          className="px-3 py-1.5 bg-white hover:bg-slate-100 text-[#263449] border border-slate-300 rounded-lg font-bold text-[11px] cursor-pointer"
+                        >
+                          Reset to Auto
+                        </button>
+                      </div>
 
-                  {/* With GST vs No GST Switch (Locked if stay invoice already exists) */}
-                  {(() => {
-                    const existingStayInv = invoices.find(
-                      inv =>
-                        !inv.isSeparateInvoice &&
-                        (inv.bookingId === checkoutConfirmGuest.id || inv.checkInId === checkoutConfirmGuest.id)
-                    );
-                    if (existingStayInv) {
-                      return (
+                      {/* With GST vs No GST Switch (Locked if stay invoice already exists) */}
+                      {(() => {
+                        if (existingStayInv) {
+                          return (
                         <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl space-y-1">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-[10px] font-mono uppercase font-bold text-amber-950">
@@ -6587,6 +6597,8 @@ export default function FrontDeskView({
                     </div>
                   )}
                 </div>
+                  );
+                })()}
                 {/* 3. Live Final Bill & GST Summary (Clean High-Contrast Light Luxury Card — Zero Invisible White Text) */}
                 <div className="bg-[#FFFDF7] text-[#263449] p-4 rounded-xl border-2 border-[#E6D9B3] space-y-2 font-mono text-xs shadow-2xs">
                   <div className="flex justify-between items-center border-b border-[#E6D9B3] pb-2">
