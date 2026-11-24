@@ -244,7 +244,7 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
             label: 'Collection Report',
             iconKey: 'dot',
             rbacTab: 'reports',
-            target: { activeTab: 'reports', reportsSubTab: 'daily_sales' },
+            target: { activeTab: 'reports', reportsSubTab: 'daily_collection_sheet' },
           },
           {
             id: 'gs-checkout-pending',

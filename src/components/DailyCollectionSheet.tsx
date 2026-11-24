@@ -1,5 +1,19 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Room, Booking, GuestCheckIn, Invoice, Expense, HotelSettings, PosOrder, CashHandover, Staff } from '../types';
+import {
+  Room,
+  Booking,
+  GuestCheckIn,
+  Invoice,
+  Expense,
+  HotelSettings,
+  PosOrder,
+  CashHandover,
+  Staff,
+  OwnerDirectorPayment,
+  DailyClosingRecord,
+  WaterBottleRecord,
+  LaundryOrder,
+} from '../types';
 import DirtyRoomsPanel from './DirtyRoomsPanel';
 import { showToast } from '../utils/toast';
 import {
@@ -9,8 +23,8 @@ import {
 } from '../utils/reportingDates';
 import { 
   Printer, Download, Calendar, ChevronLeft, ChevronRight, 
-  Search, RefreshCw, FileSpreadsheet, DollarSign, ArrowDown, Edit3, Check,
-  Building2, Wallet, CreditCard, Utensils, TrendingUp, ShieldCheck, Sparkles, Receipt
+  Search, FileSpreadsheet, DollarSign, Edit3, Check,
+  Building2, Wallet, CreditCard, Utensils, TrendingUp, ArrowRight
 } from 'lucide-react';
 
 interface DailyCollectionSheetProps {
@@ -21,6 +35,10 @@ interface DailyCollectionSheetProps {
   expenses: Expense[];
   posOrders?: PosOrder[];
   handovers?: CashHandover[];
+  ownerPayments?: OwnerDirectorPayment[];
+  dailyClosings?: DailyClosingRecord[];
+  waterBottles?: WaterBottleRecord[];
+  laundryOrders?: LaundryOrder[];
   staff?: Staff[];
   hotelSettings?: HotelSettings;
   onEditCheckout?: (guest: GuestCheckIn) => void;
@@ -32,6 +50,7 @@ const toLocalYmd = (raw?: string): string => {
   const s = String(raw || '').trim();
   if (!s) return '';
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}[T ]/.test(s)) return s.substring(0, 10);
   const mDmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
   if (mDmy) {
     const [, d, mth, y] = mDmy;
@@ -44,6 +63,17 @@ const toLocalYmd = (raw?: string): string => {
   return s.substring(0, 10);
 };
 
+const isCashModeStr = (raw?: string): boolean => {
+  const m = String(raw || '').trim().toLowerCase();
+  if (!m) return true; // default unspecified expense/handover to cash drawer
+  return m.includes('cash') || m.includes('petty');
+};
+
+const isCapitalContributionPayment = (op: any): boolean => {
+  const t = String(op?.type || op?.category || '').toLowerCase();
+  return t.includes('capital') || t.includes('loan in') || t.includes('introduced') || t.includes('injection');
+};
+
 export default function DailyCollectionSheet({
   rooms = [],
   bookings = [],
@@ -52,6 +82,10 @@ export default function DailyCollectionSheet({
   expenses = [],
   posOrders = [],
   handovers = [],
+  ownerPayments = [],
+  dailyClosings = [],
+  waterBottles = [],
+  laundryOrders = [],
   staff = [],
   hotelSettings,
   onEditCheckout
@@ -63,37 +97,74 @@ export default function DailyCollectionSheet({
 
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Counter Reconciliation States (persisted per date in localStorage)
-  const storageKey = `pms_daily_counter_${selectedDate}`;
-  const [openingBalance, setOpeningBalance] = useState<number>(26126);
-  const [ownerHandover, setOwnerHandover] = useState<number>(0);
+  const hotelScopeId = String((hotelSettings as any)?.id || (hotelSettings as any)?.hotelId || 'default');
+
+  // Counter Reconciliation States (persisted per hotel + date in localStorage, carried forward from last date)
+  const storageKey = `pms_daily_counter_${hotelScopeId}_${selectedDate}`;
+  const closingCacheKey = `pms_daily_closing_cache_${hotelScopeId}_${selectedDate}`;
+  const [openingBalance, setOpeningBalance] = useState<number>(0);
+  const [manualOwnerHandover, setManualOwnerHandover] = useState<number | null>(null);
   const [customNote, setCustomNote] = useState<string>('');
   const [isEditingCounter, setIsEditingCounter] = useState(false);
 
-  // Load persisted counter values for the selected date
+  // Load persisted counter values or carry forward from last date's Closing Cash Balance
   useEffect(() => {
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (typeof parsed.openingBalance === 'number') setOpeningBalance(parsed.openingBalance);
-        if (typeof parsed.ownerHandover === 'number') setOwnerHandover(parsed.ownerHandover);
-        if (typeof parsed.customNote === 'string') setCustomNote(parsed.customNote);
-      } else {
-        // Look up previous day's closing if available
-        const prevDate = new Date(selectedDate);
-        prevDate.setDate(prevDate.getDate() - 1);
-        const prevKey = `pms_daily_counter_${prevDate.toISOString().substring(0, 10)}`;
-        const prevSaved = localStorage.getItem(prevKey);
-        if (prevSaved) {
-          const prevParsed = JSON.parse(prevSaved);
+        setOpeningBalance(typeof parsed.openingBalance === 'number' ? parsed.openingBalance : 0);
+        setManualOwnerHandover(typeof parsed.ownerHandover === 'number' ? parsed.ownerHandover : null);
+        setCustomNote(typeof parsed.customNote === 'string' ? parsed.customNote : '');
+        return;
+      }
+
+      // Reset date-specific manual overrides before checking carry-forward
+      setManualOwnerHandover(null);
+      setCustomNote('');
+
+      // 1. Check prior dates (up to 30 days back) for saved closing balance or cached closing balance
+      let carriedOpening: number | null = null;
+      for (let i = 1; i <= 30; i++) {
+        const prevYmd = addDaysIst(selectedDate, -i);
+        const prevSavedRaw = localStorage.getItem(`pms_daily_counter_${hotelScopeId}_${prevYmd}`);
+        if (prevSavedRaw) {
+          const prevParsed = JSON.parse(prevSavedRaw);
           if (typeof prevParsed.closingBalance === 'number') {
-            setOpeningBalance(prevParsed.closingBalance);
+            carriedOpening = prevParsed.closingBalance;
+            break;
+          }
+        }
+        const prevCacheRaw = localStorage.getItem(`pms_daily_closing_cache_${hotelScopeId}_${prevYmd}`);
+        if (prevCacheRaw) {
+          const prevCache = JSON.parse(prevCacheRaw);
+          if (typeof prevCache.closingBalance === 'number') {
+            carriedOpening = prevCache.closingBalance;
+            break;
           }
         }
       }
-    } catch {}
-  }, [selectedDate, storageKey]);
+
+      // 2. Fallback to latest DailyClosingRecord from DB strictly before selectedDate
+      if (carriedOpening === null && Array.isArray(dailyClosings) && dailyClosings.length > 0) {
+        const priorClosings = dailyClosings
+          .filter((dc) => {
+            const d = toLocalYmd(dc.date);
+            return Boolean(d && d < selectedDate);
+          })
+          .sort((a, b) => toLocalYmd(b.date).localeCompare(toLocalYmd(a.date)));
+        if (priorClosings.length > 0) {
+          const latest = priorClosings[0];
+          const val = Number(latest.closingCashActual ?? latest.closingCashSystem ?? 0);
+          if (Number.isFinite(val)) carriedOpening = val;
+        }
+      }
+
+      setOpeningBalance(carriedOpening !== null ? carriedOpening : 0);
+    } catch {
+      setOpeningBalance(0);
+    }
+  }, [selectedDate, storageKey, hotelScopeId, dailyClosings]);
 
   // Format date as DD-MM-YYYY for display
   const formattedDisplayDate = useMemo(() => {
@@ -109,11 +180,13 @@ export default function DailyCollectionSheet({
   const reportRows = useMemo(() => {
     const rowsMap = new Map<string, any>();
 
-    // 1. Check-ins active or settled on the selected date
+    // 1. Check-ins active or settled on the selected date (including overdue active in-house guests)
+    const todayYmd = localTodayStr();
     checkins.forEach((c) => {
       const inDate = toLocalYmd(c.checkInDate);
       const outDate = toLocalYmd(c.checkOutDate);
       const checkedOutLocal = toLocalYmd(c.checkedOutDateTime);
+      const isCurrentlyInHouse = !checkedOutLocal;
       const hasPaymentOnDate = Array.isArray(c.payments)
         ? c.payments.some((p: any) => toLocalYmd(p?.dateTime || p?.date) === selectedDate)
         : false;
@@ -124,7 +197,8 @@ export default function DailyCollectionSheet({
         checkedOutLocal === selectedDate ||
         hasPaymentOnDate ||
         (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate) ||
-        (!!inDate && !outDate && inDate <= selectedDate);
+        (!!inDate && !outDate && inDate <= selectedDate) ||
+        (isCurrentlyInHouse && !!inDate && inDate <= selectedDate && selectedDate <= todayYmd);
 
       if (isActiveOnDate) {
         const key = `${c.roomNumber}_${c.guestName}`;
@@ -392,16 +466,68 @@ export default function DailyCollectionSheet({
       let extraPerson = 0;
       let laundry = 0;
       let extraBed = 0;
+      let otherMiscExtras = 0;
 
+      const isFoodCategory = (cat: string) =>
+        cat.includes('food') ||
+        cat.includes('kitchen') ||
+        cat.includes('restaurant') ||
+        cat.includes('thali') ||
+        cat.includes('breakfast') ||
+        cat.includes('lunch') ||
+        cat.includes('dinner') ||
+        cat.includes('room service');
+
+      const seenExtraIds = new Set<string>();
       const extras = (c?.extraCharges || []).concat(inv?.extraCharges || []);
       extras.forEach((ec: any) => {
-        const cat = (ec.category || ec.description || '').toLowerCase();
+        const ecId = String(ec?.id || '');
+        if (ecId && seenExtraIds.has(ecId)) return;
+        if (ecId) seenExtraIds.add(ecId);
+        const cat = String(ec.category || ec.description || '').toLowerCase();
         const amt = Number(ec.amount) || 0;
+        if (amt <= 0 || isFoodCategory(cat)) return;
         if (cat.includes('water') || cat.includes('bottle')) waterBottle += amt;
         else if (cat.includes('person') || cat.includes('occupant') || cat === 'ep') extraPerson += amt;
-        else if (cat.includes('laundry') || cat.includes('wash')) laundry += amt;
+        else if (cat.includes('laundry') || cat.includes('wash') || cat.includes('iron') || cat.includes('dry clean')) laundry += amt;
         else if (cat.includes('bed') || cat.includes('mattress')) extraBed += amt;
+        else otherMiscExtras += amt;
       });
+
+      // Also include chargeable WaterBottleRecord logs for this room on selectedDate if not already counted in extraCharges
+      if (waterBottle === 0 && Array.isArray(waterBottles) && waterBottles.length > 0) {
+        const roomWaterLogs = waterBottles.filter((wb) => {
+          if (toLocalYmd(wb.date || wb.dateTime) !== selectedDate) return false;
+          const wbRoom = String(wb.roomNumber || '').replace(/[^\d]/g, '').trim();
+          const rowRoomDigits = String(roomNumber || '').replace(/[^\d]/g, '').trim();
+          const splitDigits = splitRoomNums.map((rn) => rn.replace(/[^\d]/g, '').trim()).filter(Boolean);
+          const roomOk = Boolean(wbRoom && (wbRoom === rowRoomDigits || splitDigits.includes(wbRoom)));
+          const chargeable = wb.isChargeable === true || String(wb.type || '').toLowerCase() === 'chargeable';
+          return roomOk && chargeable;
+        });
+        roomWaterLogs.forEach((wb) => {
+          const amt = Number(wb.totalAmount ?? wb.chargeAmount ?? (Number(wb.quantity || 0) * Number(wb.unitPrice || 0)));
+          if (amt > 0) waterBottle += amt;
+        });
+      }
+
+      // Also include Guest LaundryOrder records for this room/checkin on selectedDate if not already counted in extraCharges
+      if (laundry === 0 && Array.isArray(laundryOrders) && laundryOrders.length > 0) {
+        const roomLaundry = laundryOrders.filter((lo) => {
+          if (lo.orderType !== 'Guest Laundry' || lo.paymentStatus === 'Complimentary') return false;
+          if (toLocalYmd(lo.date) !== selectedDate) return false;
+          if (lo.folioChargeId && seenExtraIds.has(lo.folioChargeId)) return false;
+          const loRoom = String(lo.roomNumber || '').replace(/[^\d]/g, '').trim();
+          const rowRoomDigits = String(roomNumber || '').replace(/[^\d]/g, '').trim();
+          const splitDigits = splitRoomNums.map((rn) => rn.replace(/[^\d]/g, '').trim()).filter(Boolean);
+          const checkinMatch = Boolean(c && (lo.checkInId === c.id || lo.checkinId === c.id));
+          return checkinMatch || Boolean(loRoom && (loRoom === rowRoomDigits || splitDigits.includes(loRoom)));
+        });
+        roomLaundry.forEach((lo) => {
+          const amt = Number(lo.totalAmount) || 0;
+          if (amt > 0) laundry += amt;
+        });
+      }
 
       if (inv) {
         if (inv.waterCharges) waterBottle = Math.max(waterBottle, inv.waterCharges);
@@ -531,7 +657,7 @@ export default function DailyCollectionSheet({
       const foodAmt = totalFoodAmt;
       const waterBottleAmt = waterBottle;
       const laundryAmt = laundry;
-      const anyOthersAmt = extraPerson + extraBed;
+      const anyOthersAmt = extraPerson + extraBed + otherMiscExtras;
       const totalExtra = foodAmt + waterBottleAmt + laundryAmt + anyOthersAmt;
 
       const grandTotal = totalRoom + totalExtra;
@@ -638,13 +764,15 @@ export default function DailyCollectionSheet({
         r.guestName.toLowerCase().includes(term) ||
         String(r.roomNumber).toLowerCase().includes(term)
     );
-  }, [checkins, invoices, bookings, posOrders, selectedDate, searchTerm, hotelSettings]);
+  }, [checkins, invoices, bookings, posOrders, waterBottles, laundryOrders, selectedDate, searchTerm, hotelSettings]);
 
-  // Expenses on selected date
+  // Cash Expenses on selected date (only physical cash / petty cash leaves the drawer)
   const dailyExpenses = useMemo(() => {
     return expenses.filter((e) => {
-      const eDate = (e.date || (e as any).createdAt || '').substring(0, 10);
-      return eDate === selectedDate;
+      const eDate = toLocalYmd(e.date || (e as any).createdAt || '');
+      if (eDate !== selectedDate) return false;
+      if (String((e as any).approvalStatus || (e as any).status || '').toLowerCase() === 'rejected') return false;
+      return isCashModeStr((e as any).paymentMethod || (e as any).paymentMode || (e as any).paymentSource);
     });
   }, [expenses, selectedDate]);
 
@@ -652,11 +780,32 @@ export default function DailyCollectionSheet({
     return dailyExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
   }, [dailyExpenses]);
 
+  // Auto-calculated Cash Taken by Owner (from CashHandovers + Cash Owner Withdrawals on selectedDate)
+  const autoOwnerHandover = useMemo(() => {
+    let sum = 0;
+    (handovers || []).forEach((h) => {
+      if (toLocalYmd(h.date) === selectedDate) {
+        sum += Number(h.amount) || 0;
+      }
+    });
+    (ownerPayments || []).forEach((op) => {
+      if (toLocalYmd(op.date) !== selectedDate) return;
+      if (op.status === 'Cancelled') return;
+      if (isCapitalContributionPayment(op)) return;
+      if (isCashModeStr(op.paymentMethod || (op as any).paymentMode)) {
+        sum += Number(op.amount) || 0;
+      }
+    });
+    return Math.round(sum * 100) / 100;
+  }, [handovers, ownerPayments, selectedDate]);
+
+  const ownerHandover = manualOwnerHandover !== null ? manualOwnerHandover : autoOwnerHandover;
+
   // Default expense note built from expenses list
   const defaultExpenseNote = useMemo(() => {
     if (dailyExpenses.length === 0) return 'NO DAILY CASH EXPENSES RECORDED';
     return dailyExpenses
-      .map((e) => `${e.amount} - ${(e.title || e.description || e.category || 'EXPENSE').toUpperCase()}`)
+      .map((e) => `${e.amount} - ${((e as any).title || e.description || e.category || 'EXPENSE').toUpperCase()}`)
       .join(', ');
   }, [dailyExpenses]);
 
@@ -737,11 +886,25 @@ export default function DailyCollectionSheet({
     };
   }, [reportRows]);
 
-  // Cash Counter Calculations matching the exact photo formula:
-  // TOTAL CASH = Total Cash Payment Column (Col 15)
+  // Cash Counter Calculations matching the exact Excel format formula:
+  // CASH COLLECTION TODAY = Total Cash Payment Column (Col 15)
   const totalCashCollected = totals.cash;
   const closingCounterSubtotal = openingBalance + totalCashCollected;
   const finalClosingBalance = closingCounterSubtotal - totalExpenseAmt - ownerHandover;
+
+  // Auto-cache closing balance for selectedDate so the next date automatically carries it forward
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        closingCacheKey,
+        JSON.stringify({
+          openingBalance,
+          closingBalance: finalClosingBalance,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch {}
+  }, [closingCacheKey, openingBalance, finalClosingBalance]);
 
   // Save counter balance to localStorage
   const handleSaveCounterState = () => {
@@ -760,22 +923,175 @@ export default function DailyCollectionSheet({
     } catch {}
   };
 
+  // Export to formatted Excel (.xls) matching Client's exact 19-column Draft Format + Cash Reconciliation Box
+  const handleDownloadExcel = () => {
+    const esc = (v: any) =>
+      String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    const dataRowsHtml = reportRows
+      .map(
+        (r) => `
+      <tr>
+        <td style="text-align:center;">${r.no}</td>
+        <td style="text-align:left;font-weight:bold;">${esc(r.guestName)}</td>
+        <td style="text-align:center;">${esc(r.roomNumber)}</td>
+        <td style="text-align:center;background:#ffff00;font-weight:bold;">${r.nights}</td>
+        <td style="text-align:right;">${r.openingBalance || ''}</td>
+        <td style="text-align:right;">${r.roomTariff}</td>
+        <td style="text-align:right;">${r.gst}</td>
+        <td style="text-align:right;">${r.totalRoom}</td>
+        <td style="text-align:right;">${r.food}</td>
+        <td style="text-align:right;">${r.waterBottle}</td>
+        <td style="text-align:right;">${r.laundry}</td>
+        <td style="text-align:right;">${r.anyOthers}</td>
+        <td style="text-align:right;">${r.totalExtra}</td>
+        <td style="text-align:right;font-weight:bold;">${r.grandTotal}</td>
+        <td style="text-align:right;">${r.cash}</td>
+        <td style="text-align:right;">${r.upi}</td>
+        <td style="text-align:right;">${r.icici}</td>
+        <td style="text-align:right;">${r.totalPayment}</td>
+        <td style="text-align:right;font-weight:bold;">${r.balanceDue}</td>
+      </tr>`
+      )
+      .join('');
+
+    const html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8" /></head>
+      <body>
+        <table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:11pt;">
+          <tr>
+            <td colspan="19" style="text-align:center;font-weight:bold;font-size:14pt;background:#f3f4f6;">${esc(hotelName.toUpperCase())} - DAILY COLLECTION SHEET</td>
+          </tr>
+          <tr>
+            <td colspan="19" style="text-align:center;font-weight:bold;font-style:italic;font-size:12pt;">${esc(formattedDisplayDate)}</td>
+          </tr>
+          <tr style="background:#d9d9d9;font-weight:bold;text-align:center;color:#c00000;">
+            <td rowspan="2">SR. NO.</td>
+            <td rowspan="2">CUSTOMER NAME</td>
+            <td rowspan="2">ROOM NO.</td>
+            <td rowspan="2">NO OF DAYS</td>
+            <td rowspan="2" style="color:#002060;">OPENING BALANCE</td>
+            <td rowspan="2">ROOM TARIFF</td>
+            <td rowspan="2">GST</td>
+            <td rowspan="2">TOTAL<br/>ROOM TARIFF (+) GST</td>
+            <td colspan="4">EXTRA SERVICE</td>
+            <td rowspan="2">TOTAL EXTRA SERVICE</td>
+            <td rowspan="2">TOTAL (ROOM TARIFF AND EXTRA SERVICE)</td>
+            <td colspan="3">PAYMENT</td>
+            <td rowspan="2">TOTAL PAYMENT</td>
+            <td rowspan="2" style="color:#002060;">BALANCE DUE</td>
+          </tr>
+          <tr style="background:#d9d9d9;font-weight:bold;text-align:center;color:#c00000;">
+            <td>FOOD</td>
+            <td>WATER BOTTLE</td>
+            <td>LAUNDRY CHARGES</td>
+            <td>ANY OTHERS</td>
+            <td>CASH</td>
+            <td>UPI</td>
+            <td>ICICI</td>
+          </tr>
+          <tr style="background:#d9d9d9;font-weight:bold;text-align:center;color:#c00000;">
+            <td>1</td><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td><td>7</td><td>8</td>
+            <td>9</td><td>10</td><td>11</td><td>12</td><td>13</td><td>14</td>
+            <td>15</td><td>16</td><td>17</td><td>18</td><td>19</td>
+          </tr>
+          <tr style="background:#e7e6e6;font-weight:bold;text-align:center;color:#c00000;">
+            <td></td><td></td><td></td><td></td><td>***</td><td></td><td></td><td>(5+6+7)</td>
+            <td></td><td></td><td></td><td></td><td>(9+10+11+12)</td><td>(8+13)</td>
+            <td></td><td></td><td></td><td>(15+16+17)</td><td>(14-18)</td>
+          </tr>
+          ${dataRowsHtml}
+          <tr style="background:#d9d9d9;font-weight:bold;color:#c00000;">
+            <td></td><td></td><td style="text-align:center;">TOTAL</td><td></td>
+            <td style="text-align:right;">${totals.openingBalance || ''}</td>
+            <td style="text-align:right;">${totals.roomTariff}</td>
+            <td style="text-align:right;">${totals.gst}</td>
+            <td style="text-align:right;">${totals.totalRoom}</td>
+            <td style="text-align:right;">${totals.food}</td>
+            <td style="text-align:right;">${totals.waterBottle}</td>
+            <td style="text-align:right;">${totals.laundry}</td>
+            <td style="text-align:right;">${totals.anyOthers}</td>
+            <td style="text-align:right;">${totals.totalExtra}</td>
+            <td style="text-align:right;">${totals.grandTotal}</td>
+            <td style="text-align:right;">${totals.cash}</td>
+            <td style="text-align:right;">${totals.upi}</td>
+            <td style="text-align:right;">${totals.icici}</td>
+            <td style="text-align:right;">${totals.totalPayment}</td>
+            <td style="text-align:right;">${totals.balanceDue}</td>
+          </tr>
+          <tr><td colspan="19" style="border:none;">&nbsp;</td></tr>
+          <tr>
+            <td colspan="2" style="font-weight:bold;color:#c00000;background:#d9d9d9;">OPENING CASH BALANCE</td>
+            <td style="text-align:right;font-weight:bold;color:#c00000;background:#d9d9d9;">${openingBalance}</td>
+            <td colspan="2" style="border:none;"></td>
+            <td colspan="6" style="border:none;font-weight:bold;font-style:italic;color:#c00000;">&#8594; TO BE CARRIED FORWARD FROM LAST DATE</td>
+          </tr>
+          <tr>
+            <td colspan="2" style="font-weight:bold;">CASH COLLECTION TODAY</td>
+            <td style="text-align:right;font-weight:bold;">${totals.cash}</td>
+            <td style="border:none;"></td>
+            <td style="border:none;text-align:center;font-weight:bold;">***</td>
+            <td colspan="6" style="border:none;font-weight:bold;">TO BE CARRIED FORWARD FROM LAST DATE</td>
+          </tr>
+          <tr style="background:#d9d9d9;font-weight:bold;">
+            <td colspan="2">TOTAL</td>
+            <td style="text-align:right;">${closingCounterSubtotal}</td>
+          </tr>
+          <tr>
+            <td colspan="2" style="font-weight:bold;">LESS : EXPENSES</td>
+            <td style="text-align:right;font-weight:bold;">${totalExpenseAmt}</td>
+          </tr>
+          <tr>
+            <td colspan="2" style="font-weight:bold;">LESS : TAKEN BY OWNER</td>
+            <td style="text-align:right;font-weight:bold;">${ownerHandover}</td>
+          </tr>
+          <tr style="background:#d9d9d9;font-weight:bold;color:#c00000;">
+            <td colspan="2">CLOSING CASH BALANCE</td>
+            <td style="text-align:right;">${finalClosingBalance}</td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Daily_Collection_Sheet_${selectedDate}.xls`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // Export to CSV matching Client Draft Format Daily Collection (Cols 1 to 19 + Counter Cash Settlement)
   const handleDownloadCsv = () => {
     const headers = [
-      'SR. NO.', 'CUSTMER NAME', 'ROOM NO.', 'NO OF DAYS', 'OPENING BALANCE',
-      'ROOM TARIFF', 'GST', 'TOTAL',
-      'FOOD', 'WATER BOTTEL', 'LAUNDRY CHARGES', 'ANY OTHERS', 'TOTAL EXTRA SERVICE',
+      'SR. NO.', 'CUSTOMER NAME', 'ROOM NO.', 'NO OF DAYS', 'OPENING BALANCE',
+      'ROOM TARIFF', 'GST', 'TOTAL ROOM TARIFF (+) GST',
+      'FOOD', 'WATER BOTTLE', 'LAUNDRY CHARGES', 'ANY OTHERS', 'TOTAL EXTRA SERVICE',
       'TOTAL (ROOM TARIFF AND EXTRA SERVICE)',
       'CASH', 'UPI', 'ICICI', 'TOTAL PAYMENT', 'BALANCE DUE'
     ];
 
-    const formulaReference = [
+    const colNumbers = [
       '1', '2', '3', '4', '5',
-      '6', '7', '(5+6+7)',
-      '9', '10', '11', '12', '(9+10+11+12)',
+      '6', '7', '8',
+      '9', '10', '11', '12', '13',
+      '14',
+      '15', '16', '17', '18', '19'
+    ];
+
+    const formulaReference = [
+      '', '', '', '', '***',
+      '', '', '(5+6+7)',
+      '', '', '', '', '(9+10+11+12)',
       '(8+13)',
-      '15', '16', '17', '(15+16+17)', '(14-18)'
+      '', '', '', '(15+16+17)', '(14-18)'
     ];
 
     const rows = reportRows.map((r) => [
@@ -801,7 +1117,7 @@ export default function DailyCollectionSheet({
     ]);
 
     const totalRow = [
-      '', 'TOTAL', '', '', totals.openingBalance,
+      '', '', 'TOTAL', '', totals.openingBalance,
       totals.roomTariff, totals.gst, totals.totalRoom,
       totals.food, totals.waterBottle, totals.laundry, totals.anyOthers, totals.totalExtra,
       totals.grandTotal,
@@ -810,15 +1126,16 @@ export default function DailyCollectionSheet({
 
     const csvContent = [
       `"DRAFT FORMAT DAILY COLLECTION"`,
-      `"${selectedDate}"`,
+      `"${formattedDisplayDate}"`,
       headers.join(','),
+      colNumbers.join(','),
       formulaReference.join(','),
       ...rows.map((row) => row.join(',')),
       totalRow.join(','),
       '',
-      `"OPNING CASH BALANCE",${openingBalance},,"TO BE CARRIED FORWARD FROM LAST DATE"`,
-      `"CASH COLLECTION TODAY",${totals.cash}`,
-      `"TOTAL",${openingBalance + totals.cash}`,
+      `"OPENING CASH BALANCE",${openingBalance},,"TO BE CARRIED FORWARD FROM LAST DATE"`,
+      `"CASH COLLECTION TODAY",${totals.cash},"***","TO BE CARRIED FORWARD FROM LAST DATE"`,
+      `"TOTAL",${closingCounterSubtotal}`,
       `"LESS : EXPENSES",${totalExpenseAmt}`,
       `"LESS : TAKEN BY OWNER",${ownerHandover}`,
       `"CLOSING CASH BALANCE",${finalClosingBalance}`,
@@ -877,6 +1194,15 @@ export default function DailyCollectionSheet({
             >
               <Printer className="w-4 h-4" />
               <span>Print Landscape Sheet</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadExcel}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>Export Excel (.xls)</span>
             </button>
 
             <button
@@ -977,7 +1303,7 @@ export default function DailyCollectionSheet({
                 <input
                   type="number"
                   value={ownerHandover}
-                  onChange={(e) => setOwnerHandover(Number(e.target.value) || 0)}
+                  onChange={(e) => setManualOwnerHandover(e.target.value === '' ? 0 : Number(e.target.value) || 0)}
                   className="w-full p-2.5 bg-black/40 border border-white/20 rounded-lg font-bold text-white focus:outline-none focus:border-luxury-gold-400"
                 />
               </div>
@@ -1121,49 +1447,56 @@ export default function DailyCollectionSheet({
         <div className="overflow-x-auto rounded-xl border border-luxury-brown-300 shadow-md bg-white">
           <table className="w-full border-collapse text-left text-[11px] font-mono min-w-[1380px]">
             <thead>
+              {/* Date Banner Row matching Excel Row 7 */}
+              <tr className="bg-luxury-beige-100 text-luxury-brown-950 text-center font-black border-b border-luxury-brown-300 print:bg-white print:text-black">
+                <th colSpan={onEditCheckout ? 20 : 19} className="p-2 text-sm italic tracking-wider font-serif">
+                  {formattedDisplayDate}
+                </th>
+              </tr>
+
               {/* Header Row 1 */}
               <tr className="bg-luxury-brown-950 text-luxury-gold-200 text-center font-extrabold border-b border-luxury-brown-800 print:bg-gray-100 print:text-black">
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 w-[3%] min-w-[42px] text-center whitespace-nowrap">
-                  SR. NO.<br/><span className="text-[9px] text-luxury-gold-400 font-normal">1</span>
+                  SR. NO.
                 </th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[145px] text-left whitespace-nowrap">
-                  CUSTOMER NAME<br/><span className="text-[9px] text-luxury-gold-400 font-normal">2</span>
+                  CUSTOMER NAME
                 </th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[65px] whitespace-nowrap">
-                  ROOM NO.<br/><span className="text-[9px] text-luxury-gold-400 font-normal">3</span>
+                  ROOM NO.
                 </th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[55px] whitespace-nowrap">
-                  NO. OF DAYS<br/><span className="text-[9px] text-luxury-gold-400 font-normal">4</span>
+                  NO OF DAYS
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[75px] text-right whitespace-nowrap">
-                  OPENING BAL<br/><span className="text-[9px] text-luxury-gold-400 font-normal">5</span>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[80px] text-right whitespace-nowrap text-sky-300 print:text-black">
+                  OPENING<br/>BALANCE
                 </th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap" title="Agreed Room Tariff">
-                  ROOM TARIFF<br/><span className="text-[9px] text-luxury-gold-400 font-normal">6</span>
+                  ROOM TARIFF
                 </th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[60px] text-right whitespace-nowrap">
-                  GST<br/><span className="text-[9px] text-luxury-gold-400 font-normal">7</span>
+                  GST
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap bg-luxury-brown-900 text-luxury-gold-300">
-                  TOTAL<br/><span className="text-[9px] text-luxury-gold-400 font-normal">8 (5+6+7)</span>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[88px] text-right whitespace-nowrap bg-luxury-brown-900 text-luxury-gold-300">
+                  TOTAL<br/><span className="text-[9px] font-bold">ROOM TARIFF (+) GST</span>
                 </th>
                 <th colSpan={4} className="border-r border-luxury-brown-800 p-2 bg-[#2D2214] text-amber-300 font-black tracking-wide whitespace-nowrap">
                   EXTRA SERVICE
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap bg-[#2D2214] text-amber-300 font-black">
-                  TOTAL EXTRA<br/><span className="text-[9px] text-amber-200 font-normal">13 (9+10+11+12)</span>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[88px] text-right whitespace-nowrap bg-[#2D2214] text-amber-300 font-black">
+                  TOTAL EXTRA<br/>SERVICE
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[95px] text-right whitespace-nowrap bg-[#1F170B] text-luxury-gold-300 font-black">
-                  TOTAL (ROOM+EXTRA)<br/><span className="text-[9px] text-luxury-gold-400 font-normal">14 (8+13)</span>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[100px] text-right whitespace-nowrap bg-[#1F170B] text-luxury-gold-300 font-black">
+                  TOTAL<br/><span className="text-[9px] font-bold">(ROOM TARIFF &amp; EXTRA)</span>
                 </th>
                 <th colSpan={3} className="border-r border-luxury-brown-800 p-2 bg-emerald-950 text-emerald-300 font-black tracking-wide whitespace-nowrap">
                   PAYMENT
                 </th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[90px] text-right whitespace-nowrap bg-emerald-950 text-emerald-300 font-black">
-                  TOTAL PAYMENT<br/><span className="text-[9px] text-emerald-200 font-normal">18 (15+16+17)</span>
+                  TOTAL<br/>PAYMENT
                 </th>
                 <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap bg-rose-950 text-rose-300 font-black">
-                  BALANCE DUE<br/><span className="text-[9px] text-rose-200 font-normal">19 (14-18)</span>
+                  BALANCE<br/>DUE
                 </th>
                 {onEditCheckout && (
                   <th rowSpan={2} className="p-2 min-w-[65px] text-center whitespace-nowrap print:hidden">
@@ -1173,28 +1506,62 @@ export default function DailyCollectionSheet({
               </tr>
 
               {/* Header Row 2 */}
-              <tr className="bg-luxury-brown-900 text-luxury-gold-300 text-center font-bold border-b-2 border-luxury-brown-950 print:bg-gray-200 print:text-black">
+              <tr className="bg-luxury-brown-900 text-luxury-gold-300 text-center font-bold border-b border-luxury-brown-800 print:bg-gray-200 print:text-black">
                 <th className="border-r border-luxury-brown-800 p-1.5 min-w-[60px] text-right whitespace-nowrap">
-                  FOOD<br/><span className="text-[9px] font-normal">9</span>
+                  FOOD
                 </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">
-                  WATER<br/><span className="text-[9px] font-normal">10</span>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[68px] text-right whitespace-nowrap">
+                  WATER BOTTLE
                 </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">
-                  LAUNDRY<br/><span className="text-[9px] font-normal">11</span>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[70px] text-right whitespace-nowrap">
+                  LAUNDRY CHARGES
                 </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">
-                  ANY OTHERS<br/><span className="text-[9px] font-normal">12</span>
-                </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
-                  CASH<br/><span className="text-[9px] font-normal">15</span>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[68px] text-right whitespace-nowrap">
+                  ANY OTHERS
                 </th>
                 <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
-                  UPI<br/><span className="text-[9px] font-normal">16</span>
+                  CASH
                 </th>
                 <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
-                  ICICI<br/><span className="text-[9px] font-normal">17</span>
+                  UPI
                 </th>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
+                  ICICI
+                </th>
+              </tr>
+
+              {/* Header Row 3: Column Index Numbers (1 to 19) */}
+              <tr className="bg-slate-200/90 text-rose-700 text-center font-black text-[10px] border-b border-slate-300 print:bg-gray-100">
+                {[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19].map((num) => (
+                  <th key={num} className="border-r border-slate-300 py-1 px-1 text-center font-black">
+                    {num}
+                  </th>
+                ))}
+                {onEditCheckout && <th className="py-1 px-1 print:hidden" />}
+              </tr>
+
+              {/* Header Row 4: Exact Formula Reference Row matching Excel Row 12 */}
+              <tr className="bg-slate-100 text-rose-700 text-center font-extrabold text-[10px] border-b-2 border-luxury-brown-950 print:bg-gray-50">
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1 text-rose-700 font-black" title="To be carried forward from last date">***</th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(5+6+7)</th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(9+10+11+12)</th>
+                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(8+13)</th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1"></th>
+                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(15+16+17)</th>
+                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(14-18)</th>
+                {onEditCheckout && <th className="py-1 print:hidden" />}
               </tr>
             </thead>
 
@@ -1396,12 +1763,22 @@ export default function DailyCollectionSheet({
             </div>
             <table className="w-full text-xs font-mono font-medium border-collapse">
               <tbody className="divide-y divide-luxury-brown-100">
-                <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-luxury-brown-600">Opening Cash Balance</td>
-                  <td className="p-2.5 text-right font-black text-luxury-brown-950">₹{openingBalance.toLocaleString()}</td>
+                <tr className="bg-amber-50/50 hover:bg-amber-50">
+                  <td className="p-2.5 font-black uppercase text-rose-700">
+                    Opening Cash Balance
+                    <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold italic text-rose-600 normal-case">
+                      <ArrowRight className="w-3 h-3 inline text-blue-600" /> TO BE CARRIED FORWARD FROM LAST DATE
+                    </span>
+                  </td>
+                  <td className="p-2.5 text-right font-black text-rose-700">₹{openingBalance.toLocaleString()}</td>
                 </tr>
                 <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-emerald-800">Cash Collection Today (+)</td>
+                  <td className="p-2.5 font-bold uppercase text-emerald-800">
+                    Cash Collection Today (+)
+                    <span className="ml-2 text-[10px] font-bold text-slate-500 normal-case">
+                      (*** Opening Bal Col 5 = Carried forward from last date)
+                    </span>
+                  </td>
                   <td className="p-2.5 text-right font-black text-emerald-700">₹{totalCashCollected.toLocaleString()}</td>
                 </tr>
                 <tr className="bg-luxury-beige-100/60 font-black text-luxury-brown-950">

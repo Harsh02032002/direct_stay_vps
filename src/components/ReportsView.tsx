@@ -982,6 +982,7 @@ export default function ReportsView({
           expenses={expenses}
           posOrders={posOrders}
           handovers={handovers}
+          waterBottles={waterBottles}
           staff={staff}
           hotelSettings={hotelSettings}
           onEditCheckout={onEditCheckout}

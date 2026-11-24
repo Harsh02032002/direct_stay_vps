@@ -54,9 +54,18 @@ interface ReportsModuleProps {
   rooms?: RoomAsset[];
   /** Raw app records used for Night Audit tariff & food price deviation register */
   appCheckins?: GuestCheckIn[];
+  appBookings?: any[];
+  appInvoices?: any[];
+  appExpenses?: any[];
+  appOwnerPayments?: any[];
+  appDailyClosings?: any[];
+  appWaterBottles?: any[];
+  appLaundryOrders?: any[];
   appPosOrders?: PosOrder[];
   appPosItems?: PosItem[];
   appRooms?: Room[];
+  appStaff?: any[];
+  hotelSettings?: any;
   /** Property + user scope for per-user Favourite Reports */
   hotelId?: string;
   userKey?: string;
@@ -142,9 +151,18 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
   tasks: allTasks = [],
   rooms = [],
   appCheckins = [],
+  appBookings = [],
+  appInvoices = [],
+  appExpenses = [],
+  appOwnerPayments = [],
+  appDailyClosings = [],
+  appWaterBottles = [],
+  appLaundryOrders = [],
   appPosOrders = [],
   appPosItems = [],
   appRooms = [],
+  appStaff = [],
+  hotelSettings,
   hotelId,
   userKey,
   onNavigateModule,
@@ -790,7 +808,8 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
         </div>
       </div>
 
-      {/* Header & Date-to-Date Filter */}
+      {/* Header & Date-to-Date Filter (Daily Collection Sheet has its own dedicated single-date toolbar & Excel export) */}
+      {currentTab !== 'daily_collection_sheet' && (
       <div className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3.5 sm:space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 sm:gap-4">
           <div className="min-w-0">
@@ -929,19 +948,24 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* 0. DAILY RECEPTION COLLECTION & SETTLEMENT SHEET */}
       {currentTab === 'daily_collection_sheet' && (
         <DailyCollectionSheet
           rooms={(appRooms || []) as any}
-          bookings={bookings as any}
+          bookings={(appBookings && appBookings.length > 0 ? appBookings : bookings) as any}
           checkins={(appCheckins || []) as any}
-          invoices={invoices as any}
-          expenses={[]}
+          invoices={(appInvoices && appInvoices.length > 0 ? appInvoices : invoices) as any}
+          expenses={(appExpenses || []) as any}
           posOrders={(appPosOrders || []) as any}
           handovers={[]}
-          staff={[]}
-          hotelSettings={{ name: 'Hotel Raj Residency', ownerName: 'Adarsh Sir' } as any}
+          ownerPayments={(appOwnerPayments || []) as any}
+          dailyClosings={(appDailyClosings || []) as any}
+          waterBottles={(appWaterBottles || []) as any}
+          laundryOrders={(appLaundryOrders || []) as any}
+          staff={(appStaff || []) as any}
+          hotelSettings={hotelSettings}
         />
       )}
 

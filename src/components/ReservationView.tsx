@@ -1070,6 +1070,7 @@ export default function ReservationView({
   };
 
   const handleCheckOutDateChange = (val: string) => {
+    const prevNights = calNightsForDates(checkInDate, checkOutDate);
     let cleanVal = val;
     if (cleanVal && checkInDate && cleanVal < checkInDate) {
       cleanVal = checkInDate;

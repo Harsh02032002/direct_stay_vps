@@ -312,6 +312,8 @@ interface CartLine {
   qty: number;
   /** Set ONLY when an authorized user manually overrides the configured portion + add-on selling price. */
   customUnitPrice?: number;
+  /** Raw text draft while user is typing/backspacing in the Order ₹ input so clearing doesn't snap back mid-typing. */
+  priceDraft?: string;
   overrideReason?: string;
   variant?: string;
   addons?: string[];
@@ -899,18 +901,33 @@ export const PosModule: React.FC<PosModuleProps> = ({
   );
 
   const setLinePrice = (lineId: string, raw: string) => {
+    const cleaned = raw.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
     setCart((prev) =>
       prev.map((c) => {
         if (c.lineId !== lineId) return c;
         const { configuredUnitPrice } = getLineConfiguredInfo(c);
-        if (raw === '') {
-          return { ...c, customUnitPrice: undefined, overrideReason: '' };
+        if (cleaned === '') {
+          // Keep the input blank while user backspaces/clears so it does NOT snap back to master price mid-typing
+          return { ...c, priceDraft: '', customUnitPrice: 0 };
         }
-        const parsed = Math.max(0, Number(raw) || 0);
+        const parsed = Math.max(0, Number(cleaned));
+        if (!Number.isFinite(parsed)) return c;
         if (Math.abs(parsed - configuredUnitPrice) < 0.005) {
-          return { ...c, customUnitPrice: undefined, overrideReason: '' };
+          return { ...c, priceDraft: cleaned, customUnitPrice: undefined, overrideReason: '' };
         }
-        return { ...c, customUnitPrice: parsed };
+        return { ...c, priceDraft: cleaned, customUnitPrice: parsed };
+      })
+    );
+  };
+  const commitLinePriceBlur = (lineId: string) => {
+    setCart((prev) =>
+      prev.map((c) => {
+        if (c.lineId !== lineId) return c;
+        if (c.priceDraft === '') {
+          // If user cleared the field and clicked away without typing a new price, restore configured master price
+          return { ...c, priceDraft: undefined, customUnitPrice: undefined, overrideReason: '' };
+        }
+        return { ...c, priceDraft: undefined };
       })
     );
   };
@@ -936,6 +953,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
           ...c,
           variant: varName,
           customUnitPrice: undefined,
+          priceDraft: undefined,
           overrideReason: '',
         };
       })
@@ -958,7 +976,9 @@ export const PosModule: React.FC<PosModuleProps> = ({
   };
   const resetLinePrice = (lineId: string) => {
     setCart((prev) =>
-      prev.map((c) => (c.lineId === lineId ? { ...c, customUnitPrice: undefined, overrideReason: '' } : c))
+      prev.map((c) =>
+        c.lineId === lineId ? { ...c, customUnitPrice: undefined, priceDraft: undefined, overrideReason: '' } : c
+      )
     );
   };
 
@@ -4102,7 +4122,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
               {/* Cart Items with Portion/Variant, Item Notes, Item Discount & Authorised Price Override */}
               <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                 {cart.map((line) => {
-                  const { lineId, item, qty, overrideReason, variant, addons, itemNotes, itemDiscount } = line;
+                  const { lineId, item, qty, priceDraft, overrideReason, variant, addons, itemNotes, itemDiscount } = line;
                   const { configuredUnitPrice } = getLineConfiguredInfo(line);
                   const eff = getEffectiveLineUnitPrice(line);
                   const overridden = isCartLinePriceOverridden(line);
@@ -4196,16 +4216,18 @@ export const PosModule: React.FC<PosModuleProps> = ({
                       <div className="flex items-center gap-1.5">
                         <span className="text-[10px] font-bold text-slate-500">Order ₹</span>
                         <input
-                          type="number"
-                          min={0}
+                          type="text"
+                          inputMode="decimal"
                           disabled={!canOverrideItemPrice}
                           title={
                             canOverrideItemPrice
                               ? 'Custom selling price for this order only — original product master price stays unchanged'
                               : 'Authorised staff permission is required to change an item selling price'
                           }
-                          value={eff}
+                          value={priceDraft !== undefined ? priceDraft : String(eff)}
+                          onFocus={(e) => e.currentTarget.select()}
                           onChange={(e) => setLinePrice(lineId, e.target.value)}
+                          onBlur={() => commitLinePriceBlur(lineId)}
                           className={`w-20 px-1.5 py-1 rounded-lg border text-xs font-extrabold disabled:bg-slate-100 disabled:text-slate-400 ${
                             overridden
                               ? 'border-amber-400 bg-amber-50 text-amber-950'

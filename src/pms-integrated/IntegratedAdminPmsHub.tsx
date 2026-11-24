@@ -5671,9 +5671,31 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           tasks={tasks}
           rooms={rooms}
           appCheckins={appCheckins}
+          appBookings={appBookings}
+          appInvoices={appInvoices}
+          appExpenses={Array.from(
+            new Map(
+              [...(appExpenses || []), ...(expenses || [])].map((e: any) => [String(e.id || Math.random()), e])
+            ).values()
+          )}
+          appOwnerPayments={Array.from(
+            new Map(
+              [...(appOwnerPayments || []), ...(ownerPayments || [])].map((op: any) => [String(op.id || Math.random()), op])
+            ).values()
+          )}
+          appDailyClosings={appDailyClosings}
+          appWaterBottles={appWaterBottles}
+          appLaundryOrders={appLaundryOrders}
           appPosOrders={appPosOrders}
           appPosItems={appPosItems}
           appRooms={appRooms}
+          appStaff={appStaff}
+          hotelSettings={{
+            ...(hotelSettings || {}),
+            id: selectedHotelId,
+            name: effectiveHotelProfile.hotelName || (hotelSettings as any)?.name || 'DirectStay Hotel',
+            ownerName: (hotelSettings as any)?.ownerName || 'Owner',
+          }}
           hotelId={selectedHotelId}
           userKey={loggedInUser || currentRole}
           onNavigateModule={(tab, sub) => handleNavigate(tab, sub)}
