@@ -4119,10 +4119,10 @@ export const PosModule: React.FC<PosModuleProps> = ({
                 </div>
               )}
 
-              {/* Cart Items with Portion/Variant, Item Notes, Item Discount & Authorised Price Override */}
+              {/* Cart Items (Order Taking — Price & Discount Adjustments happen cleanly in Final Settlement Modal) */}
               <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                 {cart.map((line) => {
-                  const { lineId, item, qty, priceDraft, overrideReason, variant, addons, itemNotes, itemDiscount } = line;
+                  const { lineId, item, qty, variant, addons, itemNotes, itemDiscount } = line;
                   const { configuredUnitPrice } = getLineConfiguredInfo(line);
                   const eff = getEffectiveLineUnitPrice(line);
                   const overridden = isCartLinePriceOverridden(line);
@@ -4214,35 +4214,6 @@ export const PosModule: React.FC<PosModuleProps> = ({
                       )}
 
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-bold text-slate-500">Order ₹</span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          disabled={!canOverrideItemPrice}
-                          title={
-                            canOverrideItemPrice
-                              ? 'Custom selling price for this order only — original product master price stays unchanged'
-                              : 'Authorised staff permission is required to change an item selling price'
-                          }
-                          value={priceDraft !== undefined ? priceDraft : String(eff)}
-                          onFocus={(e) => e.currentTarget.select()}
-                          onChange={(e) => setLinePrice(lineId, e.target.value)}
-                          onBlur={() => commitLinePriceBlur(lineId)}
-                          className={`w-20 px-1.5 py-1 rounded-lg border text-xs font-extrabold disabled:bg-slate-100 disabled:text-slate-400 ${
-                            overridden
-                              ? 'border-amber-400 bg-amber-50 text-amber-950'
-                              : 'border-slate-200 bg-white text-slate-900'
-                          }`}
-                        />
-                        <input
-                          type="number"
-                          min={0}
-                          value={itemDiscount || ''}
-                          onChange={(e) => setLineItemDiscount(lineId, e.target.value)}
-                          placeholder="Disc ₹"
-                          title="Item-level discount (₹)"
-                          className="w-16 px-1.5 py-1 rounded-lg border border-slate-200 text-[11px]"
-                        />
                         <input
                           type="text"
                           value={itemNotes || ''}
@@ -4250,47 +4221,17 @@ export const PosModule: React.FC<PosModuleProps> = ({
                           placeholder="Chef note (e.g. less spicy)"
                           className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-slate-200 text-[11px] bg-white"
                         />
+                        {overridden && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[10px] font-bold shrink-0">
+                            Edited ₹{eff}
+                          </span>
+                        )}
+                        {(itemDiscount || 0) > 0 && (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold shrink-0">
+                            −₹{itemDiscount}
+                          </span>
+                        )}
                       </div>
-
-                      {overridden && (
-                        <div className="space-y-1.5 pt-0.5">
-                          <div className="flex items-center justify-between text-[10px] font-bold text-amber-800">
-                            <span>
-                              Custom Order Price: ₹{eff} (Master Price ₹{configuredUnitPrice} unchanged)
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => resetLinePrice(lineId)}
-                              className="underline hover:text-amber-950 cursor-pointer"
-                            >
-                              Reset to ₹{configuredUnitPrice}
-                            </button>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="text"
-                              placeholder="Reason for custom price (required for audit log) *"
-                              value={overrideReason || ''}
-                              onChange={(e) => setLineReason(lineId, e.target.value)}
-                              className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-amber-300 bg-amber-50 text-[11px]"
-                            />
-                          </div>
-                          <div className="flex flex-wrap gap-1">
-                            {['Special Guest Prep', 'Extra Rich / Add-on', 'Custom Order Rate'].map(
-                              (preset) => (
-                                <button
-                                  key={preset}
-                                  type="button"
-                                  onClick={() => setLineReason(lineId, preset)}
-                                  className="px-1.5 py-0.5 rounded bg-white border border-amber-200 hover:border-amber-400 text-[9.5px] font-semibold text-amber-900 cursor-pointer"
-                                >
-                                  {preset}
-                                </button>
-                              )
-                            )}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -4362,7 +4303,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     onClick={() => setShowAdditionalModal(true)}
                     className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-extrabold text-xs uppercase tracking-wider shadow-sm transition cursor-pointer"
                   >
-                    Update Discount, Bill &amp; Settle →
+                    Update Price, Discount, Bill &amp; Settle →
                   </button>
                 </>
               ) : (
@@ -4396,8 +4337,8 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-extrabold text-xs uppercase tracking-wider shadow-sm transition cursor-pointer"
                   >
                     {posCapabilities.kotEnabled
-                      ? 'Proceed to KOT, Discount & Settlement →'
-                      : 'Proceed to Discount, Bill & Settlement →'}
+                      ? 'Proceed to Price Edit, KOT, Discount & Settlement →'
+                      : 'Proceed to Price Edit, Discount & Settlement →'}
                   </button>
                 </>
               )}
@@ -6410,7 +6351,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
                 2. Custom Product Price Per Order
               </div>
               <p className="text-slate-600 leading-relaxed">
-                Need a custom rate for a single order (e.g. Paneer ₹500 → ₹600)? Edit the <strong>Order ₹</strong> field directly inside the cart line and pick/type a reason. The invoice and GST recalculate automatically, the master menu price remains ₹500, and an audit log is recorded.
+                Need a custom rate for a single order (e.g. Veg Biryani ₹210 → ₹180)? Click <strong>Proceed to Price Edit, KOT, Discount &amp; Settlement</strong> and edit the <strong>Order ₹</strong> or <strong>Disc ₹</strong> field inside the <strong>Item-Wise Price &amp; Discount Adjustments</strong> section. Invoice &amp; GST recalculate live while the master menu price stays unchanged.
               </p>
             </div>
 
@@ -6461,13 +6402,13 @@ export const PosModule: React.FC<PosModuleProps> = ({
           onClick={() => setShowAdditionalModal(false)}
         >
           <div
-            className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full p-5 space-y-4 max-h-[92vh] overflow-y-auto"
+            className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full p-5 space-y-4 max-h-[92vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div>
                 <h3 className="text-base font-extrabold text-slate-900">
-                  Order Confirmation, Discount, GST &amp; Settlement
+                  Final Billing, Price Edit, Discount, GST &amp; Settlement
                 </h3>
                 <p className="text-xs text-slate-500">
                   {orderType} •{' '}
@@ -6488,6 +6429,141 @@ export const PosModule: React.FC<PosModuleProps> = ({
             </div>
 
             <div className="space-y-3 text-xs">
+              {/* Item-Wise Price & Discount Adjustments (Single place on Final Settlement Screen — Option B) */}
+              <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/80 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-extrabold text-slate-900 text-xs">
+                      Item-Wise Price &amp; Discount Adjustments (This Order Only)
+                    </span>
+                    <p className="text-[10px] text-slate-500">
+                      Edit any dish&apos;s Order ₹ or Item Disc ₹ here — master menu price stays unchanged.
+                    </p>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold">
+                    {cart.length} {cart.length === 1 ? 'Item' : 'Items'}
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {cart.map((line) => {
+                    const { lineId, item, qty, priceDraft, overrideReason, variant, itemDiscount } = line;
+                    const { configuredUnitPrice } = getLineConfiguredInfo(line);
+                    const eff = getEffectiveLineUnitPrice(line);
+                    const overridden = isCartLinePriceOverridden(line);
+                    const lineNet = r2(Math.max(0, eff * qty - (Number(itemDiscount) || 0)));
+                    return (
+                      <div
+                        key={lineId}
+                        className="p-2.5 rounded-xl bg-white border border-slate-200 space-y-2"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-slate-900 truncate">
+                              {item.name}
+                              {variant ? (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[10px] font-extrabold">
+                                  {variant}
+                                </span>
+                              ) : null}
+                              <span className="ml-1.5 text-slate-500 font-semibold">× {qty}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              Menu Rate: {formatCurrency(configuredUnitPrice)}
+                              {overridden && (
+                                <span className="ml-1.5 text-amber-700 font-bold">
+                                  • Custom Rate: {formatCurrency(eff)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-bold text-slate-500">Order ₹</span>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                disabled={!canOverrideItemPrice}
+                                title={
+                                  canOverrideItemPrice
+                                    ? 'Custom selling price for this order only — original menu master price stays unchanged'
+                                    : 'Authorised staff permission is required to change an item selling price'
+                                }
+                                value={priceDraft !== undefined ? priceDraft : String(eff)}
+                                onFocus={(e) => e.currentTarget.select()}
+                                onChange={(e) => setLinePrice(lineId, e.target.value)}
+                                onBlur={() => commitLinePriceBlur(lineId)}
+                                className={`w-20 px-2 py-1 rounded-lg border text-xs font-extrabold disabled:bg-slate-100 disabled:text-slate-400 ${
+                                  overridden
+                                    ? 'border-amber-400 bg-amber-50 text-amber-950'
+                                    : 'border-slate-300 bg-white text-slate-900'
+                                }`}
+                              />
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-bold text-slate-500">Disc ₹</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={itemDiscount || ''}
+                                onChange={(e) => setLineItemDiscount(lineId, e.target.value)}
+                                placeholder="0"
+                                title="Item-level discount (₹)"
+                                className="w-16 px-2 py-1 rounded-lg border border-slate-300 bg-white text-[11px] font-bold"
+                              />
+                            </div>
+
+                            <span className="font-extrabold text-slate-900 w-16 text-right">
+                              {formatCurrency(lineNet)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {overridden && (
+                          <div className="space-y-1.5 pt-1 border-t border-amber-100">
+                            <div className="flex items-center justify-between text-[10px] font-bold text-amber-800">
+                              <span>
+                                Custom Order Price: ₹{eff} (Master Price ₹{configuredUnitPrice} unchanged)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => resetLinePrice(lineId)}
+                                className="underline hover:text-amber-950 cursor-pointer"
+                              >
+                                Reset to ₹{configuredUnitPrice}
+                              </button>
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="Reason for custom price (required for audit log) *"
+                              value={overrideReason || ''}
+                              onChange={(e) => setLineReason(lineId, e.target.value)}
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-[11px]"
+                            />
+                            <div className="flex flex-wrap gap-1">
+                              {['Special Guest Prep', 'Extra Rich / Add-on', 'Custom Order Rate'].map(
+                                (preset) => (
+                                  <button
+                                    key={preset}
+                                    type="button"
+                                    onClick={() => setLineReason(lineId, preset)}
+                                    className="px-2 py-0.5 rounded bg-white border border-amber-200 hover:border-amber-400 text-[10px] font-semibold text-amber-900 cursor-pointer"
+                                  >
+                                    {preset}
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div>
                 <label className="block text-[11px] font-bold uppercase text-slate-500 mb-1">
                   Kitchen / Chef Notes &amp; Dietary Instructions
