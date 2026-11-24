@@ -446,6 +446,12 @@ export const PosModule: React.FC<PosModuleProps> = ({
   const [historyModeFilter, setHistoryModeFilter] = useState<'ALL' | 'Dine In' | 'Takeaway' | 'Room Service'>('ALL');
   const [leftColTab, setLeftColTab] = useState<'tables' | 'orders' | 'bookings'>('tables');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [selectedSubCategory, setSelectedSubCategory] = useState<string>('ALL');
+  const [showQuickCatModal, setShowQuickCatModal] = useState<boolean>(false);
+  const [quickCatName, setQuickCatName] = useState<string>('');
+  const [quickSubName, setQuickSubName] = useState<string>('');
+  const [quickTargetCat, setQuickTargetCat] = useState<string>('');
+  const [quickMode, setQuickMode] = useState<'category' | 'subcategory'>('category');
   const [mealWindowFilter, setMealWindowFilter] = useState<'All' | 'Breakfast' | 'Lunch' | 'Dinner'>('All');
   const [vegFilter, setVegFilter] = useState<'All' | 'Veg' | 'Non-Veg'>('All');
   const [search, setSearch] = useState('');
@@ -2918,9 +2924,26 @@ export const PosModule: React.FC<PosModuleProps> = ({
     };
   }, [orders, menuItems, todayIst]);
 
+  const availableSubCategories = useMemo(() => {
+    if (selectedCategory === 'ALL') {
+      return Array.from(new Set(menuItems.map((m) => m.subCategory).filter(Boolean))) as string[];
+    }
+    return Array.from(
+      new Set(
+        menuItems
+          .filter((m) => m.category === selectedCategory && m.subCategory)
+          .map((m) => m.subCategory)
+      )
+    ) as string[];
+  }, [selectedCategory, menuItems]);
+
   const filteredMenu = menuItems.filter((m) => {
     if (m.isActive === false) return false;
     const matchCat = selectedCategory === 'ALL' || m.category === selectedCategory;
+    const matchSubCat =
+      selectedSubCategory === 'ALL' ||
+      !selectedSubCategory ||
+      (m.subCategory && m.subCategory.toLowerCase() === selectedSubCategory.toLowerCase());
     const matchVeg = vegFilter === 'All' || (vegFilter === 'Veg' ? m.isVeg : !m.isVeg);
     const matchMeal =
       mealWindowFilter === 'All' ||
@@ -2934,7 +2957,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
       m.name.toLowerCase().includes(q) ||
       String(m.code || '').toLowerCase().includes(q) ||
       String(m.subCategory || '').toLowerCase().includes(q);
-    return matchCat && matchVeg && matchMeal && matchSearch;
+    return matchCat && matchSubCat && matchVeg && matchMeal && matchSearch;
   });
 
   const visibleSubTabs = useMemo(
@@ -2943,8 +2966,8 @@ export const PosModule: React.FC<PosModuleProps> = ({
         { id: 'terminal', label: 'POS Billing Terminal', show: true },
         {
           id: 'advance_booking',
-          label: 'Table Reservations',
-          show: posCapabilities.tableReservationsEnabled,
+          label: 'Advance Food Booking',
+          show: true,
         },
         {
           id: 'kds',
@@ -2958,7 +2981,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
           label: 'Restaurant Tables',
           show: posCapabilities.tablesEnabled,
         },
-        { id: 'catalog', label: 'Menu & Recipe Master', show: true },
+        { id: 'catalog', label: 'Menu & Categories', show: true },
         { id: 'qr_menu', label: 'Digital Menu QR', show: true },
         { id: 'reports', label: 'F&B Sales Summary', show: true },
         { id: 'settings', label: 'POS Settings', show: true },
@@ -3563,10 +3586,38 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     {vf}
                   </button>
                 ))}
+
+                {/* Quick Advance Food Booking Button */}
+                <button
+                  type="button"
+                  onClick={() => onSubTabChange('advance_booking')}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10.5px] font-bold flex items-center gap-1 cursor-pointer transition shadow-xs"
+                  title="Open Food Advance Booking"
+                >
+                  <Calendar className="w-3 h-3" />
+                  <span className="hidden sm:inline">Advance Booking</span>
+                </button>
+
+                {/* Quick Add Category / Sub Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickMode('category');
+                    setQuickCatName('');
+                    setQuickSubName('');
+                    setShowQuickCatModal(true);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[10.5px] font-bold flex items-center gap-1 cursor-pointer"
+                  title="Add Food Category or Sub-Category"
+                >
+                  <Plus className="w-3 h-3 text-amber-600" />
+                  <span>+ Cat / Sub</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => onSubTabChange('catalog')}
-                  className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-[10.5px] font-bold cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10.5px] font-bold cursor-pointer"
                 >
                   + Menu
                 </button>
@@ -3602,7 +3653,10 @@ export const PosModule: React.FC<PosModuleProps> = ({
                 <button
                   key={cat}
                   type="button"
-                  onClick={() => setSelectedCategory(cat)}
+                  onClick={() => {
+                    setSelectedCategory(cat);
+                    setSelectedSubCategory('ALL');
+                  }}
                   className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition cursor-pointer ${
                     selectedCategory === cat
                       ? 'bg-slate-900 text-amber-400'
@@ -3613,6 +3667,50 @@ export const PosModule: React.FC<PosModuleProps> = ({
                 </button>
               ))}
             </div>
+
+            {/* Subcategory Pills Strip */}
+            {availableSubCategories.length > 0 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto pt-1.5 border-t border-slate-100">
+                <span className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Sub-Category:</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSubCategory('ALL')}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold whitespace-nowrap cursor-pointer ${
+                    selectedSubCategory === 'ALL'
+                      ? 'bg-amber-500 text-slate-950 shadow-xs'
+                      : 'bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100'
+                  }`}
+                >
+                  All {selectedCategory !== 'ALL' ? selectedCategory : ''}
+                </button>
+                {availableSubCategories.map((sub) => (
+                  <button
+                    key={sub}
+                    type="button"
+                    onClick={() => setSelectedSubCategory(sub)}
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-bold whitespace-nowrap transition cursor-pointer ${
+                      selectedSubCategory === sub
+                        ? 'bg-amber-500 text-slate-950 shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {sub}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickMode('subcategory');
+                    setQuickTargetCat(selectedCategory !== 'ALL' ? selectedCategory : 'North Indian');
+                    setQuickSubName('');
+                    setShowQuickCatModal(true);
+                  }}
+                  className="px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 hover:text-amber-800 bg-amber-50 border border-dashed border-amber-300 rounded whitespace-nowrap cursor-pointer"
+                >
+                  + Add Sub
+                </button>
+              </div>
+            )}
 
             {/* Products Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[560px] overflow-y-auto pr-1">
@@ -4320,6 +4418,57 @@ export const PosModule: React.FC<PosModuleProps> = ({
               >
                 Apply %
               </button>
+            </div>
+          </div>
+
+          {/* Quick Categories & Subcategories View & Add Strip */}
+          <div className="p-3.5 bg-amber-50/70 rounded-xl border border-amber-200 space-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-extrabold text-amber-950 text-xs flex items-center gap-1.5">
+                <Utensils className="w-3.5 h-3.5 text-amber-700" />
+                Food Categories &amp; Sub-Categories
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuickMode('category');
+                  setQuickCatName('');
+                  setQuickSubName('');
+                  setShowQuickCatModal(true);
+                }}
+                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] flex items-center gap-1 shadow-xs cursor-pointer"
+              >
+                <Plus className="w-3 h-3" /> + Add Category / Sub-Category
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {Array.from(new Set(menuItems.map((m) => m.category).filter(Boolean))).map((cat) => {
+                const subs = Array.from(
+                  new Set(
+                    menuItems
+                      .filter((m) => m.category === cat && m.subCategory)
+                      .map((m) => m.subCategory as string)
+                  )
+                );
+                return (
+                  <div key={cat} className="p-2.5 bg-white rounded-xl border border-amber-200 shadow-2xs space-y-1.5 min-w-[140px]">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-extrabold text-slate-900 text-xs">{cat}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {menuItems.filter((m) => m.category === cat).length} items
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 text-[10px]">
+                      {subs.map((s) => (
+                        <span key={s} className="px-1.5 py-0.5 bg-amber-50 text-amber-900 border border-amber-200 rounded font-semibold">
+                          {s}
+                        </span>
+                      ))}
+                      {subs.length === 0 && <span className="text-slate-400 italic text-[10px]">No sub-categories</span>}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -8171,6 +8320,191 @@ export const PosModule: React.FC<PosModuleProps> = ({
           </div>
         );
       })()}
+
+      {/* QUICK ADD CATEGORY / SUB-CATEGORY MODAL */}
+      {showQuickCatModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center space-x-2">
+                <Utensils className="w-5 h-5 text-amber-600" />
+                <h3 className="font-extrabold text-slate-900 text-base">
+                  {quickMode === 'category' ? 'Add Food Category' : 'Add Sub-Category'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQuickCatModal(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Mode Toggle */}
+            <div className="flex bg-slate-100 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setQuickMode('category')}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  quickMode === 'category'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                + New Category
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuickMode('subcategory')}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  quickMode === 'subcategory'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                + Add Sub-Category
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              {quickMode === 'category' ? (
+                <>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Category Name *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Main Course, Chinese, Snacks, Beverages, Thali"
+                      value={quickCatName}
+                      onChange={(e) => setQuickCatName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500 font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      Sub-Category (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Paneer Special, Dal, Breads"
+                      value={quickSubName}
+                      onChange={(e) => setQuickSubName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Select Parent Category *</label>
+                    <select
+                      value={quickTargetCat || menuItems[0]?.category || 'North Indian'}
+                      onChange={(e) => setQuickTargetCat(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500 font-semibold bg-white"
+                    >
+                      {Array.from(new Set(menuItems.map((m) => m.category).filter(Boolean))).map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Sub-Category Name *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Paneer Special, Dal, Tandoori Breads"
+                      value={quickSubName}
+                      onChange={(e) => setQuickSubName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500 font-semibold"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex space-x-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowQuickCatModal(false)}
+                className="flex-1 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs hover:bg-slate-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (quickMode === 'category') {
+                    const cat = quickCatName.trim();
+                    if (!cat) {
+                      showToast('Please enter category name', 'warning');
+                      return;
+                    }
+                    const sub = quickSubName.trim() || undefined;
+                    const starterItem: PosMenuItem = {
+                      id: `fnb-${Date.now()}`,
+                      name: sub ? `${sub} Dish` : `${cat} Dish`,
+                      code: `POS-${Math.floor(100 + Math.random() * 900)}`,
+                      category: cat,
+                      subCategory: sub,
+                      price: 150,
+                      costPrice: 80,
+                      taxRate: foodGstRate || 5,
+                      isVeg: true,
+                      isActive: true,
+                      outletName: facilityOverrides.posOutletName || hotelSettings?.posOutletName || 'Restaurant',
+                      availablePortions: [{ name: 'Regular', price: 150 }],
+                      recipeBOM: [],
+                      mealWindows: ['All Day'],
+                      prepTimeMinutes: 15
+                    };
+                    onAddMenuItem?.(starterItem);
+                    setSelectedCategory(cat);
+                    setSelectedSubCategory(sub || 'ALL');
+                    showToast(`Category "${cat}" added successfully!`, 'success');
+                    setShowQuickCatModal(false);
+                    setQuickCatName('');
+                    setQuickSubName('');
+                  } else {
+                    const target = quickTargetCat || menuItems[0]?.category || 'North Indian';
+                    const sub = quickSubName.trim();
+                    if (!sub) {
+                      showToast('Please enter sub-category name', 'warning');
+                      return;
+                    }
+                    const starterItem: PosMenuItem = {
+                      id: `fnb-${Date.now()}`,
+                      name: `${sub} Special`,
+                      code: `POS-${Math.floor(100 + Math.random() * 900)}`,
+                      category: target,
+                      subCategory: sub,
+                      price: 180,
+                      costPrice: 90,
+                      taxRate: foodGstRate || 5,
+                      isVeg: true,
+                      isActive: true,
+                      outletName: facilityOverrides.posOutletName || hotelSettings?.posOutletName || 'Restaurant',
+                      availablePortions: [{ name: 'Regular', price: 180 }],
+                      recipeBOM: [],
+                      mealWindows: ['All Day'],
+                      prepTimeMinutes: 15
+                    };
+                    onAddMenuItem?.(starterItem);
+                    setSelectedCategory(target);
+                    setSelectedSubCategory(sub);
+                    showToast(`Sub-category "${sub}" added under "${target}"!`, 'success');
+                    setShowQuickCatModal(false);
+                    setQuickSubName('');
+                  }
+                }}
+                className="flex-1 py-2.5 bg-amber-600 text-white font-bold rounded-xl text-xs hover:bg-amber-700 shadow-xs cursor-pointer"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
