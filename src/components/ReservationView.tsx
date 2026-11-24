@@ -261,6 +261,12 @@ export default function ReservationView({
   const [bookingGstRate, setBookingGstRate] = useState<number>(
     hotelSettings?.isGstEnabled === false ? 0 : Number(hotelSettings?.defaultGstRate ?? 5)
   );
+  type GstOptionMode = 'non_gst' | 'gst_extra' | 'including_gst';
+  const [bookingGstMode, setBookingGstMode] = useState<GstOptionMode>(() => {
+    if (hotelSettings?.isGstEnabled === false) return 'non_gst';
+    if (hotelSettings?.roomRateIncludesGst) return 'including_gst';
+    return 'gst_extra';
+  });
 
   // Hybrid / Split Advance Payment State
   const [isHybridAdvance, setIsHybridAdvance] = useState<boolean>(false);
@@ -470,12 +476,21 @@ export default function ReservationView({
           setBookingPrice(effectiveRate * nCount);
           if (parsedDraft.withGst === false || Number(parsedDraft.gstRate) === 0) {
             setBookingGstRate(0);
+            setBookingGstMode('non_gst');
+          } else if (parsedDraft.roomRateIncludesGst) {
+            setBookingGstRate(
+              hotelSettings?.isGstEnabled === false
+                ? 0
+                : Number(hotelSettings?.defaultGstRate ?? 5)
+            );
+            setBookingGstMode('including_gst');
           } else {
             setBookingGstRate(
               hotelSettings?.isGstEnabled === false
                 ? 0
                 : Number(hotelSettings?.defaultGstRate ?? 5)
             );
+            setBookingGstMode('gst_extra');
           }
           setIsFormOpen(true);
           setFormStep(1);
@@ -558,6 +573,7 @@ export default function ReservationView({
       ...billSettings,
       roomGstRate: isBookingWithoutGst ? 0 : effectiveRate,
       foodGstRate: isBookingWithoutGst ? 0 : billSettings.foodGstRate || effectiveRate,
+      roomRateIncludesGst: Boolean(bk.roomRateIncludesGst),
     };
 
     const rawBookingAmount = Number(bk.bookingAmount) || roomRate * nightsCount;
@@ -901,11 +917,13 @@ export default function ReservationView({
       advanceAmount > 0
         ? [{ id: 'live-bkg-adv', amount: advanceAmount, method: paymentMethod }]
         : [],
-    gstEnabled: bookingGstRate > 0,
-    settings:
-      bookingGstRate > 0
-        ? { ...billSettings, roomGstRate: bookingGstRate }
-        : { ...billSettings, roomGstRate: 0, foodGstRate: 0 },
+    gstEnabled: bookingGstMode !== 'non_gst' && bookingGstRate > 0,
+    settings: {
+      ...billSettings,
+      roomGstRate: bookingGstMode === 'non_gst' ? 0 : bookingGstRate,
+      foodGstRate: bookingGstMode === 'non_gst' ? 0 : billSettings.foodGstRate || bookingGstRate,
+      roomRateIncludesGst: bookingGstMode === 'including_gst',
+    },
   });
   const calculatedBookingGst = liveBookingBill.totalTax;
   const totalPayableWithGst = liveBookingBill.grandTotal;
@@ -1136,6 +1154,13 @@ export default function ReservationView({
     setRoomPrice(2000);
     setBookingPrice(2000);
     setBookingGstRate(configuredDefaultGst);
+    setBookingGstMode(
+      hotelSettings?.isGstEnabled === false
+        ? 'non_gst'
+        : hotelSettings?.roomRateIncludesGst
+        ? 'including_gst'
+        : 'gst_extra'
+    );
     setAdvanceAmount(0);
     setIsHybridAdvance(false);
     setAdvanceSplitRows([
@@ -1203,12 +1228,20 @@ export default function ReservationView({
     setDoubleRate(bk.doubleRate || rate);
     const nightsCount = bk.nights || calNightsForDates(bk.checkInDate, bk.checkOutDate) || 1;
     setBookingPrice(bk.bookingAmount || rate * nightsCount);
+    const isBkWithoutGst = bk.isWithoutGst === true || (bk.gstRate !== undefined && Number(bk.gstRate) <= 0);
     setBookingGstRate(
-      bk.isWithoutGst === true || (bk.gstRate !== undefined && Number(bk.gstRate) <= 0)
+      isBkWithoutGst
         ? 0
         : configuredDefaultGst > 0
         ? configuredDefaultGst
         : Number(bk.gstRate) || 5
+    );
+    setBookingGstMode(
+      isBkWithoutGst
+        ? 'non_gst'
+        : bk.roomRateIncludesGst
+        ? 'including_gst'
+        : 'gst_extra'
     );
     setSelectedServiceIds((bk.bookedServices || []).map(s => String(s.serviceId)));
     setAdvanceAmount(bk.advanceAmount || 0);
@@ -1318,6 +1351,13 @@ export default function ReservationView({
     setRoomPrice(firstRate);
     setBookingPrice(firstRate);
     setBookingGstRate(configuredDefaultGst);
+    setBookingGstMode(
+      hotelSettings?.isGstEnabled === false
+        ? 'non_gst'
+        : hotelSettings?.roomRateIncludesGst
+        ? 'including_gst'
+        : 'gst_extra'
+    );
     setAdvanceAmount(0);
     setIsHybridAdvance(false);
     setAdvanceSplitRows([
@@ -1707,9 +1747,11 @@ export default function ReservationView({
         notes: notes.trim() || editingBooking.notes,
         bookingAmount: bookingPrice,
         extraPersonChargeApplied: singleModeExtraPaxPerNight * Math.max(1, nightsCount),
-        gstRate: bookingGstRate,
+        gstRate: bookingGstMode === 'non_gst' ? 0 : bookingGstRate,
         gstAmount: calculatedBookingGst,
-        isWithoutGst: bookingGstRate <= 0,
+        isWithoutGst: bookingGstMode === 'non_gst' || bookingGstRate <= 0,
+        gstInvoice: bookingGstMode !== 'non_gst' && bookingGstRate > 0,
+        roomRateIncludesGst: bookingGstMode === 'including_gst',
         bookedServices: bookedServicesPayload,
         travelAgentId: selectedAgentId || undefined,
         travelAgentName: selectedAgentObj ? `${selectedAgentObj.name}${selectedAgentObj.agencyName ? ` (${selectedAgentObj.agencyName})` : ''}` : undefined,
@@ -1915,9 +1957,11 @@ export default function ReservationView({
         isCheckedIn: false,
         bookingAmount: bookingPrice,
         extraPersonChargeApplied: singleModeExtraPaxPerNight * Math.max(1, nightsCount),
-        gstRate: bookingGstRate,
+        gstRate: bookingGstMode === 'non_gst' ? 0 : bookingGstRate,
         gstAmount: calculatedBookingGst,
-        isWithoutGst: bookingGstRate <= 0,
+        isWithoutGst: bookingGstMode === 'non_gst' || bookingGstRate <= 0,
+        gstInvoice: bookingGstMode !== 'non_gst' && bookingGstRate > 0,
+        roomRateIncludesGst: bookingGstMode === 'including_gst',
         bookedServices: bookedServicesPayload,
         travelAgentId: selectedAgentId || undefined,
         travelAgentName: selectedAgentObj ? `${selectedAgentObj.name}${selectedAgentObj.agencyName ? ` (${selectedAgentObj.agencyName})` : ''}` : undefined,
@@ -5445,40 +5489,73 @@ export default function ReservationView({
 
                 {/* 7. Tax Mode (With GST vs No GST) + Advance Payment Mode & Rupees */}
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
-                    <div>
-                      <span className="text-[10px] font-mono font-extrabold uppercase text-[#263449] block">
-                        GST Invoice Option
-                      </span>
-                      <span className="text-[10px] text-slate-500">
-                        Click or unclick to apply GST ({configuredDefaultGst > 0 ? configuredDefaultGst : 5}% configured in Profile Settings)
+                  {/* 3-Way GST Billing Mode Selector */}
+                  <div className="bg-[#FFFDF7] border border-luxury-brown-200 rounded-xl p-3.5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-mono uppercase font-bold text-luxury-brown-900 block">
+                        GST Billing Mode *
+                      </label>
+                      <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded border ${
+                        bookingGstMode === 'non_gst'
+                          ? 'bg-amber-100 text-amber-900 border-amber-300'
+                          : bookingGstMode === 'including_gst'
+                          ? 'bg-blue-100 text-blue-900 border-blue-300'
+                          : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                      }`}>
+                        {bookingGstMode === 'non_gst'
+                          ? 'Non-GST (0% Bill of Supply)'
+                          : bookingGstMode === 'including_gst'
+                          ? `Including GST (${bookingGstRate || configuredDefaultGst || 5}%)`
+                          : `GST Extra (+${bookingGstRate || configuredDefaultGst || 5}%)`}
                       </span>
                     </div>
-                    <label
-                      className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-mono font-extrabold cursor-pointer select-none transition-all ${
-                        bookingGstRate > 0
-                          ? 'bg-emerald-50 text-emerald-900 border-emerald-400 shadow-2xs'
-                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={bookingGstRate > 0}
-                        onChange={(e) => {
-                          setBookingGstRate(
-                            e.target.checked
-                              ? configuredDefaultGst > 0
-                                ? configuredDefaultGst
-                                : 5
-                              : 0
-                          );
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBookingGstMode('non_gst');
+                          setBookingGstRate(0);
                         }}
-                        className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
-                      />
-                      <span>
-                        GST Invoice {bookingGstRate > 0 ? `(${bookingGstRate}% Applied)` : '(Without GST)'}
-                      </span>
-                    </label>
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          bookingGstMode === 'non_gst'
+                            ? 'bg-amber-100 border-[#C49A3A] text-amber-950 font-bold shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">1. Non-GST (0%)</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">Bill of Supply • No Tax</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBookingGstMode('gst_extra');
+                          setBookingGstRate(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
+                        }}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          bookingGstMode === 'gst_extra'
+                            ? 'bg-emerald-100 border-emerald-500 text-emerald-950 font-bold shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">2. GST Extra (+{configuredDefaultGst > 0 ? configuredDefaultGst : 5}%)</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">Rate + GST Added on Top</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBookingGstMode('including_gst');
+                          setBookingGstRate(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
+                        }}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          bookingGstMode === 'including_gst'
+                            ? 'bg-blue-100 border-blue-500 text-blue-950 font-bold shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">3. Including GST ({configuredDefaultGst > 0 ? configuredDefaultGst : 5}%)</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">Tariff Includes GST (Net ₹{bookingPrice || 0})</div>
+                      </button>
+                    </div>
                   </div>
                   {editingBooking && invoices?.some(inv => inv.bookingId === editingBooking.id && !inv.isSeparateInvoice) && (
                     <div className="px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 font-medium">
@@ -5708,7 +5785,11 @@ export default function ReservationView({
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-200 text-xs font-mono">
                     <span className="text-slate-600">
                       Total Payable: <strong className="text-slate-900">₹{totalPayableWithGst.toLocaleString('en-IN')}</strong>
-                      {bookingGstRate > 0 ? ` (incl. ₹${calculatedBookingGst.toLocaleString('en-IN')} GST)` : ' (Without GST)'}
+                      {bookingGstMode === 'including_gst'
+                        ? ` (Tariff incl. ₹${calculatedBookingGst.toLocaleString('en-IN')} GST)`
+                        : bookingGstMode !== 'non_gst' && bookingGstRate > 0
+                        ? ` (incl. ₹${calculatedBookingGst.toLocaleString('en-IN')} GST)`
+                        : ' (Without GST)'}
                     </span>
                     <span className={pendingAmount > 0 ? 'text-rose-700 font-bold' : 'text-emerald-700 font-bold'}>
                       Balance Due: ₹{pendingAmount.toLocaleString('en-IN')}

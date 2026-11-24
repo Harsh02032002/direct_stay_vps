@@ -1816,7 +1816,7 @@ export default function FrontDeskView({
         }
         return inv;
       });
-      onUpdateInvoices(updatedInvoices);
+      onUpdateInvoices(updatedInvoices as Invoice[]);
     }
 
     // Sync room occupancy if room number changed

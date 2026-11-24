@@ -1326,6 +1326,12 @@ export default function CheckInFormView({
   const configuredDefaultGst =
     hotelSettings?.isGstEnabled === false ? 0 : billSettings.roomGstRate;
   const [gstPercent, setGstPercent] = useState<number>(configuredDefaultGst);
+  type GstOptionMode = 'non_gst' | 'gst_extra' | 'including_gst';
+  const [checkInGstMode, setCheckInGstMode] = useState<GstOptionMode>(() => {
+    if (hotelSettings?.isGstEnabled === false) return 'non_gst';
+    if (hotelSettings?.roomRateIncludesGst) return 'including_gst';
+    return 'gst_extra';
+  });
 
   // Collect existing folio charges already attached to this booking/stay (POS Room Service orders, chargeable water, laundry, booking otherServices) — strictly deduplicated by sourceKey
   const existingStayFolioCharges: BillCharge[] = React.useMemo(() => {
@@ -1383,13 +1389,18 @@ export default function CheckInFormView({
 
   useEffect(() => {
     if (!selectedBooking && !editingCheckIn) {
-      setGstPercent(
-        hotelSettings?.isGstEnabled === false
-          ? 0
-          : normalizeBillSettings(hotelSettings).roomGstRate
-      );
+      if (hotelSettings?.isGstEnabled === false) {
+        setGstPercent(0);
+        setCheckInGstMode('non_gst');
+      } else if (hotelSettings?.roomRateIncludesGst) {
+        setGstPercent(normalizeBillSettings(hotelSettings).roomGstRate);
+        setCheckInGstMode('including_gst');
+      } else {
+        setGstPercent(normalizeBillSettings(hotelSettings).roomGstRate);
+        setCheckInGstMode('gst_extra');
+      }
     }
-  }, [hotelSettings?.isGstEnabled, hotelSettings?.defaultGstRate, selectedBooking, editingCheckIn]);
+  }, [hotelSettings?.isGstEnabled, hotelSettings?.defaultGstRate, hotelSettings?.roomRateIncludesGst, selectedBooking, editingCheckIn]);
 
   // Pick up quick walk-in draft from QuickAddBookingModal if navigated here
   useEffect(() => {
@@ -1409,8 +1420,13 @@ export default function CheckInFormView({
         if (firstReq?.unitPrice) setRoomRate(Number(firstReq.unitPrice));
         if (parsedDraft.withGst === false || Number(parsedDraft.gstRate) === 0) {
           setGstPercent(0);
+          setCheckInGstMode('non_gst');
+        } else if (parsedDraft.roomRateIncludesGst) {
+          setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
+          setCheckInGstMode('including_gst');
         } else {
           setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
+          setCheckInGstMode('gst_extra');
         }
         setApplyExtraPersonCharge(Boolean(parsedDraft.hasExtraPerson));
         if (parsedDraft.hasExtraPerson) {
@@ -1652,11 +1668,13 @@ export default function CheckInFormView({
         : []),
     ],
     discount: totalEffectiveDiscount,
-    gstEnabled: gstPercent > 0,
-    settings:
-      gstPercent > 0
-        ? { ...billSettings, roomGstRate: gstPercent }
-        : { ...billSettings, roomGstRate: 0, foodGstRate: 0 },
+    gstEnabled: checkInGstMode !== 'non_gst' && gstPercent > 0,
+    settings: {
+      ...billSettings,
+      roomGstRate: checkInGstMode === 'non_gst' ? 0 : gstPercent,
+      foodGstRate: checkInGstMode === 'non_gst' ? 0 : billSettings.foodGstRate,
+      roomRateIncludesGst: checkInGstMode === 'including_gst',
+    },
   });
 
   const gstTax = liveCheckInBill.totalTax;
@@ -2097,8 +2115,13 @@ export default function CheckInFormView({
       b.isWithoutGst === true || (b.gstRate !== undefined && Number(b.gstRate) <= 0);
     if (isBkgWithoutGst) {
       setGstPercent(0);
+      setCheckInGstMode('non_gst');
+    } else if (b.roomRateIncludesGst) {
+      setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : Number(b.gstRate) || 5);
+      setCheckInGstMode('including_gst');
     } else {
       setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : Number(b.gstRate) || 5);
+      setCheckInGstMode('gst_extra');
     }
 
     if (notify) {
@@ -2284,10 +2307,16 @@ export default function CheckInFormView({
         (existingStayInv.gstRate !== undefined && Number(existingStayInv.gstRate) <= 0) ||
         (existingStayInv.gstRate === undefined && Number(existingStayInv.gst || 0) <= 0);
       setGstPercent(lockedNoGst ? 0 : Number(existingStayInv.gstRate) || configuredDefaultGst || 5);
+      setCheckInGstMode(lockedNoGst ? 'non_gst' : (existingStayInv as any).roomRateIncludesGst ? 'including_gst' : 'gst_extra');
     } else if (c.isWithoutGst === true || (c.gstRate !== undefined && Number(c.gstRate) <= 0)) {
       setGstPercent(0);
+      setCheckInGstMode('non_gst');
+    } else if (c.roomRateIncludesGst) {
+      setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : Number(c.gstRate) || 5);
+      setCheckInGstMode('including_gst');
     } else {
       setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : Number(c.gstRate) || 5);
+      setCheckInGstMode('gst_extra');
     }
     setHasExtraBed(Boolean(c.hasExtraBed));
     setExtraBedCount(Math.max(1, Number(c.extraBedCount) || 1));
@@ -2729,9 +2758,10 @@ export default function CheckInFormView({
         amountPaid: totalCollectedNow,
         dueAmount: Math.max(0, Math.round((finalAmount - totalCollectedNow) * 100) / 100),
         totalAmount: finalAmount,
-        gstRate: gstPercent,
-        isWithoutGst: gstPercent <= 0,
-        gstInvoice: gstPercent > 0,
+        gstRate: checkInGstMode === 'non_gst' ? 0 : gstPercent,
+        isWithoutGst: checkInGstMode === 'non_gst',
+        gstInvoice: checkInGstMode !== 'non_gst',
+        roomRateIncludesGst: checkInGstMode === 'including_gst',
         paymentMethod: resolvedMethodLabel as any,
         paymentStatus:
           totalCollectedNow >= finalAmount && finalAmount > 0
@@ -3399,9 +3429,10 @@ export default function CheckInFormView({
       extraPersonNights: applyExtraPersonCharge ? effectiveExtraPaxNights : 0,
       roomSubtotal: effectiveRoomChargesTotal,
       totalAmount: finalAmount,
-      gstRate: gstPercent,
+      gstRate: checkInGstMode === 'non_gst' ? 0 : gstPercent,
       gstAmount: gstTax,
-      isWithoutGst: gstPercent <= 0,
+      isWithoutGst: checkInGstMode === 'non_gst',
+      roomRateIncludesGst: checkInGstMode === 'including_gst',
       advanceAmount: advanceAmount,
       cashAmountPaid: cashDeskNow,
       onlineAmountPaid: onlineDeskNow,
@@ -3513,10 +3544,11 @@ export default function CheckInFormView({
               extraPersonNights: applyExtraPersonCharge ? effectiveExtraPaxNights : 0,
               extraPersonChargeApplied: effectiveExtraPersonChargesTotal,
               earlyCheckInCharge: earlyCheckInCharge,
-              gstRate: gstPercent,
+              gstRate: checkInGstMode === 'non_gst' ? 0 : gstPercent,
               gstAmount: gstTax,
-              isWithoutGst: gstPercent <= 0,
-              gstInvoice: gstPercent > 0,
+              isWithoutGst: checkInGstMode === 'non_gst',
+              gstInvoice: checkInGstMode !== 'non_gst',
+              roomRateIncludesGst: checkInGstMode === 'including_gst',
               // Preserve existing reservation advance payment record without overwriting or double-charging
               advanceAmount: Number(b.advanceAmount) > 0 ? Number(b.advanceAmount) : advanceAmount,
               paymentMethod: b.paymentMethod || paymentMethod,
@@ -3596,10 +3628,11 @@ export default function CheckInFormView({
         extraPersonNights: applyExtraPersonCharge ? effectiveExtraPaxNights : 0,
         extraPersonChargeApplied: effectiveExtraPersonChargesTotal,
         earlyCheckInCharge: earlyCheckInCharge,
-        gstRate: gstPercent,
+        gstRate: checkInGstMode === 'non_gst' ? 0 : gstPercent,
         gstAmount: gstTax,
-        isWithoutGst: gstPercent <= 0,
-        gstInvoice: gstPercent > 0,
+        isWithoutGst: checkInGstMode === 'non_gst',
+        gstInvoice: checkInGstMode !== 'non_gst',
+        roomRateIncludesGst: checkInGstMode === 'including_gst',
         advanceAmount: advanceAmount + effectiveDeskReceivedNow,
         paymentMethod: (isHybridCheckInPay && activeCheckInSplits.length > 0 ? activeCheckInSplits[0].method : paymentMethod) as PaymentMethod,
         payments: initialPayments.map((p, idx) => ({
@@ -3646,7 +3679,7 @@ export default function CheckInFormView({
         (existingPrimaryInvForStay.gstRate !== undefined && Number(existingPrimaryInvForStay.gstRate) <= 0) ||
         (existingPrimaryInvForStay.gstRate === undefined && Number(existingPrimaryInvForStay.gst || 0) <= 0)
       : false;
-    const requestedCheckInNoGst = gstPercent <= 0;
+    const requestedCheckInNoGst = checkInGstMode === 'non_gst' || gstPercent <= 0;
     const mustCreateSeparateInvAtCheckIn =
       Boolean(existingPrimaryInvForStay) && !editingCheckIn && existingInvIsNoGst !== requestedCheckInNoGst;
 
@@ -6885,28 +6918,73 @@ export default function CheckInFormView({
                     </div>
                   ) : (
                     <>
-                      <label className="flex items-center gap-3 p-3 rounded-xl border border-luxury-brown-200 bg-white cursor-pointer select-none hover:border-emerald-500 transition-all">
-                        <input
-                          type="checkbox"
-                          checked={gstPercent > 0}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
-                            } else {
-                              setGstPercent(0);
-                            }
-                          }}
-                          className="w-4 h-4 accent-emerald-700 rounded cursor-pointer"
-                        />
-                        <div className="flex-1">
-                          <span className="text-xs font-bold text-luxury-brown-950 block">
-                            GST Invoice ({gstPercent > 0 ? `Applied: ${gstPercent}% GST from Settings` : 'Unchecked — 0% Without GST'})
-                          </span>
-                          <span className="text-[10px] text-luxury-brown-600 block">
-                            Tick for GST Invoice or untick for Non-GST bill. Change default GST % anytime in My Profile Settings.
+                      <div className="bg-[#FFFDF7] border border-luxury-brown-200 rounded-xl p-3.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-mono uppercase font-bold text-luxury-brown-900 block">
+                            GST Billing Mode *
+                          </label>
+                          <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded border ${
+                            checkInGstMode === 'non_gst'
+                              ? 'bg-amber-100 text-amber-900 border-amber-300'
+                              : checkInGstMode === 'including_gst'
+                              ? 'bg-blue-100 text-blue-900 border-blue-300'
+                              : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                          }`}>
+                            {checkInGstMode === 'non_gst'
+                              ? 'Non-GST (0% Bill of Supply)'
+                              : checkInGstMode === 'including_gst'
+                              ? `Including GST (${gstPercent || configuredDefaultGst || 5}%)`
+                              : `GST Extra (+${gstPercent || configuredDefaultGst || 5}%)`}
                           </span>
                         </div>
-                      </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCheckInGstMode('non_gst');
+                              setGstPercent(0);
+                            }}
+                            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                              checkInGstMode === 'non_gst'
+                                ? 'bg-amber-100 border-[#C49A3A] text-amber-950 font-bold shadow-xs'
+                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className="text-xs font-bold">1. Non-GST (0%)</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">Bill of Supply • No Tax</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCheckInGstMode('gst_extra');
+                              setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
+                            }}
+                            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                              checkInGstMode === 'gst_extra'
+                                ? 'bg-emerald-100 border-emerald-500 text-emerald-950 font-bold shadow-xs'
+                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className="text-xs font-bold">2. GST Extra (+{configuredDefaultGst > 0 ? configuredDefaultGst : 5}%)</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">Rate + GST Added on Top</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCheckInGstMode('including_gst');
+                              setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
+                            }}
+                            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                              checkInGstMode === 'including_gst'
+                                ? 'bg-blue-100 border-blue-500 text-blue-950 font-bold shadow-xs'
+                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className="text-xs font-bold">3. Including GST ({configuredDefaultGst > 0 ? configuredDefaultGst : 5}%)</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">Tariff Includes GST (Net ₹{roomRate || 0})</div>
+                          </button>
+                        </div>
+                      </div>
                       {existingStayPrimaryInvoice && !editingCheckIn && (
                         <p className="text-[10px] text-amber-800 font-medium">
                           Note: Advance invoice #{existingStayPrimaryInvoice.invoiceNumber} already exists. Keeping the same tax mode preserves it; changing tax mode here will issue a separate new invoice without modifying #{existingStayPrimaryInvoice.invoiceNumber}.
@@ -7339,11 +7417,38 @@ export default function CheckInFormView({
                           Stay dates (Asia/Kolkata • DD-MM-YYYY), room allocation, meal plan &amp; rate plan
                         </p>
                       </div>
-                      {isFutureAdvanceArrival && (
-                        <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-mono font-bold">
-                          Advance Booking Mode • Room stays Available until Check-In
-                        </span>
-                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isSameDayStay ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCheckOutDate(getFutureDateStr(1, checkInDate || todayIstStr));
+                              setStayHours('');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-300 text-indigo-900 text-xs font-mono font-bold hover:bg-indigo-100 transition-all cursor-pointer shadow-xs"
+                            title="Switch to overnight stay (1 night)"
+                          >
+                            <span>🌙 Switch to Overnight (1 Night)</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCheckOutDate(checkInDate);
+                              setStayHours(3);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-[#C49A3A]/60 text-amber-900 text-xs font-mono font-bold hover:bg-amber-100 transition-all cursor-pointer shadow-xs"
+                            title="Set same-day hourly stay"
+                          >
+                            <span>⚡ Same-Day Stay</span>
+                          </button>
+                        )}
+                        {isFutureAdvanceArrival && (
+                          <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-mono font-bold">
+                            Advance Booking Mode • Room stays Available until Check-In
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     {/* Optional Existing Advance Reservation Selector */}
@@ -7469,39 +7574,18 @@ export default function CheckInFormView({
 
                       <div className="md:col-span-4 space-y-1">
                         <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-[#263449]">
-                            Departure <span className="text-[#A8812B]">*</span>
-                          </label>
-                          <div className="flex items-center gap-1.5">
-                            {isSameDayStay ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCheckOutDate(getFutureDateStr(1, checkInDate || todayIstStr));
-                                  setStayHours('');
-                                }}
-                                className="text-[9.5px] font-mono font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
-                                title="Switch to overnight stay (1 night)"
-                              >
-                                + Overnight
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCheckOutDate(checkInDate);
-                                  setStayHours(3);
-                                }}
-                                className="text-[9.5px] font-mono font-bold text-amber-700 hover:text-amber-900 underline cursor-pointer"
-                                title="Set same-day hourly stay"
-                              >
-                                ⚡ Same-Day
-                              </button>
+                          <label className="text-xs font-bold text-[#263449] flex items-center gap-1.5">
+                            <span>Departure</span>
+                            <span className="text-[#A8812B]">*</span>
+                            {isSameDayStay && (
+                              <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.2 rounded">
+                                Same-Day
+                              </span>
                             )}
-                            <span className="text-[10px] font-mono font-bold text-slate-600">
-                              {formatDdmmyyyy(checkOutDate)} / {departureTime}
-                            </span>
-                          </div>
+                          </label>
+                          <span className="text-[10px] font-mono font-bold text-slate-600">
+                            {formatDdmmyyyy(checkOutDate)} / {departureTime}
+                          </span>
                         </div>
                         <div className="grid grid-cols-[1fr_102px] gap-1.5">
                           <input
@@ -9456,13 +9540,26 @@ export default function CheckInFormView({
                             )}
 
                             <div className="flex justify-between gap-2 text-slate-700">
-                              <span>GST ({gstPercent}%)</span>
+                              <span>
+                                {checkInGstMode === 'including_gst'
+                                  ? `GST Included (${gstPercent || configuredDefaultGst || 5}%)`
+                                  : checkInGstMode === 'non_gst'
+                                  ? 'GST (0% Non-GST)'
+                                  : `GST (${gstPercent}%)`}
+                              </span>
                               <strong className="text-[#263449]">₹{gstTax.toLocaleString('en-IN')}</strong>
                             </div>
 
                             <div className="flex justify-between gap-2 pt-2 border-t border-[#DCE3EC] text-sm">
                               <span className="font-sans font-bold text-[#263449]">
-                                Total Amount <span className="text-[11px] font-normal text-slate-500">({gstPercent > 0 ? 'Inclusive of taxes' : 'No GST'})</span>
+                                Total Amount{' '}
+                                <span className="text-[11px] font-normal text-slate-500">
+                                  {checkInGstMode === 'including_gst'
+                                    ? `(Tariff includes ${gstPercent || 5}% GST)`
+                                    : checkInGstMode === 'non_gst' || gstPercent <= 0
+                                    ? '(Non-GST / 0% Tax)'
+                                    : '(Inclusive of taxes)'}
+                                </span>
                               </span>
                               <strong className="text-[#8B691E] font-extrabold">
                                 ₹{finalAmount.toLocaleString('en-IN')}
@@ -9624,22 +9721,87 @@ export default function CheckInFormView({
                           <span className="text-[11px] font-mono font-extrabold uppercase tracking-wider text-[#263449] flex items-center gap-1.5">
                             <DollarSign className="w-3.5 h-3.5 text-[#C49A3A]" /> PAYMENT SUMMARY
                           </span>
-                          <label className="inline-flex items-center gap-1.5 text-xs font-bold text-[#263449] cursor-pointer">
-                            <input
-                              type="checkbox"
-                              disabled={Boolean(isCheckInGstLockedByExistingInvoice)}
-                              checked={gstPercent > 0}
-                              onChange={e => {
-                                if (e.target.checked) {
-                                  setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
-                                } else {
+                        </div>
+
+                        {/* 3-Way GST Billing Mode Selector */}
+                        <div className="bg-white border border-[#DCE3EC] rounded-xl p-3.5 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[11px] font-mono uppercase font-bold text-[#263449] block">
+                              GST Billing Mode *
+                            </label>
+                            {isCheckInGstLockedByExistingInvoice && existingStayPrimaryInvoice ? (
+                              <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded">
+                                🔒 Locked #{existingStayPrimaryInvoice.invoiceNumber}
+                              </span>
+                            ) : (
+                              <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded border ${
+                                checkInGstMode === 'non_gst'
+                                  ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                  : checkInGstMode === 'including_gst'
+                                  ? 'bg-blue-100 text-blue-900 border-blue-300'
+                                  : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                              }`}>
+                                {checkInGstMode === 'non_gst'
+                                  ? 'Non-GST (0% Bill of Supply)'
+                                  : checkInGstMode === 'including_gst'
+                                  ? `Including GST (${gstPercent || configuredDefaultGst || 5}%)`
+                                  : `GST Extra (+${gstPercent || configuredDefaultGst || 5}%)`}
+                              </span>
+                            )}
+                          </div>
+                          {isCheckInGstLockedByExistingInvoice && existingStayPrimaryInvoice ? (
+                            <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 font-medium">
+                              Advance invoice <strong>#{existingStayPrimaryInvoice.invoiceNumber}</strong> is already generated ({gstPercent > 0 ? `With GST ${gstPercent}%` : 'No GST 0%'}). GST cannot be edited on a generated invoice.
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCheckInGstMode('non_gst');
                                   setGstPercent(0);
-                                }
-                              }}
-                              className="w-4 h-4 accent-[#B5822D] cursor-pointer"
-                            />
-                            <span>Include tax (GST {gstPercent}%)</span>
-                          </label>
+                                }}
+                                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                                  checkInGstMode === 'non_gst'
+                                    ? 'bg-amber-100 border-[#C49A3A] text-amber-950 font-bold shadow-xs'
+                                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="text-xs font-bold">1. Non-GST (0%)</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">Bill of Supply • No Tax</div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCheckInGstMode('gst_extra');
+                                  setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
+                                }}
+                                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                                  checkInGstMode === 'gst_extra'
+                                    ? 'bg-emerald-100 border-emerald-500 text-emerald-950 font-bold shadow-xs'
+                                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="text-xs font-bold">2. GST Extra (+{configuredDefaultGst > 0 ? configuredDefaultGst : 5}%)</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">Rate + GST Added on Top</div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCheckInGstMode('including_gst');
+                                  setGstPercent(configuredDefaultGst > 0 ? configuredDefaultGst : 5);
+                                }}
+                                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                                  checkInGstMode === 'including_gst'
+                                    ? 'bg-blue-100 border-blue-500 text-blue-950 font-bold shadow-xs'
+                                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="text-xs font-bold">3. Including GST ({configuredDefaultGst > 0 ? configuredDefaultGst : 5}%)</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">Tariff Includes GST (Net ₹{roomRate || 0})</div>
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex flex-wrap items-end justify-between gap-3 bg-white p-3.5 rounded-xl border border-[#DCE3EC]">
@@ -9651,7 +9813,11 @@ export default function CheckInFormView({
                               ₹{finalAmount.toLocaleString('en-IN')}
                             </strong>
                             <span className="text-[10px] text-slate-500 block">
-                              {gstPercent > 0 ? `Inclusive of ${gstPercent}% GST` : 'Without GST (0%)'}
+                              {checkInGstMode === 'including_gst'
+                                ? `Tariff includes ${gstPercent || 5}% GST (Tax ₹${gstTax.toLocaleString('en-IN')})`
+                                : checkInGstMode === 'non_gst' || gstPercent <= 0
+                                ? 'Without GST (0% Bill of Supply)'
+                                : `Inclusive of ${gstPercent}% GST`}
                             </span>
                           </div>
                           <div className="text-right font-mono text-xs space-y-0.5">
@@ -9666,7 +9832,7 @@ export default function CheckInFormView({
                           </div>
                         </div>
 
-                        {gstPercent > 0 && (
+                        {checkInGstMode !== 'non_gst' && gstPercent > 0 && (
                           <div className="p-3 rounded-xl bg-white border border-[#DCE3EC] space-y-2">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-[10px] font-mono uppercase font-bold text-slate-600">GST INVOICE TYPE</span>

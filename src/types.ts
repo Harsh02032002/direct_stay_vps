@@ -269,6 +269,7 @@ export interface Booking {
   gstAmount?: number;
   isWithoutGst?: boolean;
   gstInvoice?: boolean;
+  roomRateIncludesGst?: boolean;
   paymentStatus?: 'Unpaid' | 'Partially Paid' | 'Fully Paid' | 'Payment Failed' | 'Refunded';
   transactionId?: string;
   bookingDate?: string;
@@ -479,6 +480,7 @@ export interface GuestCheckIn {
   gstAmount?: number;
   isWithoutGst?: boolean;
   gstInvoice?: boolean;
+  roomRateIncludesGst?: boolean;
   advanceAmount: number;
   cashAmountPaid: number;
   onlineAmountPaid: number;

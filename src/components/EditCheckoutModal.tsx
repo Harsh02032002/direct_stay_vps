@@ -195,9 +195,9 @@ export default function EditCheckoutModal({
         const dt = toLocalYmd(p.dateTime || guest.checkInDate || defaultOutDate);
         const mode = normalizeMode(p.paymentMethod);
         const pType: EditablePaymentRow['paymentType'] =
-          p.paymentType === 'Advance Deposit'
+          (p as any).paymentType === 'Advance Deposit'
             ? 'Advance Deposit'
-            : p.paymentType === 'Room Service'
+            : (p as any).paymentType === 'Room Service'
             ? 'Room Service'
             : 'Settle Balance';
         const key = `${p.id || i}:${amt}:${mode}:${dt}`;
@@ -209,7 +209,7 @@ export default function EditCheckoutModal({
           method: mode,
           paymentType: pType,
           amount: amt,
-          notes: p.notes || p.referenceId || '',
+          notes: p.notes || (p as any).referenceId || (p as any).referenceNo || '',
         });
       });
     } else if (existingStayInv && Array.isArray((existingStayInv as any).paymentHistory)) {
