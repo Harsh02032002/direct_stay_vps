@@ -860,28 +860,11 @@ export default function App() {
     if (Array.isArray(data.roomVerifications)) setRawRoomVerifications(data.roomVerifications);
     if (Array.isArray(data.rolePermissions) && data.rolePermissions.length > 0) setRawRolePermissions(data.rolePermissions);
     if (Array.isArray(data.inventoryProducts)) {
-      let prods = [...data.inventoryProducts];
-      const hasWater = prods.some(p => p.name?.toLowerCase().includes('water') || p.name?.toLowerCase().includes('mineral'));
-      if (!hasWater) {
-        prods = [
-          {
-            id: 'inv-prod-water-1',
-            hotelId: data.hotelSettings?.id || 'hotel-1',
-            name: 'Packaged Drinking Water (1L)',
-            category: 'Housekeeping / F&B',
-            sku: 'WATER-1L',
-            unit: 'Bottles',
-            currentStock: 0,
-            minStockAlert: 5,
-            costPrice: 0,
-            sellingPrice: 0,
-            supplierName: '',
-            lastRestockedDate: new Date().toISOString().split('T')[0],
-          },
-          ...prods,
-        ];
-      }
-      setRawInventoryProducts(prods);
+      setRawInventoryProducts(
+        data.inventoryProducts.filter(
+          p => !(p.id?.startsWith('inv-prod-water-') && Number(p.currentStock || 0) === 0)
+        )
+      );
     }
     if (Array.isArray(data.inventoryCategories) && data.inventoryCategories.length > 0) setRawInventoryCategories(data.inventoryCategories);
     if (Array.isArray(data.inventorySuppliers)) setRawInventorySuppliers(data.inventorySuppliers);
@@ -3261,26 +3244,9 @@ export default function App() {
     const activePackageName = activePackageObj?.name || 'Starter';
 
     const tenantProds = rawInventoryProducts.filter(p => p.hotelId === effectiveTenantHotelId);
-    const hasWaterInTenant = tenantProds.some(p => p.name?.toLowerCase().includes('water') || p.name?.toLowerCase().includes('mineral'));
-    const inventoryProducts = hasWaterInTenant
-      ? tenantProds
-      : [
-          {
-            id: `inv-prod-water-${effectiveTenantHotelId || '1'}`,
-            hotelId: effectiveTenantHotelId || 'hotel-1',
-            name: 'Packaged Drinking Water (1L)',
-            category: 'Housekeeping / F&B',
-            sku: 'WATER-1L',
-            unit: 'Bottles',
-            currentStock: 0,
-            minStockAlert: 5,
-            costPrice: 0,
-            sellingPrice: 0,
-            supplierName: '',
-            lastRestockedDate: new Date().toISOString().split('T')[0],
-          },
-          ...tenantProds,
-        ];
+    const inventoryProducts = tenantProds.filter(
+      p => !(p.id?.startsWith('inv-prod-water-') && Number(p.currentStock || 0) === 0)
+    );
     const inventoryCategories = rawInventoryCategories.some(c => c.hotelId === effectiveTenantHotelId)
       ? rawInventoryCategories.filter(c => c.hotelId === effectiveTenantHotelId)
       : rawInventoryCategories.filter(c => !c.hotelId || c.hotelId === effectiveTenantHotelId);

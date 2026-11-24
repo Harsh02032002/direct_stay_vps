@@ -523,20 +523,48 @@ export default function DailyCollectionSheet({
             } as GuestCheckIn)
           : null);
 
+      const openingBalance = Number((c as any)?.openingBalance || (b as any)?.openingBalance || 0);
+      const roomTariffNum = Number(roomTariff) || 0;
+      const gstNum = typeof gstAmount === 'number' ? gstAmount : 0;
+      const totalRoom = openingBalance + roomTariffNum + gstNum;
+
+      const foodAmt = totalFoodAmt;
+      const waterBottleAmt = waterBottle;
+      const laundryAmt = laundry;
+      const anyOthersAmt = extraPerson + extraBed;
+      const totalExtra = foodAmt + waterBottleAmt + laundryAmt + anyOthersAmt;
+
+      const grandTotal = totalRoom + totalExtra;
+
+      const payCash = cashPay + kitchenCash;
+      const payUpi = upiPay + kitchenUpi;
+      const payIcici = iciciPay;
+      const totalPayment = payCash + payUpi + payIcici;
+
+      const balanceDue = Math.max(0, Math.round((grandTotal - totalPayment) * 100) / 100);
+
       return {
         no: idx + 1,
         guestName,
         roomNumber,
-        roomTariff,
-        gst: gstAmount,
-        cash: cashPay,
-        upi: upiPay,
-        icici: iciciPay,
-        balance,
         nights,
-        waterBottle,
+        openingBalance,
+        roomTariff: roomTariffNum,
+        gst: gstAmount,
+        totalRoom,
+        food: foodAmt,
+        waterBottle: waterBottleAmt,
+        laundry: laundryAmt,
+        anyOthers: anyOthersAmt,
+        totalExtra,
+        grandTotal,
+        cash: payCash,
+        upi: payUpi,
+        icici: payIcici,
+        totalPayment,
+        balanceDue,
+        // Detailed components
         extraPerson,
-        laundry,
         extraBed,
         kitchenUpi,
         kitchenCash,
@@ -572,16 +600,23 @@ export default function DailyCollectionSheet({
         no: processed.length + 1,
         guestName: String(o.guestName || `WALK-IN FOOD (${o.orderType || 'KITCHEN'})`).toUpperCase(),
         roomNumber: o.roomNumber ? String(o.roomNumber) : (o.tableNo ? `TBL ${o.tableNo}` : 'KITCHEN'),
+        nights: 0,
+        openingBalance: 0,
         roomTariff: 0,
         gst: Number(o.taxAmount || 0),
-        cash: 0,
-        upi: 0,
-        icici: 0,
-        balance: !isPaid ? amt : 0,
-        nights: 0,
+        totalRoom: Number(o.taxAmount || 0),
+        food: amt,
         waterBottle: 0,
-        extraPerson: 0,
         laundry: 0,
+        anyOthers: 0,
+        totalExtra: amt,
+        grandTotal: amt + Number(o.taxAmount || 0),
+        cash: kCash,
+        upi: kUpi,
+        icici: 0,
+        totalPayment: kCash + kUpi,
+        balanceDue: !isPaid ? amt : 0,
+        extraPerson: 0,
         extraBed: 0,
         kitchenUpi: kUpi,
         kitchenCash: kCash,
@@ -629,16 +664,23 @@ export default function DailyCollectionSheet({
 
   // Table Column Totals
   const totals = useMemo(() => {
-    let rackTariff = 0;
+    let openingBalance = 0;
     let roomTariff = 0;
     let gstNum = 0;
+    let totalRoom = 0;
+    let food = 0;
+    let waterBottle = 0;
+    let laundry = 0;
+    let anyOthers = 0;
+    let totalExtra = 0;
+    let grandTotal = 0;
     let cash = 0;
     let upi = 0;
     let icici = 0;
-    let balance = 0;
-    let waterBottle = 0;
+    let totalPayment = 0;
+    let balanceDue = 0;
+
     let extraPerson = 0;
-    let laundry = 0;
     let extraBed = 0;
     let kitchenUpi = 0;
     let kitchenCash = 0;
@@ -646,34 +688,47 @@ export default function DailyCollectionSheet({
     let totalFoodAmt = 0;
 
     reportRows.forEach((r) => {
-      rackTariff += Number((r as any).rackTariff) || Number(r.roomTariff) || 0;
+      openingBalance += Number(r.openingBalance) || 0;
       roomTariff += Number(r.roomTariff) || 0;
       if (typeof r.gst === 'number') gstNum += r.gst;
+      totalRoom += Number(r.totalRoom) || 0;
+      food += Number(r.food) || 0;
+      waterBottle += Number(r.waterBottle) || 0;
+      laundry += Number(r.laundry) || 0;
+      anyOthers += Number(r.anyOthers) || 0;
+      totalExtra += Number(r.totalExtra) || 0;
+      grandTotal += Number(r.grandTotal) || 0;
       cash += Number(r.cash) || 0;
       upi += Number(r.upi) || 0;
       icici += Number(r.icici) || 0;
-      balance += Number(r.balance) || 0;
-      waterBottle += Number(r.waterBottle) || 0;
+      totalPayment += Number(r.totalPayment) || 0;
+      balanceDue += Number(r.balanceDue) || 0;
+
       extraPerson += Number(r.extraPerson) || 0;
-      laundry += Number(r.laundry) || 0;
       extraBed += Number(r.extraBed) || 0;
       kitchenUpi += Number(r.kitchenUpi) || 0;
       kitchenCash += Number(r.kitchenCash) || 0;
       kitchenDue += Number(r.kitchenDue) || 0;
-      totalFoodAmt += Number(r.totalFoodAmt) || 0;
+      totalFoodAmt += Number(r.totalFoodAmt || r.food) || 0;
     });
 
     return {
-      rackTariff,
+      openingBalance,
       roomTariff,
       gst: gstNum,
+      totalRoom,
+      food,
+      waterBottle,
+      laundry,
+      anyOthers,
+      totalExtra,
+      grandTotal,
       cash,
       upi,
       icici,
-      balance,
-      waterBottle,
+      totalPayment,
+      balanceDue,
       extraPerson,
-      laundry,
       extraBed,
       kitchenUpi,
       kitchenCash,
@@ -683,8 +738,8 @@ export default function DailyCollectionSheet({
   }, [reportRows]);
 
   // Cash Counter Calculations matching the exact photo formula:
-  // TOTAL CASH = Room Cash + Kitchen Cash
-  const totalCashCollected = totals.cash + totals.kitchenCash;
+  // TOTAL CASH = Total Cash Payment Column (Col 15)
+  const totalCashCollected = totals.cash;
   const closingCounterSubtotal = openingBalance + totalCashCollected;
   const finalClosingBalance = closingCounterSubtotal - totalExpenseAmt - ownerHandover;
 
@@ -705,45 +760,70 @@ export default function DailyCollectionSheet({
     } catch {}
   };
 
-  // Export to CSV
+  // Export to CSV matching Client Draft Format Daily Collection (Cols 1 to 19 + Counter Cash Settlement)
   const handleDownloadCsv = () => {
     const headers = [
-      'NO.', 'CUSTOMER NAME', 'ROOM NO.', 'ROOM TARIFF', 'GST',
-      'ROOM CASH', 'ROOM UPI', 'ROOM ICICI/CARD', 'BALANCE', 'NO. OF DAYS',
-      'WATER BOTTLE', 'EP', 'LAUNDRY', 'EXTRA BED',
-      'KITCHEN UPI', 'KITCHEN CASH', 'KITCHEN DUE', 'TOTAL FOOD AMT'
+      'SR. NO.', 'CUSTMER NAME', 'ROOM NO.', 'NO OF DAYS', 'OPENING BALANCE',
+      'ROOM TARIFF', 'GST', 'TOTAL',
+      'FOOD', 'WATER BOTTEL', 'LAUNDRY CHARGES', 'ANY OTHERS', 'TOTAL EXTRA SERVICE',
+      'TOTAL (ROOM TARIFF AND EXTRA SERVICE)',
+      'CASH', 'UPI', 'ICICI', 'TOTAL PAYMENT', 'BALANCE DUE'
+    ];
+
+    const formulaReference = [
+      '1', '2', '3', '4', '5',
+      '6', '7', '(5+6+7)',
+      '9', '10', '11', '12', '(9+10+11+12)',
+      '(8+13)',
+      '15', '16', '17', '(15+16+17)', '(14-18)'
     ];
 
     const rows = reportRows.map((r) => [
-      r.no, `"${r.guestName}"`, r.roomNumber, r.roomTariff, r.gst,
-      r.cash, r.upi, r.icici, r.balance, r.nights,
-      r.waterBottle, r.extraPerson, r.laundry, r.extraBed,
-      r.kitchenUpi, r.kitchenCash, r.kitchenDue, r.totalFoodAmt
+      r.no,
+      `"${String(r.guestName || '').replace(/"/g, '""')}"`,
+      `"${String(r.roomNumber || '')}"`,
+      r.nights,
+      r.openingBalance,
+      r.roomTariff,
+      r.gst,
+      r.totalRoom,
+      r.food,
+      r.waterBottle,
+      r.laundry,
+      r.anyOthers,
+      r.totalExtra,
+      r.grandTotal,
+      r.cash,
+      r.upi,
+      r.icici,
+      r.totalPayment,
+      r.balanceDue
     ]);
 
     const totalRow = [
-      'TOTAL', '', '', totals.roomTariff, totals.gst,
-      totals.cash, totals.upi, totals.icici, totals.balance, '',
-      totals.waterBottle, totals.extraPerson, totals.laundry, totals.extraBed,
-      totals.kitchenUpi, totals.kitchenCash, totals.kitchenDue, totals.totalFoodAmt
+      '', 'TOTAL', '', '', totals.openingBalance,
+      totals.roomTariff, totals.gst, totals.totalRoom,
+      totals.food, totals.waterBottle, totals.laundry, totals.anyOthers, totals.totalExtra,
+      totals.grandTotal,
+      totals.cash, totals.upi, totals.icici, totals.totalPayment, totals.balanceDue
     ];
 
     const csvContent = [
-      `"DAILY COLLECTION & COUNTER SETTLEMENT SHEET - ${hotelSettings?.name || 'HOTEL'}"`,
-      `"DATE: ${formattedDisplayDate}"`,
-      '',
+      `"DRAFT FORMAT DAILY COLLECTION"`,
+      `"${selectedDate}"`,
       headers.join(','),
+      formulaReference.join(','),
       ...rows.map((row) => row.join(',')),
       totalRow.join(','),
       '',
-      `"OPENING COUNTER BALANCE",${openingBalance}`,
-      `"TOTAL CASH COLLECTED",${totalCashCollected}`,
-      `"CLOSING COUNTER SUBTOTAL",${closingCounterSubtotal}`,
-      `"EXPENSES",${totalExpenseAmt}`,
-      `"CASH TAKEN BY ${ownerName.toUpperCase()}",${ownerHandover}`,
-      `"FINAL CLOSING COUNTER BALANCE",${finalClosingBalance}`,
-      `"NOTE - ${activeExpenseNote}"`
-    ].join('\n');
+      `"OPNING CASH BALANCE",${openingBalance},,"TO BE CARRIED FORWARD FROM LAST DATE"`,
+      `"CASH COLLECTION TODAY",${totals.cash}`,
+      `"TOTAL",${openingBalance + totals.cash}`,
+      `"LESS : EXPENSES",${totalExpenseAmt}`,
+      `"LESS : TAKEN BY OWNER",${ownerHandover}`,
+      `"CLOSING CASH BALANCE",${finalClosingBalance}`,
+      activeExpenseNote ? `"NOTE - ${activeExpenseNote}"` : ''
+    ].filter(Boolean).join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -753,6 +833,7 @@ export default function DailyCollectionSheet({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
   };
 
   const handlePrint = () => {
@@ -1043,25 +1124,50 @@ export default function DailyCollectionSheet({
             <thead>
               {/* Header Row 1 */}
               <tr className="bg-luxury-brown-950 text-luxury-gold-200 text-center font-extrabold border-b border-luxury-brown-800 print:bg-gray-100 print:text-black">
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[3%] min-w-[45px] text-center whitespace-nowrap">NO.</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[14%] min-w-[170px] text-left whitespace-nowrap">CUSTOMER NAME</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[5%] min-w-[75px] whitespace-nowrap">ROOM NO.</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 w-[7%] min-w-[85px] text-right whitespace-nowrap" title="Agreed Room Tariff">ROOM TARIFF</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[5%] min-w-[65px] whitespace-nowrap">GST</th>
-                <th colSpan={3} className="border-r border-luxury-brown-800 p-2 bg-[#2D2214] text-amber-300 font-black tracking-wide whitespace-nowrap">
-                  ROOM PAYMENT MODE
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 w-[3%] min-w-[42px] text-center whitespace-nowrap">
+                  SR. NO.<br/><span className="text-[9px] text-luxury-gold-400 font-normal">1</span>
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[6%] min-w-[90px] text-right whitespace-nowrap">BALANCE</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[4%] min-w-[55px] whitespace-nowrap">NO. OF DAYS</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[6%] min-w-[100px] text-right whitespace-nowrap">WATER BOTTLE</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[4%] min-w-[50px] whitespace-nowrap">EP</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[5%] min-w-[80px] text-right whitespace-nowrap">LAUNDRY</th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2.5 w-[5%] min-w-[85px] text-right whitespace-nowrap">EXTRA BED</th>
-                <th colSpan={4} className="p-2 bg-[#2D2214] text-amber-300 font-black tracking-wide whitespace-nowrap">
-                  KITCHEN AMOUNT
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[145px] text-left whitespace-nowrap">
+                  CUSTOMER NAME<br/><span className="text-[9px] text-luxury-gold-400 font-normal">2</span>
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[65px] whitespace-nowrap">
+                  ROOM NO.<br/><span className="text-[9px] text-luxury-gold-400 font-normal">3</span>
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[55px] whitespace-nowrap">
+                  NO. OF DAYS<br/><span className="text-[9px] text-luxury-gold-400 font-normal">4</span>
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[75px] text-right whitespace-nowrap">
+                  OPENING BAL<br/><span className="text-[9px] text-luxury-gold-400 font-normal">5</span>
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap" title="Agreed Room Tariff">
+                  ROOM TARIFF<br/><span className="text-[9px] text-luxury-gold-400 font-normal">6</span>
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[60px] text-right whitespace-nowrap">
+                  GST<br/><span className="text-[9px] text-luxury-gold-400 font-normal">7</span>
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap bg-luxury-brown-900 text-luxury-gold-300">
+                  TOTAL<br/><span className="text-[9px] text-luxury-gold-400 font-normal">8 (5+6+7)</span>
+                </th>
+                <th colSpan={4} className="border-r border-luxury-brown-800 p-2 bg-[#2D2214] text-amber-300 font-black tracking-wide whitespace-nowrap">
+                  EXTRA SERVICE
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap bg-[#2D2214] text-amber-300 font-black">
+                  TOTAL EXTRA<br/><span className="text-[9px] text-amber-200 font-normal">13 (9+10+11+12)</span>
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[95px] text-right whitespace-nowrap bg-[#1F170B] text-luxury-gold-300 font-black">
+                  TOTAL (ROOM+EXTRA)<br/><span className="text-[9px] text-luxury-gold-400 font-normal">14 (8+13)</span>
+                </th>
+                <th colSpan={3} className="border-r border-luxury-brown-800 p-2 bg-emerald-950 text-emerald-300 font-black tracking-wide whitespace-nowrap">
+                  PAYMENT
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[90px] text-right whitespace-nowrap bg-emerald-950 text-emerald-300 font-black">
+                  TOTAL PAYMENT<br/><span className="text-[9px] text-emerald-200 font-normal">18 (15+16+17)</span>
+                </th>
+                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap bg-rose-950 text-rose-300 font-black">
+                  BALANCE DUE<br/><span className="text-[9px] text-rose-200 font-normal">19 (14-18)</span>
                 </th>
                 {onEditCheckout && (
-                  <th rowSpan={2} className="border-l border-luxury-brown-800 p-2 min-w-[78px] text-center whitespace-nowrap print:hidden">
+                  <th rowSpan={2} className="p-2 min-w-[65px] text-center whitespace-nowrap print:hidden">
                     ACTION
                   </th>
                 )}
@@ -1069,20 +1175,34 @@ export default function DailyCollectionSheet({
 
               {/* Header Row 2 */}
               <tr className="bg-luxury-brown-900 text-luxury-gold-300 text-center font-bold border-b-2 border-luxury-brown-950 print:bg-gray-200 print:text-black">
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">CASH</th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">UPI</th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">ICICI</th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">UPI</th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">CASH</th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[55px] text-right whitespace-nowrap">DUE</th>
-                <th className="p-1.5 min-w-[90px] text-right whitespace-nowrap">TOTAL FOOD AMT</th>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[60px] text-right whitespace-nowrap">
+                  FOOD<br/><span className="text-[9px] font-normal">9</span>
+                </th>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">
+                  WATER<br/><span className="text-[9px] font-normal">10</span>
+                </th>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">
+                  LAUNDRY<br/><span className="text-[9px] font-normal">11</span>
+                </th>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap">
+                  ANY OTHERS<br/><span className="text-[9px] font-normal">12</span>
+                </th>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
+                  CASH<br/><span className="text-[9px] font-normal">15</span>
+                </th>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
+                  UPI<br/><span className="text-[9px] font-normal">16</span>
+                </th>
+                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
+                  ICICI<br/><span className="text-[9px] font-normal">17</span>
+                </th>
               </tr>
             </thead>
 
             <tbody className="divide-y divide-luxury-brown-100/70 bg-white">
               {reportRows.length === 0 ? (
                 <tr>
-                  <td colSpan={onEditCheckout ? 18 : 17} className="p-10 text-center bg-luxury-beige-50/20">
+                  <td colSpan={onEditCheckout ? 20 : 19} className="p-10 text-center bg-luxury-beige-50/20">
                     <div className="max-w-md mx-auto space-y-2.5 py-4">
                       <div className="w-12 h-12 rounded-2xl bg-amber-100/70 text-amber-700 flex items-center justify-center mx-auto">
                         <FileSpreadsheet className="w-6 h-6" />
@@ -1117,20 +1237,51 @@ export default function DailyCollectionSheet({
                         {r.roomNumber}
                       </span>
                     </td>
+                    <td className="p-2 border-r border-luxury-brown-100/70 font-bold text-luxury-brown-700">
+                      {r.nights}
+                    </td>
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-slate-500">
+                      {r.openingBalance > 0 ? `₹${r.openingBalance.toLocaleString()}` : '—'}
+                    </td>
                     <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-bold text-luxury-brown-950">
                       {r.roomTariff > 0 ? `₹${r.roomTariff.toLocaleString()}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-center font-mono">
-                      {r.gst && r.gst !== '0' ? (
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 font-bold text-[10px]">
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
+                      {r.gst && r.gst !== '0' && r.gst !== 0 ? (
+                        <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-800 font-bold text-[10px]">
                           {typeof r.gst === 'number' ? `₹${r.gst.toLocaleString()}` : r.gst}
                         </span>
                       ) : (
                         <span className="text-gray-400">0</span>
                       )}
                     </td>
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-bold text-luxury-brown-950 bg-luxury-beige-50/40">
+                      ₹{r.totalRoom.toLocaleString()}
+                    </td>
                     
-                    {/* Room Payment Modes */}
+                    {/* Extra Services: Food, Water, Laundry, Any Others */}
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-amber-800 font-bold">
+                      {r.food > 0 ? `₹${r.food.toLocaleString()}` : '—'}
+                    </td>
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
+                      {r.waterBottle > 0 ? `₹${r.waterBottle.toLocaleString()}` : '—'}
+                    </td>
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
+                      {r.laundry > 0 ? `₹${r.laundry.toLocaleString()}` : '—'}
+                    </td>
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
+                      {r.anyOthers > 0 ? `₹${r.anyOthers.toLocaleString()}` : '—'}
+                    </td>
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-black text-amber-900 bg-amber-50/40">
+                      ₹{r.totalExtra.toLocaleString()}
+                    </td>
+
+                    {/* Total (Room + Extra) */}
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-black text-luxury-brown-950 bg-[#FDF8ED]">
+                      ₹{r.grandTotal.toLocaleString()}
+                    </td>
+
+                    {/* Payments: Cash, UPI, ICICI */}
                     <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-emerald-700 font-bold">
                       {r.cash > 0 ? `₹${r.cash.toLocaleString()}` : '—'}
                     </td>
@@ -1140,53 +1291,27 @@ export default function DailyCollectionSheet({
                     <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-indigo-700 font-bold">
                       {r.icici > 0 ? `₹${r.icici.toLocaleString()}` : '—'}
                     </td>
-                    
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-bold">
-                      {r.balance > 0 ? (
-                        <span className="text-rose-600 font-bold">₹{Number(r.balance || 0).toLocaleString()}</span>
-                      ) : (
-                        <span className="text-emerald-600 text-[10px] font-bold">PAID</span>
-                      )}
-                    </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 font-bold text-luxury-brown-700">
-                      {r.nights}
-                    </td>
-                    
-                    {/* Amenities */}
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
-                      {r.waterBottle > 0 ? `₹${r.waterBottle.toLocaleString()}` : '—'}
-                    </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
-                      {r.extraPerson > 0 ? `₹${r.extraPerson.toLocaleString()}` : '—'}
-                    </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
-                      {r.laundry > 0 ? `₹${r.laundry.toLocaleString()}` : '—'}
-                    </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
-                      {r.extraBed > 0 ? `₹${r.extraBed.toLocaleString()}` : '—'}
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-black text-emerald-800 bg-emerald-50/40">
+                      ₹{r.totalPayment.toLocaleString()}
                     </td>
 
-                    {/* Kitchen Amount */}
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-blue-700">
-                      {r.kitchenUpi > 0 ? `₹${r.kitchenUpi.toLocaleString()}` : '—'}
+                    {/* Balance Due */}
+                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-bold">
+                      {r.balanceDue > 0 ? (
+                        <span className="text-rose-700 font-black">₹{r.balanceDue.toLocaleString()}</span>
+                      ) : (
+                        <span className="text-emerald-700 text-[10px] font-black">PAID (₹0)</span>
+                      )}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-emerald-700">
-                      {r.kitchenCash > 0 ? `₹${r.kitchenCash.toLocaleString()}` : '—'}
-                    </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-rose-600 font-bold">
-                      {r.kitchenDue > 0 ? `₹${r.kitchenDue.toLocaleString()}` : '—'}
-                    </td>
-                    <td className="p-2 text-right font-mono font-black text-luxury-brown-950 bg-luxury-beige-50/40">
-                      {r.totalFoodAmt > 0 ? `₹${r.totalFoodAmt.toLocaleString()}` : '—'}
-                    </td>
+
                     {onEditCheckout && (
-                      <td className="p-2 border-l border-luxury-brown-100/70 text-center print:hidden">
+                      <td className="p-2 text-center print:hidden">
                         {(r as any).checkinTarget ? (
                           <button
                             type="button"
                             onClick={() => onEditCheckout((r as any).checkinTarget)}
                             title="Edit Check-Out Settlement & Payment Modes"
-                            className="px-2.5 py-1 rounded-lg bg-[#F6DE98] hover:bg-[#E8CE84] border border-[#C49A3A] text-[#17120F] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                            className="px-2 py-0.5 rounded-lg bg-[#F6DE98] hover:bg-[#E8CE84] border border-[#C49A3A] text-[#17120F] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-2xs"
                           >
                             <Edit3 className="w-3 h-3 text-[#8B691E]" /> Edit
                           </button>
@@ -1203,14 +1328,38 @@ export default function DailyCollectionSheet({
             {/* Table Totals Row */}
             <tfoot>
               <tr className="bg-luxury-brown-950 text-luxury-gold-200 text-center font-extrabold border-t-2 border-luxury-brown-900 print:bg-gray-200 print:text-black">
-                <td colSpan={3} className="p-3 text-right uppercase tracking-wider text-xs border-r border-luxury-brown-800">
-                  GRAND TOTAL:
+                <td colSpan={4} className="p-3 text-right uppercase tracking-wider text-xs border-r border-luxury-brown-800">
+                  TOTAL:
+                </td>
+                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
+                  {totals.openingBalance > 0 ? `₹${totals.openingBalance.toLocaleString()}` : '0'}
                 </td>
                 <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 font-bold text-luxury-gold-200">
                   ₹{totals.roomTariff.toLocaleString()}
                 </td>
-                <td className="p-3 text-center font-mono text-xs border-r border-luxury-brown-800">
+                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
                   {totals.gst > 0 ? `₹${totals.gst.toLocaleString()}` : '0'}
+                </td>
+                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 font-black text-luxury-gold-300 bg-luxury-brown-900">
+                  ₹{totals.totalRoom.toLocaleString()}
+                </td>
+                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 text-amber-300">
+                  ₹{totals.food.toLocaleString()}
+                </td>
+                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
+                  ₹{totals.waterBottle.toLocaleString()}
+                </td>
+                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
+                  ₹{totals.laundry.toLocaleString()}
+                </td>
+                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
+                  ₹{totals.anyOthers.toLocaleString()}
+                </td>
+                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 font-black text-amber-300 bg-[#2D2214]">
+                  ₹{totals.totalExtra.toLocaleString()}
+                </td>
+                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 font-black text-luxury-gold-300 bg-[#1F170B]">
+                  ₹{totals.grandTotal.toLocaleString()}
                 </td>
                 <td className="p-3 text-right font-mono text-xs text-emerald-300 border-r border-luxury-brown-800">
                   ₹{totals.cash.toLocaleString()}
@@ -1221,36 +1370,14 @@ export default function DailyCollectionSheet({
                 <td className="p-3 text-right font-mono text-xs text-indigo-300 border-r border-luxury-brown-800">
                   ₹{totals.icici.toLocaleString()}
                 </td>
-                <td className="p-3 text-right font-mono text-xs text-rose-300 border-r border-luxury-brown-800">
-                  ₹{Number(totals.balance || 0).toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs text-emerald-300 border-r border-luxury-brown-800 font-black bg-emerald-950">
+                  ₹{totals.totalPayment.toLocaleString()}
                 </td>
-                <td className="p-3 font-black border-r border-luxury-brown-800">-</td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
-                  {totals.waterBottle > 0 ? `₹${totals.waterBottle.toLocaleString()}` : '0'}
-                </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
-                  {totals.extraPerson > 0 ? `₹${totals.extraPerson.toLocaleString()}` : '0'}
-                </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
-                  {totals.laundry > 0 ? `₹${totals.laundry.toLocaleString()}` : '0'}
-                </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
-                  {totals.extraBed > 0 ? `₹${totals.extraBed.toLocaleString()}` : '0'}
-                </td>
-                <td className="p-3 text-right font-mono text-xs text-blue-300 border-r border-luxury-brown-800">
-                  ₹{totals.kitchenUpi.toLocaleString()}
-                </td>
-                <td className="p-3 text-right font-mono text-xs text-emerald-300 border-r border-luxury-brown-800">
-                  ₹{totals.kitchenCash.toLocaleString()}
-                </td>
-                <td className="p-3 text-right font-mono text-xs text-rose-300 border-r border-luxury-brown-800">
-                  ₹{totals.kitchenDue.toLocaleString()}
-                </td>
-                <td className="p-3 text-right font-mono text-xs text-luxury-gold-300 font-black">
-                  ₹{totals.totalFoodAmt.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs text-rose-300 border-r border-luxury-brown-800 font-black bg-rose-950">
+                  ₹{totals.balanceDue.toLocaleString()}
                 </td>
                 {onEditCheckout && (
-                  <td className="p-3 border-l border-luxury-brown-800 print:hidden">—</td>
+                  <td className="p-3 print:hidden">—</td>
                 )}
               </tr>
             </tfoot>
@@ -1271,31 +1398,31 @@ export default function DailyCollectionSheet({
             <table className="w-full text-xs font-mono font-medium border-collapse">
               <tbody className="divide-y divide-luxury-brown-100">
                 <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-luxury-brown-600">Opening Counter Balance</td>
+                  <td className="p-2.5 font-bold uppercase text-luxury-brown-600">Opening Cash Balance</td>
                   <td className="p-2.5 text-right font-black text-luxury-brown-950">₹{openingBalance.toLocaleString()}</td>
                 </tr>
                 <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-emerald-800">Total Cash Collected (+)</td>
+                  <td className="p-2.5 font-bold uppercase text-emerald-800">Cash Collection Today (+)</td>
                   <td className="p-2.5 text-right font-black text-emerald-700">₹{totalCashCollected.toLocaleString()}</td>
                 </tr>
                 <tr className="bg-luxury-beige-100/60 font-black text-luxury-brown-950">
-                  <td className="p-2.5 uppercase">Closing Counter Subtotal</td>
+                  <td className="p-2.5 uppercase font-black">Total Cash</td>
                   <td className="p-2.5 text-right font-black">₹{closingCounterSubtotal.toLocaleString()}</td>
                 </tr>
                 <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-rose-800">Expenses Deducted (-)</td>
+                  <td className="p-2.5 font-bold uppercase text-rose-800">Less : Expenses (-)</td>
                   <td className="p-2.5 text-right font-black text-rose-700">
                     {totalExpenseAmt > 0 ? `₹${totalExpenseAmt.toLocaleString()}` : '—'}
                   </td>
                 </tr>
                 <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-luxury-brown-700">{ownerName.toUpperCase()} (Cash Taken) (-)</td>
+                  <td className="p-2.5 font-bold uppercase text-luxury-brown-700">Less : Taken by Owner ({ownerName.toUpperCase()}) (-)</td>
                   <td className="p-2.5 text-right font-black text-luxury-brown-950">
                     {ownerHandover > 0 ? `₹${ownerHandover.toLocaleString()}` : '—'}
                   </td>
                 </tr>
                 <tr className="bg-emerald-50 border-t-2 border-emerald-300 !text-emerald-900 font-black text-sm">
-                  <td className="p-3 uppercase tracking-wide">Closing Counter Balance</td>
+                  <td className="p-3 uppercase tracking-wide">Closing Cash Balance</td>
                   <td className="p-3 text-right font-mono font-black !text-emerald-800 text-base">
                     ₹{finalClosingBalance.toLocaleString()}
                   </td>

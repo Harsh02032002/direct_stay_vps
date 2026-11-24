@@ -7541,8 +7541,8 @@ export default function CheckInFormView({
                     )}
 
                     {/* Row 1: Choose Date (Arrival) | Departure | Nights/Hours | Source */}
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-                      <div className="md:col-span-4 space-y-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-12 gap-3 items-end">
+                      <div className="sm:col-span-1 xl:col-span-4 space-y-1">
                         <div className="flex items-center justify-between">
                           <label className="text-xs font-bold text-[#263449]">
                             Choose Date <span className="text-[#A8812B]">*</span>
@@ -7572,7 +7572,7 @@ export default function CheckInFormView({
                         </div>
                       </div>
 
-                      <div className="md:col-span-4 space-y-1">
+                      <div className="sm:col-span-1 xl:col-span-4 space-y-1">
                         <div className="flex items-center justify-between">
                           <label className="text-xs font-bold text-[#263449] flex items-center gap-1.5">
                             <span>Departure</span>
@@ -7607,7 +7607,7 @@ export default function CheckInFormView({
                         </div>
                       </div>
 
-                      <div className="md:col-span-1 space-y-1">
+                      <div className="sm:col-span-1 xl:col-span-1 space-y-1">
                         <label className="text-xs font-bold text-[#263449] block">
                           {isSameDayStay ? 'Hours' : 'Nights'}
                         </label>
@@ -7622,7 +7622,7 @@ export default function CheckInFormView({
                         </div>
                       </div>
 
-                      <div className="md:col-span-3 space-y-1">
+                      <div className="sm:col-span-1 xl:col-span-3 space-y-1">
                         <label className="text-xs font-bold text-[#263449] block">
                           Source <span className="text-[#A8812B]">*</span>
                         </label>
