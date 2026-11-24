@@ -796,47 +796,30 @@ export default function CheckInFormView({
 
   const handleArrivalDateChange = (rawNewDate: string) => {
     if (!rawNewDate) return;
-    const todayIst = getTodayDateStr();
-    let nextIn = rawNewDate;
-    if (!isEditingExistingDates && !allowBackDatedCheckIn && nextIn < todayIst) {
-      nextIn = todayIst;
-      showToast('Past arrival dates cannot be selected. Enable back-dated check-in in Property Setup.', 'warning');
-    }
-    const prevDuration = Math.max(1, calcStayDays(checkInDate, checkOutDate));
+    const nextIn = rawNewDate;
     setCheckInDate(nextIn);
-    setCheckOutDate(isSameDayStay ? nextIn : getFutureDateStr(prevDuration, nextIn));
-    // Prevent past time if switching back to today on a new booking
-    if (!isEditingExistingDates && !allowBackDatedCheckIn && nextIn === todayIst) {
-      const nowIst = getIstNowParts();
-      if (to24hTime(arrivalTime, nowIst.hhmm) < nowIst.hhmm) {
-        setArrivalTime(nowIst.displayTime);
-      }
+    // Never forcibly shift departure date into next month!
+    // 1) If same-day stay: keep checkout aligned with arrival
+    // 2) If checkout is missing or strictly on/before arrival: move to next day (1 night)
+    // 3) If checkout is already after arrival: leave it intact!
+    if (isSameDayStay) {
+      setCheckOutDate(nextIn);
+    } else if (!checkOutDate || checkOutDate <= nextIn) {
+      setCheckOutDate(getFutureDateStr(1, nextIn));
     }
   };
 
   const handleArrivalTimeChange = (newHhmm: string) => {
     if (!newHhmm) return;
-    const todayIst = getTodayDateStr();
-    const nowIst = getIstNowParts();
-    if (!isEditingExistingDates && !allowBackDatedCheckIn && checkInDate === todayIst && newHhmm < nowIst.hhmm) {
-      setArrivalTime(nowIst.displayTime);
-      showToast('Past arrival time cannot be selected. Enable back-dated check-in in Property Setup.', 'warning');
-      return;
-    }
-    setArrivalTime(to12hTime(newHhmm, nowIst.displayTime));
+    setArrivalTime(to12hTime(newHhmm, getIstNowParts().displayTime));
   };
 
   const handleDepartureDateChange = (rawNewOut: string) => {
     if (!rawNewOut) return;
     if (rawNewOut < checkInDate) {
-      if (!isEditingExistingDates && !allowBackDatedCheckIn) {
-        setCheckOutDate(checkInDate);
-        showToast('Departure date cannot be earlier than arrival date.', 'warning');
-        return;
-      } else {
-        // When back-dated checkin is allowed, auto-align arrival date with departure date
-        setCheckInDate(rawNewOut);
-      }
+      setCheckOutDate(checkInDate);
+      showToast('Departure date cannot be earlier than arrival date.', 'warning');
+      return;
     }
     setCheckOutDate(rawNewOut);
     if (rawNewOut === checkInDate && !stayHours) {
@@ -5818,7 +5801,6 @@ export default function CheckInFormView({
                       <input
                         type="date"
                         required
-                        min={!isEditingExistingDates && !allowBackDatedCheckIn ? todayIstStr : undefined}
                         value={checkInDate}
                         onChange={(e) => handleArrivalDateChange(e.target.value)}
                         className="w-full h-10 px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white text-luxury-brown-950 font-mono focus:ring-1 focus:ring-[#C5A059] focus:outline-none"
@@ -5858,7 +5840,6 @@ export default function CheckInFormView({
                       </div>
                       <input
                         type="date"
-                        min={!isEditingExistingDates && !allowBackDatedCheckIn ? (checkInDate || todayIstStr) : undefined}
                         value={checkOutDate}
                         onChange={(e) => handleDepartureDateChange(e.target.value)}
                         className="w-full h-10 px-3 py-2 border border-luxury-brown-200 rounded-lg text-sm bg-white text-luxury-brown-950 font-mono focus:ring-1 focus:ring-[#C5A059] focus:outline-none"
@@ -7555,7 +7536,6 @@ export default function CheckInFormView({
                           <input
                             type="date"
                             required
-                            min={!isEditingExistingDates && !allowBackDatedCheckIn ? todayIstStr : undefined}
                             value={checkInDate}
                             onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleArrivalDateChange(e.target.value)}
@@ -7564,7 +7544,6 @@ export default function CheckInFormView({
                           <input
                             type="time"
                             value={to24hTime(arrivalTime, getIstNowParts().hhmm)}
-                            min={!isEditingExistingDates && !allowBackDatedCheckIn && checkInDate === todayIstStr ? getIstNowParts().hhmm : undefined}
                             onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleArrivalTimeChange(e.target.value)}
                             className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
@@ -7591,7 +7570,6 @@ export default function CheckInFormView({
                           <input
                             type="date"
                             required
-                            min={!isEditingExistingDates && !allowBackDatedCheckIn ? (checkInDate || todayIstStr) : undefined}
                             value={checkOutDate}
                             onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleDepartureDateChange(e.target.value)}

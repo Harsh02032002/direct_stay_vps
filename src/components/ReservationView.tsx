@@ -1044,22 +1044,20 @@ export default function ReservationView({
   // Sync pricing when dates change without resetting custom user tariffs or edited booking prices
   const handleCheckInDateChange = (val: string) => {
     let cleanVal = val;
-    if (!editingBooking && !allowBackDatedCheckIn && cleanVal && cleanVal < getTodayDateStr()) {
-      cleanVal = getTodayDateStr();
-      showToast('Arrival date cannot be in the past. Enable back-dated check-in in Property Setup.', 'warning');
-    }
-    const prevNights = Math.max(1, calNightsForDates(checkInDate, checkOutDate));
     setCheckInDate(cleanVal);
-    const nextCheckOut = getFutureDateStr(prevNights, cleanVal);
-    setCheckOutDate(nextCheckOut);
-    const nightsCount = prevNights;
+    let effectiveOut = checkOutDate;
+    if (!effectiveOut || effectiveOut <= cleanVal) {
+      effectiveOut = getFutureDateStr(1, cleanVal);
+      setCheckOutDate(effectiveOut);
+    }
+    const nightsCount = Math.max(1, calNightsForDates(cleanVal, effectiveOut));
 
     // Preserve existing negotiated booking price when duration has not changed
     if (editingBooking) {
       return;
     }
 
-    if (bookingPrice > 0 && prevNights > 0) {
+    if (bookingPrice > 0 && nightsCount > 0) {
       // Stay length is preserved, keep user's entered price intact
       return;
     }
@@ -1074,15 +1072,11 @@ export default function ReservationView({
   const handleCheckOutDateChange = (val: string) => {
     let cleanVal = val;
     if (cleanVal && checkInDate && cleanVal < checkInDate) {
-      if (!editingBooking && !allowBackDatedCheckIn) {
-        cleanVal = checkInDate;
-        showToast('Departure date cannot be before Arrival date.', 'warning');
-      } else {
-        // When back-dated/editing is allowed, auto-shift arrival date so stay remains valid
-        setCheckInDate(cleanVal);
-      }
+      cleanVal = checkInDate;
+      showToast('Departure date cannot be before Arrival date.', 'warning');
+      setCheckOutDate(cleanVal);
+      return;
     }
-    const prevNights = Math.max(1, calNightsForDates(checkInDate, checkOutDate));
     setCheckOutDate(cleanVal);
     const nightsCount = calNightsForDates(checkInDate, cleanVal);
 
