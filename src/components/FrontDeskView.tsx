@@ -266,10 +266,20 @@ export default function FrontDeskView({
     }
   };
 
-  const matchesInHouseDate = (checkInDate?: string, checkOutDate?: string): boolean => {
+  const matchesInHouseDate = (checkInDate?: string, checkOutDate?: string, isCheckedOut?: boolean): boolean => {
     if (inHouseDatePreset === 'all' && !inHouseFromDate && !inHouseToDate) return true;
     const ci = String(checkInDate || '').slice(0, 10);
-    const co = String(checkOutDate || '').slice(0, 10);
+    const rawCo = String(checkOutDate || '').slice(0, 10);
+    // Active in-house guests who have NOT checked out yet are physically staying in the hotel today!
+    // If their scheduled checkOutDate was in the past (overdue checkout / extended stay), their effective stay extends through today.
+    const co = (!isCheckedOut && (!rawCo || rawCo < todayStr)) ? todayStr : (rawCo || todayStr);
+
+    if (inHouseDatePreset === 'today') {
+      // Any guest currently in-house who checked in on or before today (or currently active) is in-house today!
+      if (!isCheckedOut) return true;
+      return ci <= todayStr && co >= todayStr;
+    }
+
     if (!ci && !co) return inHouseDatePreset === 'all';
     if (inHouseFromDate && inHouseToDate && ci && co) {
       return ci <= inHouseToDate && co >= inHouseFromDate;
@@ -2858,7 +2868,7 @@ export default function FrontDeskView({
       mob.includes(q) ||
       idStr.toLowerCase().includes(q);
     if (!matchesSearch) return false;
-    return matchesInHouseDate(c.checkInDate, c.checkOutDate);
+    return matchesInHouseDate(c.checkInDate, c.checkOutDate, Boolean(c.checkedOutDateTime));
   });
 
   // Filtered checkouts & pending departures for Departure Settlement Desk
@@ -3777,10 +3787,21 @@ export default function FrontDeskView({
                       return (
                         <tr key={guest.id} className="hover:bg-[#FDF8ED] transition-colors">
                           <td className="p-3.5 whitespace-nowrap">
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#17120F] text-[#C49A3A] border border-[#C49A3A]/40 rounded-lg font-mono font-bold text-xs whitespace-nowrap shadow-2xs">
-                              <Bed className="w-3.5 h-3.5 text-[#C49A3A]" />
-                              Room {guest.roomNumber}
-                            </span>
+                            {guest.roomNumber && String(guest.roomNumber).includes(',') ? (
+                              <div className="flex flex-wrap items-center gap-1 max-w-[200px]">
+                                {String(guest.roomNumber).split(',').map((rn, rIdx) => (
+                                  <span key={rIdx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#17120F] text-[#C49A3A] border border-[#C49A3A]/40 rounded-lg font-mono font-bold text-xs whitespace-nowrap shadow-2xs">
+                                    <Bed className="w-3 h-3 text-[#C49A3A]" />
+                                    {rn.trim()}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#17120F] text-[#C49A3A] border border-[#C49A3A]/40 rounded-lg font-mono font-bold text-xs whitespace-nowrap shadow-2xs">
+                                <Bed className="w-3.5 h-3.5 text-[#C49A3A]" />
+                                Room {guest.roomNumber}
+                              </span>
+                            )}
                           </td>
                           <td className="p-3.5 whitespace-nowrap">
                             <div className="text-[#263449] font-serif font-bold text-sm leading-tight">{guest.guestName}</div>
@@ -3797,8 +3818,15 @@ export default function FrontDeskView({
                           <td className="p-3.5 font-mono font-semibold text-[#263449] whitespace-nowrap">
                             {guest.checkInDate}
                           </td>
-                          <td className="p-3.5 font-mono font-bold text-[#9E7822] whitespace-nowrap">
-                            {guest.checkOutDate}
+                          <td className="p-3.5 font-mono font-bold whitespace-nowrap">
+                            <span className={guest.checkOutDate && String(guest.checkOutDate).slice(0, 10) < todayStr ? "text-rose-700 font-extrabold" : "text-[#9E7822]"}>
+                              {guest.checkOutDate}
+                            </span>
+                            {guest.checkOutDate && String(guest.checkOutDate).slice(0, 10) < todayStr && (
+                              <span className="block text-[10px] font-mono font-bold text-rose-600 uppercase tracking-tight">
+                                Overdue Check-Out
+                              </span>
+                            )}
                           </td>
                           <td className="p-3.5 whitespace-nowrap">
                             <div className="font-mono font-extrabold text-[#15805D] text-sm leading-tight">
@@ -3811,10 +3839,17 @@ export default function FrontDeskView({
                             )}
                           </td>
                           <td className="p-3.5 whitespace-nowrap">
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#ECFDF5] text-[#15805D] border border-[#A7F3D0] font-bold rounded-full text-[11px] whitespace-nowrap">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[#15805D] animate-pulse" />
-                              In-House Stay
-                            </span>
+                            {guest.checkOutDate && String(guest.checkOutDate).slice(0, 10) < todayStr ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-full text-[11px] whitespace-nowrap shadow-2xs">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-pulse" />
+                                Overdue (Due Out)
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#ECFDF5] text-[#15805D] border border-[#A7F3D0] font-bold rounded-full text-[11px] whitespace-nowrap">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#15805D] animate-pulse" />
+                                In-House Stay
+                              </span>
+                            )}
                           </td>
                           <td className="p-3.5 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-2 flex-nowrap">

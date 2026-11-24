@@ -834,7 +834,6 @@ export default function DailyCollectionSheet({
     link.click();
     document.body.removeChild(link);
   };
-  };
 
   const handlePrint = () => {
     window.print();
