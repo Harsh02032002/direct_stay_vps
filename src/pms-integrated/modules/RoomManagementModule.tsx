@@ -948,11 +948,16 @@ export const RoomManagementModule: React.FC<RoomManagementModuleProps> = ({
                       Base Occ (Adults)
                     </label>
                     <input
-                      type="number"
-                      min={1}
+                      type="text"
+                      inputMode="numeric"
                       required
-                      value={newRoomOccupancy}
-                      onChange={(e) => setNewRoomOccupancy(Math.max(1, Number(e.target.value) || 1))}
+                      placeholder="2"
+                      value={newRoomOccupancy === 0 ? '' : String(newRoomOccupancy)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(e) => {
+                        const d = e.target.value.replace(/[^0-9]/g, '');
+                        setNewRoomOccupancy(d === '' ? 0 : parseInt(d, 10));
+                      }}
                       className="w-full px-2.5 py-2 rounded-xl border border-slate-200 bg-white font-bold text-slate-900"
                     />
                   </div>
@@ -961,11 +966,16 @@ export const RoomManagementModule: React.FC<RoomManagementModuleProps> = ({
                       Max Occ (With Extra)
                     </label>
                     <input
-                      type="number"
-                      min={1}
+                      type="text"
+                      inputMode="numeric"
                       required
-                      value={newRoomMaxOccupancy}
-                      onChange={(e) => setNewRoomMaxOccupancy(Math.max(1, Number(e.target.value) || 1))}
+                      placeholder="3"
+                      value={newRoomMaxOccupancy === 0 ? '' : String(newRoomMaxOccupancy)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(e) => {
+                        const d = e.target.value.replace(/[^0-9]/g, '');
+                        setNewRoomMaxOccupancy(d === '' ? 0 : parseInt(d, 10));
+                      }}
                       className="w-full px-2.5 py-2 rounded-xl border border-slate-200 bg-white font-bold text-slate-900"
                     />
                   </div>

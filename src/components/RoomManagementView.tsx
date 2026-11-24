@@ -527,11 +527,14 @@ export default function RoomManagementView({
       return;
     }
 
+    const safeBaseOcc = Math.max(1, Number(newCatBaseOcc) || 1);
+    const safeMaxOcc = Math.max(safeBaseOcc, Number(newCatMaxOcc) || safeBaseOcc);
+
     const newCat: CategoryConfig = {
       name: trimmed,
       rate: newCatRate,
-      baseOcc: newCatBaseOcc,
-      maxOcc: newCatMaxOcc,
+      baseOcc: safeBaseOcc,
+      maxOcc: safeMaxOcc,
       extra: newCatExtra,
       bedType: newCatBed,
       defaultAmenities: []
@@ -1236,18 +1239,26 @@ export default function RoomManagementView({
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase tracking-wider font-mono text-luxury-brown-600 block font-bold">Base Occ</label>
                       <input 
-                        type="number" required min={1}
-                        value={newCatBaseOcc}
-                        onChange={(e) => setNewCatBaseOcc(parseInt(e.target.value) || 2)}
+                        type="text" inputMode="numeric" required placeholder="2"
+                        value={newCatBaseOcc === 0 ? '' : String(newCatBaseOcc)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onChange={(e) => {
+                          const d = e.target.value.replace(/[^0-9]/g, '');
+                          setNewCatBaseOcc(d === '' ? 0 : parseInt(d, 10));
+                        }}
                         className="w-full text-xs bg-white border border-luxury-brown-200 rounded-lg px-3 py-2 focus:ring-1 focus:ring-luxury-gold-500 focus:outline-none"
                       />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase tracking-wider font-mono text-luxury-brown-600 block font-bold">Max Occ</label>
                       <input 
-                        type="number" required min={1}
-                        value={newCatMaxOcc}
-                        onChange={(e) => setNewCatMaxOcc(parseInt(e.target.value) || 3)}
+                        type="text" inputMode="numeric" required placeholder="3"
+                        value={newCatMaxOcc === 0 ? '' : String(newCatMaxOcc)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onChange={(e) => {
+                          const d = e.target.value.replace(/[^0-9]/g, '');
+                          setNewCatMaxOcc(d === '' ? 0 : parseInt(d, 10));
+                        }}
                         className="w-full text-xs bg-white border border-luxury-brown-200 rounded-lg px-3 py-2 focus:ring-1 focus:ring-luxury-gold-500 focus:outline-none"
                       />
                     </div>
@@ -1931,10 +1942,14 @@ export default function RoomManagementView({
               <div className="space-y-1">
                 <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Base Price (₹ / Night) *</label>
                 <input
-                  type="number" required
+                  type="text" inputMode="numeric" required placeholder="0"
                   disabled={isRestrictedRole}
-                  value={rate}
-                  onChange={(e) => setRate(parseInt(e.target.value) || 0)}
+                  value={rate === 0 ? '' : String(rate)}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onChange={(e) => {
+                    const d = e.target.value.replace(/[^0-9]/g, '');
+                    setRate(d === '' ? 0 : parseInt(d, 10));
+                  }}
                   className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs focus:outline-none focus:border-luxury-gold-500 text-luxury-brown-950 font-mono font-bold"
                 />
               </div>
@@ -1945,27 +1960,39 @@ export default function RoomManagementView({
                   <div className="space-y-1">
                     <label className="text-[9px] font-mono text-luxury-brown-600 block uppercase font-bold">Base Occ</label>
                     <input
-                      type="number" min={1} required disabled={isRestrictedRole}
-                      value={baseOccupancy}
-                      onChange={(e) => setBaseOccupancy(parseInt(e.target.value) || 2)}
+                      type="text" inputMode="numeric" required placeholder="2" disabled={isRestrictedRole}
+                      value={baseOccupancy === 0 ? '' : String(baseOccupancy)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(e) => {
+                        const d = e.target.value.replace(/[^0-9]/g, '');
+                        setBaseOccupancy(d === '' ? 0 : parseInt(d, 10));
+                      }}
                       className="w-full px-2 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-950"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[9px] font-mono text-luxury-brown-600 block uppercase font-bold">Max Occ</label>
                     <input
-                      type="number" min={1} required disabled={isRestrictedRole}
-                      value={maxOccupancy}
-                      onChange={(e) => setMaxOccupancy(parseInt(e.target.value) || 3)}
+                      type="text" inputMode="numeric" required placeholder="3" disabled={isRestrictedRole}
+                      value={maxOccupancy === 0 ? '' : String(maxOccupancy)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(e) => {
+                        const d = e.target.value.replace(/[^0-9]/g, '');
+                        setMaxOccupancy(d === '' ? 0 : parseInt(d, 10));
+                      }}
                       className="w-full px-2 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-950"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[9px] font-mono text-luxury-brown-600 block uppercase font-bold">Extra Pax Fee</label>
                     <input
-                      type="number" min={0} placeholder="0" disabled={isRestrictedRole}
-                      value={extraPersonCharge === 0 ? '' : extraPersonCharge}
-                      onChange={(e) => setExtraPersonCharge(parseInt(e.target.value) || 0)}
+                      type="text" inputMode="numeric" placeholder="0" disabled={isRestrictedRole}
+                      value={extraPersonCharge === 0 ? '' : String(extraPersonCharge)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(e) => {
+                        const d = e.target.value.replace(/[^0-9]/g, '');
+                        setExtraPersonCharge(d === '' ? 0 : parseInt(d, 10));
+                      }}
                       className="w-full px-2 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-950"
                     />
                   </div>
