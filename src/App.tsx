@@ -441,7 +441,10 @@ export default function App() {
   const [rawAuditLogs, setRawAuditLogs] = useState<AuditLog[]>(() => (Array.isArray(bootSnap?.auditLogs) ? bootSnap.auditLogs : []));
   const [rawRoomVerifications, setRawRoomVerifications] = useState<RoomVerification[]>(() => (Array.isArray(bootSnap?.roomVerifications) ? bootSnap.roomVerifications : []));
   const [rawRolePermissions, setRawRolePermissions] = useState<RolePermission[]>(() => (Array.isArray(bootSnap?.rolePermissions) ? bootSnap.rolePermissions : []));
-  const [rawInventoryProducts, setRawInventoryProducts] = useState<InventoryProduct[]>(() => (Array.isArray(bootSnap?.inventoryProducts) ? bootSnap.inventoryProducts : []));
+  const [rawInventoryProducts, setRawInventoryProducts] = useState<InventoryProduct[]>(() => {
+    const list = Array.isArray(bootSnap?.inventoryProducts) ? bootSnap.inventoryProducts : [];
+    return list.filter(p => !((p.id?.startsWith('inv-prod-water-') || p.sku === 'WATER-1L') && Number(p.currentStock || 0) === 0));
+  });
   const [rawInventoryCategories, setRawInventoryCategories] = useState<InventoryCategory[]>(() => (Array.isArray(bootSnap?.inventoryCategories) ? bootSnap.inventoryCategories : []));
   const [rawInventorySuppliers, setRawInventorySuppliers] = useState<InventorySupplier[]>(() => (Array.isArray(bootSnap?.inventorySuppliers) ? bootSnap.inventorySuppliers : []));
   const [rawInventoryPurchases, setRawInventoryPurchases] = useState<InventoryPurchase[]>(() => (Array.isArray(bootSnap?.inventoryPurchases) ? bootSnap.inventoryPurchases : []));
@@ -862,7 +865,7 @@ export default function App() {
     if (Array.isArray(data.inventoryProducts)) {
       setRawInventoryProducts(
         data.inventoryProducts.filter(
-          p => !(p.id?.startsWith('inv-prod-water-') && Number(p.currentStock || 0) === 0)
+          p => !((p.id?.startsWith('inv-prod-water-') || p.sku === 'WATER-1L') && Number(p.currentStock || 0) === 0)
         )
       );
     }
@@ -3245,7 +3248,7 @@ export default function App() {
 
     const tenantProds = rawInventoryProducts.filter(p => p.hotelId === effectiveTenantHotelId);
     const inventoryProducts = tenantProds.filter(
-      p => !(p.id?.startsWith('inv-prod-water-') && Number(p.currentStock || 0) === 0)
+      p => !((p.id?.startsWith('inv-prod-water-') || p.sku === 'WATER-1L') && Number(p.currentStock || 0) === 0)
     );
     const inventoryCategories = rawInventoryCategories.some(c => c.hotelId === effectiveTenantHotelId)
       ? rawInventoryCategories.filter(c => c.hotelId === effectiveTenantHotelId)
