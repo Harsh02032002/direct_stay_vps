@@ -18,7 +18,7 @@ import {
 } from './utils/supabaseClient';
 import { showToast, dismissToast, subscribeToasts, ToastItem } from './utils/toast';
 import { deduplicateInvoicesByBooking, normalizeInvoiceConditions } from './utils/invoiceConditions';
-import { Room, Booking, GuestCheckIn, Invoice, Expense, CashHandover, HotelPolicy, UserRole, WaterBottleRecord, Staff, AuditLog, RoomVerification, HotelSettings, Hotel, SystemWebsiteConfig, Testimonial, RolePermission, SaaSPackage, CustomPage, InventoryProduct, InventoryCategory, InventorySupplier, InventoryPurchase, InventoryStockMovement, PosItem, PosOrder, PettyCashTransaction, CashBankAccount, FinanceVoucher, Vendor, OwnerDirectorPayment, StaffReimbursement, DailyClosingRecord, LaundryItemMaster, LaundryOrder, LostAndFoundItem, HousekeepingCleaningLog, AppNotification, NotificationEventType, DeletedItemRecord, TravelAgent, AgentCommissionPayment, FoodAdvanceBooking } from './types';
+import { Room, Booking, GuestCheckIn, Invoice, Expense, CashHandover, HotelPolicy, UserRole, WaterBottleRecord, Staff, AuditLog, RoomVerification, HotelSettings, Hotel, SystemWebsiteConfig, Testimonial, RolePermission, SaaSPackage, CustomPage, InventoryProduct, InventoryCategory, InventorySupplier, InventoryPurchase, InventoryStockMovement, PosItem, PosOrder, PosCategory, PettyCashTransaction, CashBankAccount, FinanceVoucher, Vendor, OwnerDirectorPayment, StaffReimbursement, DailyClosingRecord, LaundryItemMaster, LaundryOrder, LostAndFoundItem, HousekeepingCleaningLog, AppNotification, NotificationEventType, DeletedItemRecord, TravelAgent, AgentCommissionPayment, FoodAdvanceBooking } from './types';
 import Sidebar from './components/Sidebar';
 import DashboardView from './components/DashboardView';
 import TodayBookingsView from './components/TodayBookingsView';
@@ -463,6 +463,7 @@ export default function App() {
   const [rawTravelAgents, setRawTravelAgents] = useState<TravelAgent[]>(() => (Array.isArray(bootSnap?.travelAgents) ? bootSnap.travelAgents : []));
   const [rawAgentCommissionPayments, setRawAgentCommissionPayments] = useState<AgentCommissionPayment[]>(() => (Array.isArray(bootSnap?.agentCommissionPayments) ? bootSnap.agentCommissionPayments : []));
   const [rawPosAdvanceBookings, setRawPosAdvanceBookings] = useState<FoodAdvanceBooking[]>(() => (Array.isArray(bootSnap?.posAdvanceBookings) ? bootSnap.posAdvanceBookings : []));
+  const [rawPosCategories, setRawPosCategories] = useState<PosCategory[]>(() => (Array.isArray(bootSnap?.posCategories) ? bootSnap.posCategories : []));
 
   // Derive initial route tab/subtabs synchronously so deep-links & page reloads never flash or redirect to /admin
   const initialRouteInfo = React.useMemo(() => {
@@ -872,6 +873,7 @@ export default function App() {
     if (Array.isArray(data.travelAgents)) setRawTravelAgents(data.travelAgents);
     if (Array.isArray(data.agentCommissionPayments)) setRawAgentCommissionPayments(data.agentCommissionPayments);
     if (Array.isArray(data.posAdvanceBookings)) setRawPosAdvanceBookings(data.posAdvanceBookings);
+    if (Array.isArray(data.posCategories)) setRawPosCategories(data.posCategories);
   };
 
   const handleClearCacheAndSync = async () => {
@@ -2129,6 +2131,9 @@ export default function App() {
   const posAdvanceBookings = rawPosAdvanceBookings.filter(
     fb => fb.hotelId === effectiveTenantHotelId || (!fb.hotelId && effectiveTenantHotelId === hotels[0]?.id)
   );
+  const posCategories = rawPosCategories.filter(
+    c => c.hotelId === effectiveTenantHotelId || (!c.hotelId && effectiveTenantHotelId === hotels[0]?.id)
+  );
 
   const activeHotel = hotels.find(h => h.id === selectedHotelId) || hotels[0];
   const hotelSettings: HotelSettings = activeHotel ? {
@@ -3205,6 +3210,16 @@ export default function App() {
     savePmsData({ posAdvanceBookings: merged });
   };
 
+  const handleUpdatePosCategories = (updated: PosCategory[]) => {
+    const targetHotel = effectiveTenantHotelId || selectedHotelId || hotels[0]?.id || 'hotel-1';
+    const merged = [
+      ...rawPosCategories.filter(c => (c.hotelId || 'hotel-1') !== targetHotel),
+      ...updated.map(c => ({ ...c, hotelId: c.hotelId || targetHotel }))
+    ];
+    setRawPosCategories(merged);
+    savePmsData({ posCategories: merged });
+  };
+
   // Nav tab router
   const renderTabContent = () => {
     const activeHotelObj = hotels.find(h => h.id === selectedHotelId) || hotels[0];
@@ -3429,6 +3444,10 @@ export default function App() {
             onUpdateInventoryProducts={handleUpdateInventoryProducts}
             inventoryStockMovements={inventoryStockMovements}
             onUpdateInventoryMovements={handleUpdateInventoryMovements}
+            posAdvanceBookings={posAdvanceBookings}
+            onUpdatePosAdvanceBookings={handleUpdatePosAdvanceBookings}
+            categories={posCategories}
+            onUpdateCategories={handleUpdatePosCategories}
             selectedHotelId={effectiveTenantHotelId}
             hotelName={activeHotelObj?.name || hotelSettings.name}
             currentSubTab={posSubTab}

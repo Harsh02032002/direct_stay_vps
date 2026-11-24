@@ -14,7 +14,8 @@ import {
   PosTable,
   PosCategory,
   PosCoupon,
-  HotelSettings
+  HotelSettings,
+  FoodAdvanceBooking
 } from '../types';
 import { r2 } from '../utils/billCalculator';
 import { useHotelTaxSettings } from '../pms-integrated/utils/taxSettings';
@@ -33,6 +34,7 @@ import PosMenuCustomizerModal from './pos/PosMenuCustomizerModal';
 import PosCatalogManager from './pos/PosCatalogManager';
 import PosReportsView from './pos/PosReportsView';
 import DigitalMenuView, { FALLBACK_DIGITAL_MENU_ITEMS } from './DigitalMenuView';
+import FoodAdvanceBookingPanel from './FoodAdvanceBookingPanel';
 import { openPrintWindow } from '../utils/printDocument';
 import { showToast, showConfirmToast } from '../utils/toast';
 
@@ -48,6 +50,7 @@ import {
   CreditCard,
   DollarSign,
   Utensils,
+  Calendar,
   Smartphone,
   Bed,
   Layers,
@@ -106,6 +109,10 @@ interface PosViewProps {
   onUpdateInventoryProducts?: (products: InventoryProduct[]) => void;
   inventoryStockMovements?: InventoryStockMovement[];
   onUpdateInventoryMovements?: (movements: InventoryStockMovement[]) => void;
+  posAdvanceBookings?: FoodAdvanceBooking[];
+  onUpdatePosAdvanceBookings?: (bookings: FoodAdvanceBooking[]) => void;
+  categories?: PosCategory[];
+  onUpdateCategories?: (categories: PosCategory[]) => void;
   selectedHotelId: string;
   hotelName?: string;
   hotelSettings?: HotelSettings;
@@ -129,6 +136,10 @@ export default function PosView({
   onUpdateInventoryProducts,
   inventoryStockMovements = [],
   onUpdateInventoryMovements,
+  posAdvanceBookings = [],
+  onUpdatePosAdvanceBookings,
+  categories: propCategories,
+  onUpdateCategories,
   selectedHotelId,
   hotelName,
   hotelSettings,
@@ -140,7 +151,7 @@ export default function PosView({
 }: PosViewProps) {
   // Navigation Sub-tab
   const [internalTab, setInternalTab] = useState<
-    'dashboard' | 'terminal' | 'tables' | 'kds' | 'orders' | 'catalog' | 'reports' | 'qr_menu'
+    'dashboard' | 'terminal' | 'tables' | 'kds' | 'orders' | 'catalog' | 'reports' | 'qr_menu' | 'advance_booking'
   >((currentSubTab as any) || 'terminal');
 
   useEffect(() => {
@@ -151,7 +162,7 @@ export default function PosView({
 
   const activeTab = internalTab;
   const setActiveTab = (
-    nextTab: 'dashboard' | 'terminal' | 'tables' | 'kds' | 'orders' | 'catalog' | 'reports' | 'qr_menu'
+    nextTab: 'dashboard' | 'terminal' | 'tables' | 'kds' | 'orders' | 'catalog' | 'reports' | 'qr_menu' | 'advance_booking'
   ) => {
     setInternalTab(nextTab);
     onSelectSubTab?.(nextTab);
@@ -159,12 +170,38 @@ export default function PosView({
 
   // State for Tables, Categories, Coupons (no localStorage)
   const [tables, setTables] = useState<PosTable[]>(DEFAULT_POS_TABLES);
-  const [categories, setCategories] = useState<PosCategory[]>(DEFAULT_POS_CATEGORIES);
+
+  const [internalCategories, setInternalCategories] = useState<PosCategory[]>(
+    propCategories && propCategories.length > 0 ? propCategories : DEFAULT_POS_CATEGORIES
+  );
+
+  useEffect(() => {
+    if (propCategories && propCategories.length > 0) {
+      setInternalCategories(propCategories);
+    }
+  }, [propCategories]);
+
+  const categories = propCategories && propCategories.length > 0 ? propCategories : internalCategories;
+
+  const setCategories = (catsOrUpdater: PosCategory[] | ((prev: PosCategory[]) => PosCategory[])) => {
+    const nextCats = typeof catsOrUpdater === 'function' ? catsOrUpdater(categories) : catsOrUpdater;
+    setInternalCategories(nextCats);
+    onUpdateCategories?.(nextCats);
+  };
+
   const [coupons, setCoupons] = useState<PosCoupon[]>(DEFAULT_POS_COUPONS);
 
   // Terminal Cart & Order State
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedSubCategory, setSelectedSubCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Quick Category & Sub-Category Modal state in Terminal
+  const [showQuickCatModal, setShowQuickCatModal] = useState<boolean>(false);
+  const [quickCatMode, setQuickCatMode] = useState<'new_category' | 'new_subcategory'>('new_category');
+  const [quickCatName, setQuickCatName] = useState<string>('');
+  const [quickCatSubInput, setQuickCatSubInput] = useState<string>('');
+  const [quickTargetCatId, setQuickTargetCatId] = useState<string>('');
   const [cart, setCart] = useState<ExtendedCartItem[]>([]);
 
   const [orderType, setOrderType] = useState<
@@ -210,6 +247,7 @@ export default function PosView({
   const [editItemName, setEditItemName] = useState('');
   const [editItemPrice, setEditItemPrice] = useState<number>(0);
   const [editItemCategory, setEditItemCategory] = useState('');
+  const [editItemSubCategory, setEditItemSubCategory] = useState('');
   const [editItemTaxRate, setEditItemTaxRate] = useState<number>(5);
   const [editItemAvailable, setEditItemAvailable] = useState(true);
 
@@ -350,13 +388,36 @@ export default function PosView({
     ...Array.from(new Set([...effectiveCategories.map(c => c.name), ...effectiveItems.map(i => i.category)]))
   ];
 
-  // Filtered Items for Terminal
+  // Sub-Categories list derived from selected category or all items
+  const availableSubCategories = React.useMemo(() => {
+    if (selectedCategory === 'All') {
+      const set = new Set<string>();
+      effectiveCategories.forEach(c => (c.subcategories || []).forEach(s => set.add(s)));
+      effectiveItems.forEach(i => {
+        if (i.subCategory) set.add(i.subCategory);
+      });
+      return Array.from(set).filter(Boolean);
+    }
+    const matchedCat = effectiveCategories.find(c => c.name.toLowerCase() === selectedCategory.toLowerCase());
+    const set = new Set<string>(matchedCat?.subcategories || []);
+    effectiveItems
+      .filter(i => i.category.toLowerCase() === selectedCategory.toLowerCase() && i.subCategory)
+      .forEach(i => set.add(i.subCategory!));
+    return Array.from(set).filter(Boolean);
+  }, [selectedCategory, effectiveCategories, effectiveItems]);
+
+  // Filtered Items for Terminal (filtering by Category, Sub-Category, and Search)
   const filteredItems = effectiveItems.filter(item => {
     const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
+    const matchesSubCategory =
+      selectedSubCategory === 'All' ||
+      !selectedSubCategory ||
+      (item.subCategory && item.subCategory.toLowerCase() === selectedSubCategory.toLowerCase());
     const matchesSearch =
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.code.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
+      item.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.subCategory && item.subCategory.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchesCategory && matchesSubCategory && matchesSearch;
   });
 
   // Food / Restaurant GST rate from centralized settings (0% stays 0%, never fallback to 5% on 0)
@@ -681,6 +742,7 @@ export default function PosView({
     setEditItemName(item.name);
     setEditItemPrice(item.price);
     setEditItemCategory(item.category || '');
+    setEditItemSubCategory(item.subCategory || '');
     setEditItemTaxRate(item.taxRate ?? foodGstRate);
     setEditItemAvailable(item.available !== false);
   };
@@ -690,13 +752,32 @@ export default function PosView({
     if (!editingMenuItem) return;
     const priceNum = Math.max(0, r2(editItemPrice));
     const taxNum = Math.max(0, r2(editItemTaxRate));
+    const chosenCat = editItemCategory.trim() || editingMenuItem.category;
+    const chosenSub = editItemSubCategory.trim() || undefined;
+
+    // Register subcategory in categories list if not present
+    if (chosenSub) {
+      setCategories(
+        categories.map(c => {
+          if (c.name.toLowerCase() === chosenCat.toLowerCase()) {
+            const subs = c.subcategories || [];
+            if (!subs.some(s => s.toLowerCase() === chosenSub.toLowerCase())) {
+              return { ...c, subcategories: [...subs, chosenSub] };
+            }
+          }
+          return c;
+        })
+      );
+    }
+
     const updated = effectiveItems.map(it =>
       it.id === editingMenuItem.id
         ? {
             ...it,
             name: editItemName.trim() || it.name,
             price: priceNum,
-            category: editItemCategory.trim() || it.category,
+            category: chosenCat,
+            subCategory: chosenSub,
             taxRate: taxNum,
             available: editItemAvailable,
           }
@@ -711,6 +792,66 @@ export default function PosView({
     }
     showNotice(`Menu item "${editItemName}" updated to ₹${priceNum}!`);
     setEditingMenuItem(null);
+  };
+
+  const handleSaveQuickCategoryOrSub = () => {
+    if (quickCatMode === 'new_category') {
+      const name = quickCatName.trim();
+      if (!name) {
+        showToast('Please enter a category name.', 'warning');
+        return;
+      }
+      const subs = quickCatSubInput
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const existing = categories.find(c => c.name.toLowerCase() === name.toLowerCase());
+      if (existing) {
+        const mergedSubs = Array.from(new Set([...(existing.subcategories || []), ...subs]));
+        setCategories(
+          categories.map(c => (c.id === existing.id ? { ...c, subcategories: mergedSubs } : c))
+        );
+      } else {
+        const newCat: PosCategory = {
+          id: `cat-${Date.now()}`,
+          name,
+          description: `${name} items`,
+          subcategories: subs
+        };
+        setCategories([...categories, newCat]);
+      }
+      setSelectedCategory(name);
+      setSelectedSubCategory('All');
+      showToast(`Food category "${name}" saved!`, 'success');
+      setShowQuickCatModal(false);
+      setQuickCatName('');
+      setQuickCatSubInput('');
+    } else {
+      const targetCat = categories.find(c => c.id === quickTargetCatId) || categories[0];
+      const sub = quickCatSubInput.trim();
+      if (!targetCat) {
+        showToast('Please select or create a category first.', 'warning');
+        return;
+      }
+      if (!sub) {
+        showToast('Please enter sub-category name.', 'warning');
+        return;
+      }
+      const existingSubs = targetCat.subcategories || [];
+      if (!existingSubs.some(s => s.toLowerCase() === sub.toLowerCase())) {
+        setCategories(
+          categories.map(c =>
+            c.id === targetCat.id ? { ...c, subcategories: [...existingSubs, sub] } : c
+          )
+        );
+      }
+      setSelectedCategory(targetCat.name);
+      setSelectedSubCategory(sub);
+      showToast(`Sub-category "${sub}" added under "${targetCat.name}"!`, 'success');
+      setShowQuickCatModal(false);
+      setQuickCatSubInput('');
+    }
   };
 
   const handleClearCart = () => {
@@ -1450,6 +1591,23 @@ export default function PosView({
             <QrCode className="w-4 h-4 text-[#C49A3A]" />
             <span>Digital Menu QR</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('advance_booking')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center space-x-1.5 transition-all cursor-pointer ${
+              activeTab === 'advance_booking'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+            }`}
+          >
+            <Calendar className="w-4 h-4 text-emerald-600" />
+            <span>Advance Food Booking</span>
+            {posAdvanceBookings && posAdvanceBookings.filter(b => b.status !== 'Cancelled').length > 0 && (
+              <span className="px-1.5 py-0.5 bg-emerald-600 text-white text-[10px] rounded-full font-bold ml-1">
+                {posAdvanceBookings.filter(b => b.status !== 'Cancelled').length}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Held Orders quick trigger */}
@@ -1503,15 +1661,44 @@ export default function PosView({
           <div className="lg:col-span-7 space-y-4">
             {/* Search & Category Selector Strip */}
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-              <div className="relative">
-                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search menu items by dish name or code (e.g. Thali, POS-F01)..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
-                />
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search dishes by name, code or sub-category (e.g. Paneer, Thali)..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                  />
+                </div>
+
+                {/* Quick Advance Food Booking Button */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('advance_booking')}
+                  className="px-3 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer transition"
+                  title="Open Food Advance Booking"
+                >
+                  <Calendar className="w-4 h-4" />
+                  <span className="hidden sm:inline">Advance Booking</span>
+                </button>
+
+                {/* Quick Add Category / Sub-Category Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickCatMode('new_category');
+                    setQuickCatName('');
+                    setQuickCatSubInput('');
+                    setShowQuickCatModal(true);
+                  }}
+                  className="px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer transition"
+                  title="Add Category or Sub-Category"
+                >
+                  <Plus className="w-4 h-4 text-amber-600" />
+                  <span className="hidden sm:inline">+ Category / Sub</span>
+                </button>
               </div>
 
               {/* Category Pills Strip */}
@@ -1521,7 +1708,10 @@ export default function PosView({
                   return (
                     <button
                       key={catName}
-                      onClick={() => setSelectedCategory(catName)}
+                      onClick={() => {
+                        setSelectedCategory(catName);
+                        setSelectedSubCategory('All');
+                      }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
                         isSelected
                           ? 'bg-slate-900 text-white shadow-xs'
@@ -1533,6 +1723,57 @@ export default function PosView({
                   );
                 })}
               </div>
+
+              {/* Sub-Category Pills Strip (Rendered when subcategories exist) */}
+              {availableSubCategories.length > 0 && (
+                <div className="flex items-center space-x-1.5 overflow-x-auto pt-1.5 border-t border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1">
+                    Sub-Category:
+                  </span>
+                  <button
+                    onClick={() => setSelectedSubCategory('All')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all ${
+                      selectedSubCategory === 'All'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100'
+                    }`}
+                  >
+                    All {selectedCategory !== 'All' ? selectedCategory : ''}
+                  </button>
+                  {availableSubCategories.map(sub => {
+                    const isSelected = selectedSubCategory.toLowerCase() === sub.toLowerCase();
+                    return (
+                      <button
+                        key={sub}
+                        onClick={() => setSelectedSubCategory(sub)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all ${
+                          isSelected
+                            ? 'bg-amber-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        {sub}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuickCatMode('new_subcategory');
+                      setQuickTargetCatId(
+                        effectiveCategories.find(c => c.name.toLowerCase() === selectedCategory.toLowerCase())?.id ||
+                        categories[0]?.id ||
+                        ''
+                      );
+                      setQuickCatSubInput('');
+                      setShowQuickCatModal(true);
+                    }}
+                    className="px-2 py-0.5 text-[10px] font-bold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-dashed border-amber-300 rounded-lg whitespace-nowrap cursor-pointer ml-1"
+                  >
+                    + Add Sub-category
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Category Cards (When 'All' selected and search empty, show category-first entry cards) */}
@@ -1544,7 +1785,10 @@ export default function PosView({
                   return (
                     <div
                       key={cat.id}
-                      onClick={() => setSelectedCategory(cat.name)}
+                      onClick={() => {
+                        setSelectedCategory(cat.name);
+                        setSelectedSubCategory('All');
+                      }}
                       className="p-4 bg-white border border-slate-200 rounded-2xl shadow-xs hover:border-amber-500 hover:shadow-md transition-all cursor-pointer space-y-2 group"
                     >
                       <div className="flex items-center justify-between">
@@ -2261,10 +2505,11 @@ export default function PosView({
                           </button>
                           <button
                             onClick={async () => {
-                              const confirmed = await showConfirmToast(`Cancel POS Order #${order.orderNumber}?`, {
+                              const confirmed = await showConfirmToast({
+                                message: `Cancel POS Order #${order.orderNumber}?`,
                                 title: 'Cancel POS Order',
                                 confirmLabel: 'Cancel Order',
-                                variant: 'danger'
+                                severity: 'warning'
                               });
                               if (!confirmed) return;
                               removePosOrderFromGuestFolio(order);
@@ -2295,14 +2540,12 @@ export default function PosView({
                           </button>
                           <button
                             onClick={async () => {
-                              const confirmed = await showConfirmToast(
-                                `Void settled Food Bill #${order.orderNumber} (₹${order.grandTotal.toFixed(2)})? This will reverse any room folio charges.`,
-                                {
-                                  title: 'Void Food Bill',
-                                  confirmLabel: 'Void Bill',
-                                  variant: 'danger'
-                                }
-                              );
+                              const confirmed = await showConfirmToast({
+                                message: `Void settled Food Bill #${order.orderNumber} (₹${order.grandTotal.toFixed(2)})? This will reverse any room folio charges.`,
+                                title: 'Void Food Bill',
+                                confirmLabel: 'Void Bill',
+                                severity: 'warning'
+                              });
                               if (!confirmed) return;
                               removePosOrderFromGuestFolio(order);
                               const updated = orders.map(o =>
@@ -2325,14 +2568,12 @@ export default function PosView({
                       {order.status === 'Cancelled' && (
                         <button
                           onClick={async () => {
-                            const confirmed = await showConfirmToast(
-                              `Permanently delete cancelled Food Bill #${order.orderNumber}?`,
-                              {
-                                title: 'Delete Order Record',
-                                confirmLabel: 'Delete Permanently',
-                                variant: 'danger'
-                              }
-                            );
+                            const confirmed = await showConfirmToast({
+                              message: `Permanently delete cancelled Food Bill #${order.orderNumber}?`,
+                              title: 'Delete Order Record',
+                              confirmLabel: 'Delete Permanently',
+                              severity: 'warning'
+                            });
                             if (!confirmed) return;
                             const updated = orders.filter(o => o.id !== order.id);
                             onUpdateOrders(updated);
@@ -2533,6 +2774,40 @@ export default function PosView({
           </div>
         );
       })()}
+
+      {/* TAB 9: ADVANCE FOOD BOOKING */}
+      {activeTab === 'advance_booking' && (
+        <FoodAdvanceBookingPanel
+          bookings={posAdvanceBookings}
+          hotelName={hotelName}
+          loggedInUser={staff[0]?.name || 'Admin'}
+          availableTables={tables.map(t => t.name)}
+          onUpdateBookings={onUpdatePosAdvanceBookings || (() => {})}
+          onCreatePosOrderFromAdvance={(adv) => {
+            if (adv.tableNumber) {
+              setTableNo(adv.tableNumber);
+            }
+            if (adv.guestOrGroupName) {
+              setGuestName(adv.guestOrGroupName);
+            }
+            if (adv.mobile) {
+              setCustomerPhone(adv.mobile);
+            }
+            const mealNotes = [
+              `Advance Booking #${adv.bookingNumber || ''}`,
+              adv.pax ? `Pax: ${adv.pax}` : '',
+              adv.meals && adv.meals.length > 0 ? `Meal: ${adv.meals.join(', ')}` : '',
+              adv.advanceAmount ? `Adv Paid: ₹${adv.advanceAmount}` : '',
+              adv.balanceAmount ? `Bal Due: ₹${adv.balanceAmount}` : '',
+              adv.specialRequest ? `Notes: ${adv.specialRequest}` : ''
+            ].filter(Boolean).join(' | ');
+
+            setOrderNotes(mealNotes);
+            setActiveTab('terminal');
+            showToast(`Advance booking for ${adv.guestOrGroupName} loaded into POS terminal!`, 'success');
+          }}
+        />
+      )}
 
       {/* MODAL 1: ITEM CUSTOMIZER */}
       {customizingItem && (
@@ -2922,13 +3197,23 @@ export default function PosView({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Category</label>
                   <input
                     type="text"
                     value={editItemCategory}
                     onChange={(e) => setEditItemCategory(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Sub-Category</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Paneer Special"
+                    value={editItemSubCategory}
+                    onChange={(e) => setEditItemSubCategory(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500"
                   />
                 </div>
@@ -2973,6 +3258,144 @@ export default function PosView({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* QUICK ADD CATEGORY / SUB-CATEGORY MODAL */}
+      {showQuickCatModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center space-x-2">
+                <Utensils className="w-5 h-5 text-amber-600" />
+                <h3 className="font-extrabold text-slate-900 text-base">
+                  {quickCatMode === 'new_category' ? 'Add Food Category' : 'Add Sub-Category'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQuickCatModal(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Mode Toggle */}
+            <div className="flex bg-slate-100 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setQuickCatMode('new_category')}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  quickCatMode === 'new_category'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                + New Category
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuickCatMode('new_subcategory')}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  quickCatMode === 'new_subcategory'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                + Add Sub-Category
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              {quickCatMode === 'new_category' ? (
+                <>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Category Name *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Main Course, Chinese, Snacks, Beverages, Thali"
+                      value={quickCatName}
+                      onChange={e => setQuickCatName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500 font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      Sub-Categories (Optional, comma-separated)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Paneer Special, Dal, Breads, Rice, Noodles"
+                      value={quickCatSubInput}
+                      onChange={e => setQuickCatSubInput(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      Multiple sub-categories can be entered separated by commas.
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Select Parent Category *</label>
+                    <select
+                      value={quickTargetCatId || categories[0]?.id || ''}
+                      onChange={e => setQuickTargetCatId(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500 font-semibold bg-white"
+                    >
+                      {categories.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Sub-Category Name *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Paneer Special, Dal, Tandoori Breads"
+                      value={quickCatSubInput}
+                      onChange={e => setQuickCatSubInput(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500 font-semibold"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex space-x-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowQuickCatModal(false)}
+                className="flex-1 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs hover:bg-slate-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveQuickCategoryOrSub}
+                className="flex-1 py-2.5 bg-amber-600 text-white font-bold rounded-xl text-xs hover:bg-amber-700 shadow-xs cursor-pointer"
+              >
+                Save
+              </button>
+            </div>
+
+            <div className="text-center pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQuickCatModal(false);
+                  setActiveTab('catalog');
+                }}
+                className="text-amber-700 hover:underline text-xs font-semibold cursor-pointer"
+              >
+                Open Full Menu & Category Manager →
+              </button>
+            </div>
           </div>
         </div>
       )}

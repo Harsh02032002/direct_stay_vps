@@ -47,6 +47,7 @@ export default function PosCatalogManager({
     name: string;
     code: string;
     category: string;
+    subCategory: string;
     price: number;
     taxRate: number;
     available: boolean;
@@ -59,6 +60,7 @@ export default function PosCatalogManager({
     name: '',
     code: '',
     category: categories[0]?.name || 'Food & Restaurant',
+    subCategory: '',
     price: 100,
     taxRate: 5,
     available: true,
@@ -74,6 +76,7 @@ export default function PosCatalogManager({
   const [editingCategory, setEditingCategory] = useState<PosCategory | null>(null);
   const [categoryName, setCategoryName] = useState<string>('');
   const [categoryDesc, setCategoryDesc] = useState<string>('');
+  const [categorySubcategoriesInput, setCategorySubcategoriesInput] = useState<string>('');
 
   // Coupon Modal State
   const [showCouponModal, setShowCouponModal] = useState<boolean>(false);
@@ -106,6 +109,7 @@ export default function PosCatalogManager({
       name: item.name,
       code: item.code,
       category: item.category,
+      subCategory: item.subCategory || '',
       price: item.price,
       taxRate: item.taxRate,
       available: item.available,
@@ -161,11 +165,30 @@ export default function PosCatalogManager({
       .filter(Boolean);
 
     const chosenCategory = itemForm.category.trim() || categories[0]?.name || 'Main Course';
+    const chosenSubCategory = itemForm.subCategory.trim() || undefined;
+
     if (!categories.some(c => c.name.toLowerCase() === chosenCategory.toLowerCase())) {
       onUpdateCategories([
         ...categories,
-        { id: `cat-${Date.now()}`, name: chosenCategory, description: `${chosenCategory} dishes` }
+        {
+          id: `cat-${Date.now()}`,
+          name: chosenCategory,
+          description: `${chosenCategory} dishes`,
+          subcategories: chosenSubCategory ? [chosenSubCategory] : []
+        }
       ]);
+    } else if (chosenSubCategory) {
+      onUpdateCategories(
+        categories.map(c => {
+          if (c.name.toLowerCase() === chosenCategory.toLowerCase()) {
+            const existing = c.subcategories || [];
+            if (!existing.some(s => s.toLowerCase() === chosenSubCategory.toLowerCase())) {
+              return { ...c, subcategories: [...existing, chosenSubCategory] };
+            }
+          }
+          return c;
+        })
+      );
     }
 
     if (editingItem) {
@@ -176,6 +199,7 @@ export default function PosCatalogManager({
               name: trimmedName,
               code: itemForm.code.trim() || i.code,
               category: chosenCategory,
+              subCategory: chosenSubCategory,
               price: numericPrice,
               taxRate: Math.max(0, Number(itemForm.taxRate) || 0),
               available: itemForm.available,
@@ -199,6 +223,7 @@ export default function PosCatalogManager({
         name: trimmedName,
         code: itemForm.code.trim() || `POS-${Math.floor(100 + Math.random() * 900)}`,
         category: chosenCategory,
+        subCategory: chosenSubCategory,
         price: numericPrice,
         taxRate: Math.max(0, Number(itemForm.taxRate) || 0),
         available: itemForm.available,
@@ -222,10 +247,11 @@ export default function PosCatalogManager({
 
   const handleDeleteItem = async (id: string) => {
     const target = items.find(i => i.id === id);
-    const confirmed = await showConfirmToast(`Delete menu item "${target?.name || id}"?`, {
+    const confirmed = await showConfirmToast({
+      message: `Delete menu item "${target?.name || id}"?`,
       title: 'Delete POS Menu Item',
       confirmLabel: 'Delete Item',
-      variant: 'danger'
+      severity: 'warning'
     });
     if (confirmed) {
       onUpdateItems(items.filter(i => i.id !== id));
@@ -244,11 +270,17 @@ export default function PosCatalogManager({
       showToast('Please enter a category name.', 'warning');
       return;
     }
+    const parsedSubcategories = categorySubcategoriesInput
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
     if (editingCategory) {
       const oldName = editingCategory.name;
+      const mergedSub = Array.from(new Set([...(editingCategory.subcategories || []), ...parsedSubcategories]));
       onUpdateCategories(
         categories.map(c =>
-          c.id === editingCategory.id ? { ...c, name: cleanName, description: categoryDesc.trim() } : c
+          c.id === editingCategory.id ? { ...c, name: cleanName, description: categoryDesc.trim(), subcategories: mergedSub } : c
         )
       );
       if (oldName !== cleanName && items.some(i => i.category === oldName)) {
@@ -260,7 +292,8 @@ export default function PosCatalogManager({
       const newCat: PosCategory = {
         id: `cat-${Date.now()}`,
         name: cleanName,
-        description: categoryDesc.trim()
+        description: categoryDesc.trim(),
+        subcategories: parsedSubcategories
       };
       onUpdateCategories([...categories, newCat]);
       onAddAuditLog?.(
@@ -273,14 +306,48 @@ export default function PosCatalogManager({
     setEditingCategory(null);
     setCategoryName('');
     setCategoryDesc('');
+    setCategorySubcategoriesInput('');
+  };
+
+  const handleAddSubcategoryToCat = (catId: string, subName: string) => {
+    const cleanSub = subName.trim();
+    if (!cleanSub) return;
+    onUpdateCategories(
+      categories.map(c => {
+        if (c.id === catId) {
+          const existing = c.subcategories || [];
+          if (!existing.some(s => s.toLowerCase() === cleanSub.toLowerCase())) {
+            return { ...c, subcategories: [...existing, cleanSub] };
+          }
+        }
+        return c;
+      })
+    );
+    showToast(`Added sub-category "${cleanSub}"!`, 'success');
+  };
+
+  const handleRemoveSubcategoryFromCat = (catId: string, subName: string) => {
+    onUpdateCategories(
+      categories.map(c => {
+        if (c.id === catId) {
+          return {
+            ...c,
+            subcategories: (c.subcategories || []).filter(s => s !== subName)
+          };
+        }
+        return c;
+      })
+    );
+    showToast(`Removed sub-category "${subName}".`, 'info');
   };
 
   const handleDeleteCategory = async (id: string) => {
     const target = categories.find(c => c.id === id);
-    const confirmed = await showConfirmToast(`Delete menu category "${target?.name || id}"?`, {
+    const confirmed = await showConfirmToast({
+      message: `Delete menu category "${target?.name || id}"?`,
       title: 'Delete POS Category',
       confirmLabel: 'Delete Category',
-      variant: 'danger'
+      severity: 'warning'
     });
     if (confirmed) {
       onUpdateCategories(categories.filter(c => c.id !== id));
@@ -317,10 +384,11 @@ export default function PosCatalogManager({
 
   const handleDeleteCoupon = async (id: string) => {
     const target = coupons.find(c => c.id === id);
-    const confirmed = await showConfirmToast(`Delete promo coupon "${target?.code || id}"?`, {
+    const confirmed = await showConfirmToast({
+      message: `Delete promo coupon "${target?.code || id}"?`,
       title: 'Delete Promo Coupon',
       confirmLabel: 'Delete Coupon',
-      variant: 'danger'
+      severity: 'warning'
     });
     if (confirmed) {
       onUpdateCoupons(coupons.filter(c => c.id !== id));
@@ -406,6 +474,7 @@ export default function PosCatalogManager({
                   name: '',
                   code: `POS-${Math.floor(100 + Math.random() * 900)}`,
                   category: categories[0]?.name || 'Food & Restaurant',
+                  subCategory: '',
                   price: 150,
                   taxRate: 5,
                   available: true,
@@ -430,7 +499,7 @@ export default function PosCatalogManager({
                 <tr className="bg-slate-50 border-b border-slate-200 font-bold text-slate-600 uppercase">
                   <th className="py-3 px-4">Code</th>
                   <th className="py-3 px-4">Item Name</th>
-                  <th className="py-3 px-4">Category</th>
+                  <th className="py-3 px-4">Category / Sub-Category</th>
                   <th className="py-3 px-4">Price</th>
                   <th className="py-3 px-4">GST</th>
                   <th className="py-3 px-4">Kitchen Station</th>
@@ -444,7 +513,14 @@ export default function PosCatalogManager({
                   <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                     <td className="py-3 px-4 font-mono font-bold text-slate-900">{item.code}</td>
                     <td className="py-3 px-4 font-semibold text-slate-800">{item.name}</td>
-                    <td className="py-3 px-4">{item.category}</td>
+                    <td className="py-3 px-4">
+                      <div className="font-medium text-slate-800">{item.category}</div>
+                      {item.subCategory && (
+                        <span className="inline-block px-1.5 py-0.5 mt-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded text-[10px] font-mono">
+                          ↳ {item.subCategory}
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3 px-4 font-bold text-slate-900">₹{item.price}</td>
                     <td className="py-3 px-4">{item.taxRate}%</td>
                     <td className="py-3 px-4">{item.kitchenStation || 'Main Kitchen'}</td>
@@ -492,6 +568,7 @@ export default function PosCatalogManager({
                 setEditingCategory(null);
                 setCategoryName('');
                 setCategoryDesc('');
+                setCategorySubcategoriesInput('');
                 setShowCategoryModal(true);
               }}
               className="px-4 py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-700 flex items-center space-x-1.5 shadow-xs cursor-pointer"
@@ -505,10 +582,13 @@ export default function PosCatalogManager({
             {categories.map(cat => {
               const catItemsCount = items.filter(i => i.category === cat.name).length;
               return (
-                <div key={cat.id} className="p-4 bg-white border border-slate-200 rounded-xl shadow-xs space-y-2">
+                <div key={cat.id} className="p-4 bg-white border border-slate-200 rounded-xl shadow-xs space-y-3">
                   <div className="flex justify-between items-start">
-                    <h4 className="font-bold text-slate-800 text-sm">{cat.name}</h4>
-                    <div className="flex items-center space-x-1.5">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-sm">{cat.name}</h4>
+                      <p className="text-xs text-slate-500">{cat.description || 'No description provided.'}</p>
+                    </div>
+                    <div className="flex items-center space-x-1.5 shrink-0">
                       <button
                         type="button"
                         title="Edit Category"
@@ -516,6 +596,7 @@ export default function PosCatalogManager({
                           setEditingCategory(cat);
                           setCategoryName(cat.name);
                           setCategoryDesc(cat.description || '');
+                          setCategorySubcategoriesInput((cat.subcategories || []).join(', '));
                           setShowCategoryModal(true);
                         }}
                         className="p-1 text-slate-400 hover:text-amber-700 cursor-pointer"
@@ -532,9 +613,68 @@ export default function PosCatalogManager({
                       </button>
                     </div>
                   </div>
-                  <p className="text-xs text-slate-500">{cat.description || 'No description provided.'}</p>
-                  <div className="pt-2 border-t border-slate-100 text-xs font-semibold text-amber-800">
-                    {catItemsCount} items linked
+
+                  {/* Sub-Categories */}
+                  <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                      <span>Sub-Categories ({(cat.subcategories || []).length})</span>
+                      <span className="text-amber-800 font-semibold">{catItemsCount} items</span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1 min-h-[24px]">
+                      {(cat.subcategories || []).map(sub => (
+                        <span
+                          key={sub}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-200 rounded-md text-[10px] font-semibold"
+                        >
+                          {sub}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSubcategoryFromCat(cat.id, sub)}
+                            className="text-amber-700 hover:text-rose-600 cursor-pointer ml-0.5"
+                            title="Remove Sub-category"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      {(!cat.subcategories || cat.subcategories.length === 0) && (
+                        <span className="text-[10px] text-slate-400 italic">No sub-categories yet</span>
+                      )}
+                    </div>
+
+                    {/* Quick Add Subcategory Inline */}
+                    <div className="flex items-center gap-1 pt-1">
+                      <input
+                        type="text"
+                        placeholder="+ Add sub-category..."
+                        id={`input-sub-${cat.id}`}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const val = (e.currentTarget.value || '').trim();
+                            if (val) {
+                              handleAddSubcategoryToCat(cat.id, val);
+                              e.currentTarget.value = '';
+                            }
+                          }
+                        }}
+                        className="flex-1 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const el = document.getElementById(`input-sub-${cat.id}`) as HTMLInputElement | null;
+                          if (el && el.value.trim()) {
+                            handleAddSubcategoryToCat(cat.id, el.value.trim());
+                            el.value = '';
+                          }
+                        }}
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                      >
+                        Add
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -612,7 +752,7 @@ export default function PosCatalogManager({
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="font-semibold text-slate-600 block mb-1">Category</label>
                   <input
@@ -631,6 +771,29 @@ export default function PosCatalogManager({
                       ])
                     ).map(catName => (
                       <option key={catName} value={catName} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-600 block mb-1">Sub-Category</label>
+                  <input
+                    type="text"
+                    list="pos-catalog-subcategory-options"
+                    placeholder="Sub-category (e.g. Paneer)"
+                    value={itemForm.subCategory}
+                    onChange={e => setItemForm({ ...itemForm, subCategory: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                  <datalist id="pos-catalog-subcategory-options">
+                    {Array.from(
+                      new Set([
+                        ...(categories.find(c => c.name.toLowerCase() === itemForm.category.toLowerCase())?.subcategories || []),
+                        ...items.filter(i => i.category.toLowerCase() === itemForm.category.toLowerCase()).map(i => i.subCategory).filter(Boolean),
+                        ...categories.flatMap(c => c.subcategories || []),
+                      ])
+                    ).map(subName => (
+                      <option key={subName} value={subName as string} />
                     ))}
                   </datalist>
                 </div>
@@ -757,6 +920,17 @@ export default function PosCatalogManager({
                   onChange={e => setCategoryDesc(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
                 />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-600 block mb-1">Sub-Categories (comma separated)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Starters, Paneer Special, Dal, Breads, Rice"
+                  value={categorySubcategoriesInput}
+                  onChange={e => setCategorySubcategoriesInput(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                <span className="text-[10px] text-slate-400 mt-1 block">Separate multiple sub-categories with commas.</span>
               </div>
             </div>
             <div className="flex space-x-2 pt-2 border-t border-slate-100">

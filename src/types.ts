@@ -1328,6 +1328,7 @@ export interface PosItem {
   name: string;
   code: string;
   category: string;
+  subCategory?: string;
   price: number;
   taxRate: number; // percentage e.g. 5 for 5% GST
   isVeg?: boolean;
@@ -1375,6 +1376,7 @@ export interface PosCategory {
   name: string;
   description?: string;
   hotelId?: string;
+  subcategories?: string[];
 }
 
 export interface PosCoupon {

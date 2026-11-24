@@ -40,7 +40,8 @@ import {
   DeletedItemRecord,
   TravelAgent,
   AgentCommissionPayment,
-  FoodAdvanceBooking
+  FoodAdvanceBooking,
+  PosCategory
 } from '../types';
 import { syncAllToSupabase } from './supabaseClient';
 
@@ -572,6 +573,7 @@ export const getPmsData = () => {
   const rawTravelAgents = checkAndGet<TravelAgent[]>('GP_PMS_TRAVEL_AGENTS', []);
   const rawAgentCommissionPayments = checkAndGet<AgentCommissionPayment[]>('GP_PMS_AGENT_COMMISSION_PAYMENTS', []);
   const rawPosAdvanceBookings = checkAndGet<FoodAdvanceBooking[]>('GP_PMS_POS_ADVANCE_BOOKINGS', []);
+  const rawPosCategories = checkAndGet<PosCategory[]>('GP_PMS_POS_CATEGORIES', []);
 
   return {
     hotels: rawHotels || [],
@@ -592,6 +594,7 @@ export const getPmsData = () => {
     travelAgents: rawTravelAgents || [],
     agentCommissionPayments: rawAgentCommissionPayments || [],
     posAdvanceBookings: rawPosAdvanceBookings || [],
+    posCategories: rawPosCategories || [],
     rolePermissions: rawRolePermissions || [],
     inventoryProducts: rawInventoryProducts || [],
     inventoryCategories: rawInventoryCategories || [],
@@ -659,6 +662,7 @@ export const savePmsData = (
     travelAgents?: TravelAgent[];
     agentCommissionPayments?: AgentCommissionPayment[];
     posAdvanceBookings?: FoodAdvanceBooking[];
+    posCategories?: PosCategory[];
   },
   skipCloudSync = false
 ) => {
@@ -734,6 +738,7 @@ export const savePmsData = (
   if (data.travelAgents !== undefined) safeSetStorageItem('GP_PMS_TRAVEL_AGENTS', data.travelAgents);
   if (data.agentCommissionPayments !== undefined) safeSetStorageItem('GP_PMS_AGENT_COMMISSION_PAYMENTS', data.agentCommissionPayments);
   if (data.posAdvanceBookings !== undefined) safeSetStorageItem('GP_PMS_POS_ADVANCE_BOOKINGS', data.posAdvanceBookings);
+  if (data.posCategories !== undefined) safeSetStorageItem('GP_PMS_POS_CATEGORIES', data.posCategories);
 
   if (skipCloudSync) return;
 
