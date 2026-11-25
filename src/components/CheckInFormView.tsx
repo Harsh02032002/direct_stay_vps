@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { showToast } from '../utils/toast';
 import QuickDateInput from './QuickDateInput';
+import TimePicker12h from './TimePicker12h';
 import { calculateEarlyCheckIn } from '../utils/stayTimeUtils';
 import { evaluateAndBuildInvoice, normalizeInvoiceConditions } from '../utils/invoiceConditions';
 import {
@@ -7822,7 +7823,7 @@ export default function CheckInFormView({
                             {formatDdmmyyyy(checkInDate)} / {arrivalTime}
                           </span>
                         </div>
-                        <div className="grid grid-cols-[1fr_102px] gap-1.5">
+                        <div className="grid grid-cols-[1fr_132px] gap-1.5">
                           <input
                             type="date"
                             required
@@ -7832,12 +7833,11 @@ export default function CheckInFormView({
                             onBlur={handleArrivalDateBlur}
                             className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
-                          <input
-                            type="time"
-                            value={to24hTime(arrivalTime, getIstNowParts().hhmm)}
-                            onWheel={(e) => e.currentTarget.blur()}
-                            onChange={e => handleArrivalTimeChange(e.target.value)}
-                            className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                          <TimePicker12h
+                            value={arrivalTime}
+                            onChange={(_, hhmm24) => handleArrivalTimeChange(hhmm24)}
+                            title="Arrival Time (12-Hour AM / PM)"
+                            className="w-full py-0.5"
                           />
                         </div>
                       </div>
@@ -7857,7 +7857,7 @@ export default function CheckInFormView({
                             {formatDdmmyyyy(checkOutDate)} / {departureTime}
                           </span>
                         </div>
-                        <div className="grid grid-cols-[1fr_102px] gap-1.5">
+                        <div className="grid grid-cols-[1fr_132px] gap-1.5">
                           <input
                             type="date"
                             required
@@ -7867,12 +7867,11 @@ export default function CheckInFormView({
                             onBlur={handleDepartureDateBlur}
                             className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
-                          <input
-                            type="time"
-                            value={to24hTime(departureTime, to24hTime(hotelSettings?.checkOutTime, '11:00'))}
-                            onWheel={(e) => e.currentTarget.blur()}
-                            onChange={e => handleDepartureTimeChange(e.target.value)}
-                            className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                          <TimePicker12h
+                            value={departureTime}
+                            onChange={(_, hhmm24) => handleDepartureTimeChange(hhmm24)}
+                            title="Departure Time (12-Hour AM / PM)"
+                            className="w-full py-0.5"
                           />
                         </div>
                       </div>

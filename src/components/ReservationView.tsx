@@ -48,6 +48,7 @@ import {
 import { openWhatsAppChat } from '../pms-integrated/utils/formatters';
 import { getCurrentTimeStr, calculateEarlyCheckIn } from '../utils/stayTimeUtils';
 import { showToast } from '../utils/toast';
+import TimePicker12h from './TimePicker12h';
 import { triggerBookingEmail, isValidEmailAddress, BookingEmailEventType } from '../utils/bookingEmailService';
 import {
   BillCharge,
@@ -4794,7 +4795,7 @@ export default function ReservationView({
                         {checkInTime}
                       </span>
                     </div>
-                    <div className="grid grid-cols-[1fr_95px] gap-1">
+                    <div className="grid grid-cols-[1fr_130px] gap-1.5">
                       <input
                         type="date"
                         required
@@ -4804,23 +4805,20 @@ export default function ReservationView({
                         onChange={(e) => handleCheckInDateChange(e.target.value)}
                         className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
                       />
-                      <input
-                        type="time"
-                        value={to24hTime(checkInTime, '12:00')}
-                        onWheel={(e) => e.currentTarget.blur()}
-                        onChange={(e) => {
-                          const val = e.target.value;
+                      <TimePicker12h
+                        value={checkInTime}
+                        onChange={(display12h, hhmm24) => {
                           const today = getTodayDateStr();
                           const now = new Date();
                           const nowHhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-                          if (!editingBooking && !allowBackDatedCheckIn && checkInDate === today && val < nowHhmm) {
+                          if (!editingBooking && !allowBackDatedCheckIn && checkInDate === today && hhmm24 < nowHhmm) {
                             showToast('Past arrival time blocked. Enable back-dated check-in in Property Setup.', 'warning');
                             return;
                           }
-                          setCheckInTime(to12hTime(val, '12:00 PM'));
+                          setCheckInTime(display12h);
                         }}
-                        className="w-full h-9 px-2 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
-                        title="Arrival Time (Back-Time)"
+                        className="w-full h-9 !rounded-lg"
+                        title="Arrival Time (12-Hour AM / PM)"
                       />
                     </div>
                   </div>

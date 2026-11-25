@@ -122,6 +122,149 @@ export default function RoomManagementView({
   const [outOfOrderReason, setOutOfOrderReason] = useState('');
   const [formError, setFormError] = useState('');
 
+  // Room Add Mode: 'single' | 'range' | 'bulk' (Multi-Floor)
+  type RoomCreationMode = 'single' | 'range' | 'bulk';
+  interface BulkDraftRoomRow {
+    draftId: string;
+    number: string;
+    floor: string;
+    category: string;
+    rate: number;
+  }
+  const [addCreationMode, setAddCreationMode] = useState<RoomCreationMode>('single');
+  const [rangeStartNum, setRangeStartNum] = useState<string>('101');
+  const [rangeEndNum, setRangeEndNum] = useState<string>('105');
+  const [bulkStartRoomNum, setBulkStartRoomNum] = useState<string>('101');
+  const [bulkNumFloors, setBulkNumFloors] = useState<string>('3');
+  const [bulkRoomsPerFloor, setBulkRoomsPerFloor] = useState<string>('5');
+  const [bulkStartFloorNum, setBulkStartFloorNum] = useState<string>('1');
+  const [bulkNumberingPattern, setBulkNumberingPattern] = useState<'floor_series' | 'sequential'>('floor_series');
+  const [bulkDraftRows, setBulkDraftRows] = useState<BulkDraftRoomRow[]>([]);
+
+  const formatFloorLabel = (floorIdx: number): string => {
+    if (floorIdx <= 0) return 'Ground Floor';
+    const mod100 = floorIdx % 100;
+    const mod10 = floorIdx % 10;
+    const suffix =
+      mod100 >= 11 && mod100 <= 13
+        ? 'th'
+        : mod10 === 1
+        ? 'st'
+        : mod10 === 2
+        ? 'nd'
+        : mod10 === 3
+        ? 'rd'
+        : 'th';
+    return `${floorIdx}${suffix} Floor`;
+  };
+
+  const knownFloorOptions = useMemo(() => {
+    const defaults = [
+      'Ground Floor',
+      '1st Floor',
+      '2nd Floor',
+      '3rd Floor',
+      '4th Floor',
+      '5th Floor',
+      '6th Floor',
+      'Executive Floor',
+      'Penthouse',
+    ];
+    const fromRooms = rooms.map(r => String(r.floor || '').trim()).filter(Boolean);
+    return Array.from(new Set([...defaults, ...fromRooms]));
+  }, [rooms]);
+
+  const generateRangeDraftRows = (
+    startStr = rangeStartNum,
+    endStr = rangeEndNum,
+    floorLabel = floor,
+    catLabel = category,
+    rateVal = rate
+  ) => {
+    const s = parseInt(startStr.replace(/\D/g, ''), 10);
+    const e = parseInt(endStr.replace(/\D/g, ''), 10);
+    if (Number.isNaN(s) || Number.isNaN(e) || s <= 0 || e < s) {
+      setFormError('Please enter a valid numeric range (From Room No. must be ≤ To Room No.).');
+      return;
+    }
+    const count = e - s + 1;
+    if (count > 200) {
+      setFormError('Maximum 200 rooms can be generated in one batch.');
+      return;
+    }
+    setFormError('');
+    const resolvedFloor = floorLabel.trim() || '1st Floor';
+    const resolvedCat = catLabel.trim() || categories[0]?.name || 'Standard';
+    const resolvedRate = Number(rateVal) || categories[0]?.rate || 2000;
+    const rows: BulkDraftRoomRow[] = [];
+    for (let n = s; n <= e; n++) {
+      rows.push({
+        draftId: `rng-${Date.now()}-${n}`,
+        number: String(n),
+        floor: resolvedFloor,
+        category: resolvedCat,
+        rate: resolvedRate,
+      });
+    }
+    setBulkDraftRows(rows);
+  };
+
+  const generateMultiFloorDraftRows = (
+    startRoomStr = bulkStartRoomNum,
+    floorsCountStr = bulkNumFloors,
+    perFloorStr = bulkRoomsPerFloor,
+    startFloorStr = bulkStartFloorNum,
+    pattern = bulkNumberingPattern,
+    catLabel = category,
+    rateVal = rate
+  ) => {
+    const baseRoom = parseInt(startRoomStr.replace(/\D/g, ''), 10);
+    const numFloors = parseInt(floorsCountStr.replace(/\D/g, ''), 10);
+    const perFloor = parseInt(perFloorStr.replace(/\D/g, ''), 10);
+    const startFloor = parseInt(startFloorStr.replace(/[^0-9]/g, ''), 10);
+    if (Number.isNaN(baseRoom) || baseRoom <= 0) {
+      setFormError('Starting Room Number must be a positive number (e.g. 101).');
+      return;
+    }
+    if (Number.isNaN(numFloors) || numFloors < 1 || numFloors > 50) {
+      setFormError('Number of Floors must be between 1 and 50.');
+      return;
+    }
+    if (Number.isNaN(perFloor) || perFloor < 1 || perFloor > 50) {
+      setFormError('Rooms per Floor must be between 1 and 50.');
+      return;
+    }
+    if (numFloors * perFloor > 250) {
+      setFormError('Maximum 250 rooms can be generated in one batch.');
+      return;
+    }
+    setFormError('');
+    const safeStartFloor = Number.isNaN(startFloor) ? 1 : startFloor;
+    const resolvedCat = catLabel.trim() || categories[0]?.name || 'Standard';
+    const resolvedRate = Number(rateVal) || categories[0]?.rate || 2000;
+    const rows: BulkDraftRoomRow[] = [];
+    let seqCursor = baseRoom;
+    for (let f = 0; f < numFloors; f++) {
+      const floorNumber = safeStartFloor + f;
+      const floorLabel = formatFloorLabel(floorNumber);
+      const floorStartNum =
+        pattern === 'floor_series'
+          ? baseRoom + f * 100
+          : seqCursor;
+      for (let rIdx = 0; rIdx < perFloor; rIdx++) {
+        const rmNum = pattern === 'floor_series' ? floorStartNum + rIdx : seqCursor++;
+        rows.push({
+          draftId: `blk-${Date.now()}-${f}-${rIdx}`,
+          number: String(rmNum),
+          floor: floorLabel,
+          category: resolvedCat,
+          rate: resolvedRate,
+        });
+      }
+    }
+    setBulkDraftRows(rows);
+  };
+
   // Extract Hotel ID for isolated persistence
   const activeHotelId = rooms[0]?.hotelId || 'default_property';
 
@@ -298,22 +441,24 @@ export default function RoomManagementView({
     setIsFormOpen(true);
   };
 
-  const handleAddRoomClick = () => {
+  const openAddRoomModalWithMode = (initialMode: RoomCreationMode = 'single') => {
     if (rooms.length >= maxRoomsLimit) {
       setRoomLimitAlert(`Package Limit Reached: Your current plan (${packageName}) permits up to ${maxRoomsLimit} room units. Upgrade your package under Super Admin Hub to add more room entities.`);
       return;
     }
     setRoomLimitAlert(null);
     setFormMode('add');
+    setAddCreationMode(initialMode);
     setIsCustomCategoryMode(categories.length === 0);
     setRoomId('');
     setRoomNumber('');
     setAllowExtraBed(true);
-    
+
     const defaultCat = categories[0]?.name || '';
     setCategory(defaultCat);
-    
+
     const catConfig = categories.find(c => c.name === defaultCat);
+    const initRate = catConfig ? catConfig.rate : 2000;
     if (catConfig) {
       setRate(catConfig.rate);
       setBaseOccupancy(catConfig.baseOcc);
@@ -322,10 +467,10 @@ export default function RoomManagementView({
       setBedType(catConfig.bedType || 'King Size Bed');
       setSelectedRoomAmenities(catConfig.defaultAmenities || []);
     } else {
-      setRate(0);
+      setRate(2000);
       setBaseOccupancy(2);
       setMaxOccupancy(3);
-      setExtraPersonCharge(0);
+      setExtraPersonCharge(500);
       setBedType('King Size Bed');
       setSelectedRoomAmenities([]);
     }
@@ -336,8 +481,27 @@ export default function RoomManagementView({
     setRoomImages('');
     setOutOfOrderReason('');
     setFormError('');
+
+    if (initialMode === 'range') {
+      generateRangeDraftRows(rangeStartNum, rangeEndNum, '1st Floor', defaultCat || 'Standard', initRate);
+    } else if (initialMode === 'bulk') {
+      generateMultiFloorDraftRows(
+        bulkStartRoomNum,
+        bulkNumFloors,
+        bulkRoomsPerFloor,
+        bulkStartFloorNum,
+        bulkNumberingPattern,
+        defaultCat || 'Standard',
+        initRate
+      );
+    } else {
+      setBulkDraftRows([]);
+    }
     setIsFormOpen(true);
   };
+
+  const handleAddRoomClick = () => openAddRoomModalWithMode('single');
+  const handleBulkAddRoomsClick = () => openAddRoomModalWithMode('bulk');
 
   const handleRoomImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -380,8 +544,103 @@ export default function RoomManagementView({
     e.preventDefault();
     setFormError('');
 
+    // --- BULK / RANGE SAVE PATH ---
+    if (formMode === 'add' && (addCreationMode === 'range' || addCreationMode === 'bulk')) {
+      if (bulkDraftRows.length === 0) {
+        setFormError('No rooms in the list. Click "Generate Room List" first.');
+        return;
+      }
+      if (baseOccupancy <= 0 || maxOccupancy <= 0) {
+        setFormError('Occupancy values must be positive integers.');
+        return;
+      }
+      if (baseOccupancy > maxOccupancy) {
+        setFormError('Base occupancy cannot exceed maximum occupancy.');
+        return;
+      }
+      const existingSet = new Set(rooms.map(r => String(r.number).trim()));
+      const seenInBatch = new Set<string>();
+      const validRoomsToAdd: Room[] = [];
+      let skippedDuplicates = 0;
+
+      for (const row of bulkDraftRows) {
+        const cleanNum = String(row.number || '').replace(/\D/g, '').trim();
+        if (!cleanNum) {
+          setFormError('Every row in the preview list must have a valid numeric Room Number (or remove blank rows).');
+          return;
+        }
+        if (existingSet.has(cleanNum) || seenInBatch.has(cleanNum)) {
+          skippedDuplicates += 1;
+          continue;
+        }
+        const rowCat = (row.category || category || 'Standard').trim();
+        const rowRate = Number(row.rate) > 0 ? Number(row.rate) : Number(rate) || 0;
+        if (!rowCat) {
+          setFormError(`Room ${cleanNum} is missing a Category / Type.`);
+          return;
+        }
+        if (rowRate <= 0) {
+          setFormError(`Room ${cleanNum} must have a positive Base Price (₹).`);
+          return;
+        }
+        seenInBatch.add(cleanNum);
+        validRoomsToAdd.push({
+          id: `${activeHotelId}-${cleanNum}`,
+          hotelId: activeHotelId,
+          number: cleanNum,
+          category: rowCat,
+          rate: rowRate,
+          status,
+          cleaningStatus,
+          baseOccupancy,
+          maxOccupancy,
+          extraPersonCharge,
+          floor: (row.floor || floor || '1st Floor').trim(),
+          bedType,
+          allowExtraBed,
+          amenities: selectedRoomAmenities,
+          images: roomImages ? [roomImages] : [],
+          outOfOrderReason: status === 'Out of Order' || status === 'Maintenance' ? outOfOrderReason : ''
+        });
+      }
+
+      if (validRoomsToAdd.length === 0) {
+        setFormError('All room numbers in the list already exist in your hotel registry.');
+        return;
+      }
+      if (rooms.length + validRoomsToAdd.length > maxRoomsLimit) {
+        setFormError(
+          `Package Limit Exceeded: You can add at most ${Math.max(0, maxRoomsLimit - rooms.length)} more room(s) on your ${packageName} plan.`
+        );
+        return;
+      }
+
+      onUpdateRooms([...rooms, ...validRoomsToAdd]);
+      const uniqueFloorsCount = new Set(validRoomsToAdd.map(r => r.floor)).size;
+      if (onAddAuditLog) {
+        onAddAuditLog(
+          'Bulk Add Room Entities',
+          `Added ${validRoomsToAdd.length} rooms across ${uniqueFloorsCount} floor(s): ${validRoomsToAdd.map(r => r.number).join(', ')}`
+        );
+      }
+      showToast(
+        `Added ${validRoomsToAdd.length} room${validRoomsToAdd.length === 1 ? '' : 's'} across ${uniqueFloorsCount} floor${uniqueFloorsCount === 1 ? '' : 's'}!${
+          skippedDuplicates > 0 ? ` (${skippedDuplicates} existing duplicate skipped)` : ''
+        }`,
+        'success'
+      );
+      setBulkDraftRows([]);
+      setIsFormOpen(false);
+      return;
+    }
+
     if (!roomNumber.trim()) {
       setFormError('Room number is required.');
+      return;
+    }
+
+    if (!floor.trim()) {
+      setFormError('Floor is required (e.g. Ground Floor, 1st Floor).');
       return;
     }
 
@@ -725,12 +984,22 @@ export default function RoomManagementView({
               <span>Total Units: <strong className="text-slate-900">{totalRooms}</strong></span>
             </div>
             {!isRestrictedRole && (
-              <button
-                onClick={handleAddRoomClick}
-                className="px-3.5 py-2 bg-[#C49A3A] hover:bg-[#b0882e] text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" /> Add Room Entity
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleBulkAddRoomsClick}
+                  className="px-3.5 py-2 bg-[#FDF6E3] hover:bg-[#F5E7C1] text-[#8B691E] border border-[#DFC07A] font-bold text-xs rounded-xl shadow-2xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                >
+                  <Layers className="w-4 h-4 text-[#B5822D]" /> Bulk Add Rooms
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddRoomClick}
+                  className="px-3.5 py-2 bg-[#C49A3A] hover:bg-[#b0882e] text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Add Room Entity
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -1795,70 +2064,533 @@ export default function RoomManagementView({
         </div>
       )}
 
-      {/* --- ADD/EDIT ROOM MODAL FORM --- */}
+      {/* --- ADD/EDIT ROOM MODAL FORM (Single + Range + Bulk Multi-Floor) --- */}
       {isFormOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="relative bg-white rounded-3xl border border-luxury-gold-500/20 shadow-2xl max-w-lg w-full overflow-hidden animate-fade-in max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div
+            className={`relative bg-white rounded-3xl border border-[#E5D2A6] shadow-2xl w-full overflow-hidden animate-fade-in max-h-[92vh] flex flex-col transition-all ${
+              formMode === 'add' && (addCreationMode === 'range' || addCreationMode === 'bulk')
+                ? 'max-w-3xl'
+                : 'max-w-lg'
+            }`}
+          >
             {/* Header */}
-            <div className="bg-white p-5 flex justify-between items-center border-b border-slate-200 shrink-0">
+            <div className="bg-gradient-to-r from-[#FFFDF9] to-[#FDF6E3] p-5 flex justify-between items-center border-b border-[#E6D3A7] shrink-0">
               <div>
-                <h3 className="text-base font-serif font-bold text-slate-800">
-                  {formMode === 'add' ? 'Register New Hotel Room Entity' : `Configure Room ${roomNumber}`}
+                <h3 className="text-base font-serif font-bold text-[#1F2937]">
+                  {formMode === 'edit'
+                    ? `Configure Room ${roomNumber}`
+                    : addCreationMode === 'bulk'
+                    ? 'Bulk Add Rooms (Multi-Floor Builder)'
+                    : addCreationMode === 'range'
+                    ? 'Add Room Range (From → To)'
+                    : 'Register New Hotel Room Entity'}
                 </h3>
-                <p className="text-[10px] text-[#C49A3A] uppercase tracking-widest font-mono font-bold">
-                  {isRestrictedRole ? 'Status Adjustments Only' : 'Database Level Room Definition'}
+                <p className="text-[10px] text-[#9A7120] uppercase tracking-widest font-mono font-bold">
+                  {isRestrictedRole
+                    ? 'Status Adjustments Only'
+                    : formMode === 'add'
+                    ? 'Single Room • Room Range • Multi-Floor Bulk Setup'
+                    : 'Database Level Room Definition'}
                 </p>
               </div>
-              <button 
+              <button
                 type="button"
                 onClick={() => setIsFormOpen(false)}
-                className="text-slate-600 hover:bg-slate-100 px-2.5 py-1 text-xs rounded-lg cursor-pointer font-semibold"
+                className="text-slate-600 hover:bg-white/80 px-2.5 py-1 text-xs rounded-lg cursor-pointer font-semibold border border-transparent hover:border-[#E5D2A6]"
               >
                 ✕ Close
               </button>
             </div>
 
-            {/* Error messaging */}
-            {formError && (
-              <div className="bg-rose-50 text-rose-700 text-xs p-3 border-b border-rose-100 font-bold text-center flex items-center justify-center gap-1 shrink-0">
-                <AlertCircle className="w-4 h-4" /> {formError}
+            {/* 3-Tab Mode Switcher (Only in Add Mode) */}
+            {formMode === 'add' && !isRestrictedRole && (
+              <div className="px-6 pt-3.5 pb-2 bg-[#FFFDF9] border-b border-slate-100 shrink-0">
+                <div className="grid grid-cols-3 gap-1.5 bg-[#F6EFE0] p-1 rounded-xl border border-[#E6D3A7]/80">
+                  {(
+                    [
+                      { id: 'single', label: 'Single Room', sub: '1 room' },
+                      { id: 'range', label: 'Room Range', sub: 'e.g. 101 → 110' },
+                      { id: 'bulk', label: 'Bulk Multi-Floor', sub: 'Floors × Rooms' },
+                    ] as const
+                  ).map(tab => {
+                    const active = addCreationMode === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => {
+                          setAddCreationMode(tab.id);
+                          setFormError('');
+                          if (tab.id === 'range' && bulkDraftRows.length === 0) {
+                            generateRangeDraftRows(rangeStartNum, rangeEndNum, floor, category, rate);
+                          } else if (tab.id === 'bulk' && bulkDraftRows.length === 0) {
+                            generateMultiFloorDraftRows(
+                              bulkStartRoomNum,
+                              bulkNumFloors,
+                              bulkRoomsPerFloor,
+                              bulkStartFloorNum,
+                              bulkNumberingPattern,
+                              category,
+                              rate
+                            );
+                          }
+                        }}
+                        className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
+                          active
+                            ? 'bg-white text-[#7A5915] shadow-xs border border-[#DFC07A]'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <span className="block leading-tight">{tab.label}</span>
+                        <span className="block text-[10px] font-mono font-normal opacity-75">{tab.sub}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
+            {/* Error messaging */}
+            {formError && (
+              <div className="bg-rose-50 text-rose-700 text-xs p-3 border-b border-rose-100 font-bold text-center flex items-center justify-center gap-1 shrink-0">
+                <AlertCircle className="w-4 h-4 shrink-0" /> {formError}
+              </div>
+            )}
+
+            {/* Shared Floor Datalist */}
+            <datalist id="directstay-floor-presets">
+              {knownFloorOptions.map(fl => (
+                <option key={fl} value={fl} />
+              ))}
+            </datalist>
+
             {/* Form Scrollable Body */}
             <form onSubmit={handleSaveRoom} className="p-6 space-y-4 overflow-y-auto">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Room Number *</label>
-                  <input
-                    type="text" required
-                    disabled={formMode === 'edit' || isRestrictedRole}
-                    value={roomNumber}
-                    onChange={(e) => setRoomNumber(e.target.value.replace(/\D/g, ''))}
-                    placeholder="e.g. 101"
-                    className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs focus:outline-none focus:border-luxury-gold-500 text-luxury-brown-950 bg-luxury-beige-50/50 disabled:bg-luxury-brown-100/50 font-mono font-bold"
-                  />
-                </div>
+              {/* MODE A: SINGLE ROOM OR EDIT MODE */}
+              {(formMode === 'edit' || addCreationMode === 'single') && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">
+                        Room Number * <span className="text-[10px] font-normal normal-case text-slate-400">(Numbers only)</span>
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        required
+                        disabled={formMode === 'edit' || isRestrictedRole}
+                        value={roomNumber}
+                        onChange={(e) => setRoomNumber(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 101"
+                        className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs focus:outline-none focus:border-luxury-gold-500 text-luxury-brown-950 bg-luxury-beige-50/50 disabled:bg-luxury-brown-100/50 font-mono font-bold"
+                      />
+                    </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Floor Level</label>
-                  <select
-                    disabled={isRestrictedRole}
-                    value={floor}
-                    onChange={e => setFloor(e.target.value)}
-                    className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs focus:outline-none focus:border-luxury-gold-500 bg-white text-luxury-brown-950"
-                  >
-                    <option value="Ground Floor">Ground Floor</option>
-                    <option value="1st Floor">1st Floor</option>
-                    <option value="2nd Floor">2nd Floor</option>
-                    <option value="3rd Floor">3rd Floor</option>
-                    <option value="4th Floor">4th Floor</option>
-                    <option value="5th Floor">5th Floor</option>
-                    <option value="Executive Floor">Executive Floor</option>
-                    <option value="Penthouse">Penthouse Tier</option>
-                  </select>
+                    <div className="space-y-1">
+                      <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">
+                        Floor (Custom / Select) *
+                      </label>
+                      <input
+                        type="text"
+                        list="directstay-floor-presets"
+                        required
+                        disabled={isRestrictedRole}
+                        value={floor}
+                        onChange={e => setFloor(e.target.value)}
+                        placeholder="e.g. Ground Floor, 1st Floor, 6th Floor..."
+                        className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs focus:outline-none focus:border-luxury-gold-500 bg-white text-luxury-brown-950 font-semibold"
+                      />
+                    </div>
+                  </div>
+                  {!isRestrictedRole && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-mono text-slate-400 font-bold uppercase mr-0.5">Quick Floor:</span>
+                      {['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor', '4th Floor', '5th Floor'].map(fl => (
+                        <button
+                          key={fl}
+                          type="button"
+                          onClick={() => setFloor(fl)}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold border transition-colors cursor-pointer ${
+                            floor === fl
+                              ? 'bg-[#FDF6E3] border-[#C49A3A] text-[#7A5915]'
+                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          {fl}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
+
+              {/* MODE B: ROOM RANGE (FROM -> TO ON CUSTOM FLOOR) */}
+              {formMode === 'add' && addCreationMode === 'range' && (
+                <div className="p-4 rounded-2xl bg-[#FFFDF7] border border-[#E5D2A6] space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-xs font-serif font-bold text-[#263449] block">
+                        Generate Rooms by Range (From → To)
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Enter starting &amp; ending room numbers and custom floor — edit or remove any room in the list below.
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-end">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-mono uppercase font-bold text-[#7A5915] block">
+                        From Room No. *
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={rangeStartNum}
+                        onChange={e => setRangeStartNum(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 101"
+                        className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white text-[#1F2937]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-mono uppercase font-bold text-[#7A5915] block">
+                        To Room No. *
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={rangeEndNum}
+                        onChange={e => setRangeEndNum(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 110"
+                        className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white text-[#1F2937]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-mono uppercase font-bold text-[#7A5915] block">
+                        Floor Name *
+                      </label>
+                      <input
+                        type="text"
+                        list="directstay-floor-presets"
+                        value={floor}
+                        onChange={e => setFloor(e.target.value)}
+                        placeholder="e.g. 1st Floor, Terrace..."
+                        className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-semibold bg-white text-[#1F2937]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => generateRangeDraftRows(rangeStartNum, rangeEndNum, floor, category, rate)}
+                      className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-[#D4A745] to-[#BE8F2E] hover:from-[#C49837] hover:to-[#A87D24] text-white text-xs font-extrabold cursor-pointer shadow-xs"
+                    >
+                      Generate List ↓
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* MODE C: BULK MULTI-FLOOR GENERATOR */}
+              {formMode === 'add' && addCreationMode === 'bulk' && (
+                <div className="p-4 rounded-2xl bg-[#FFFDF7] border border-[#E5D2A6] space-y-3">
+                  <div>
+                    <span className="text-xs font-serif font-bold text-[#263449] block">
+                      Bulk Multi-Floor Room Builder
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      Enter starting room number, number of floors &amp; rooms per floor — edit any room or remove skipped numbers below.
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-mono uppercase font-bold text-[#7A5915] block">
+                        Starting Room No. *
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={bulkStartRoomNum}
+                        onChange={e => setBulkStartRoomNum(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 101"
+                        className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white text-[#1F2937]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-mono uppercase font-bold text-[#7A5915] block">
+                        No. of Floors *
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={bulkNumFloors}
+                        onChange={e => setBulkNumFloors(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 3"
+                        className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white text-[#1F2937]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-mono uppercase font-bold text-[#7A5915] block">
+                        Rooms per Floor *
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={bulkRoomsPerFloor}
+                        onChange={e => setBulkRoomsPerFloor(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 5"
+                        className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white text-[#1F2937]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-mono uppercase font-bold text-[#7A5915] block">
+                        Start Floor (0=Ground)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={bulkStartFloorNum}
+                        onChange={e => setBulkStartFloorNum(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 1 (or 0)"
+                        className="w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white text-[#1F2937]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <div className="inline-flex items-center gap-1.5 text-[11px]">
+                      <span className="font-bold text-slate-600">Pattern:</span>
+                      <button
+                        type="button"
+                        onClick={() => setBulkNumberingPattern('floor_series')}
+                        className={`px-2.5 py-1 rounded-lg border font-bold cursor-pointer ${
+                          bulkNumberingPattern === 'floor_series'
+                            ? 'bg-[#FDF6E3] border-[#C49A3A] text-[#7A5915]'
+                            : 'bg-white border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        Floor-wise (101, 201, 301...)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBulkNumberingPattern('sequential')}
+                        className={`px-2.5 py-1 rounded-lg border font-bold cursor-pointer ${
+                          bulkNumberingPattern === 'sequential'
+                            ? 'bg-[#FDF6E3] border-[#C49A3A] text-[#7A5915]'
+                            : 'bg-white border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        Sequential (101, 102, 103...)
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        generateMultiFloorDraftRows(
+                          bulkStartRoomNum,
+                          bulkNumFloors,
+                          bulkRoomsPerFloor,
+                          bulkStartFloorNum,
+                          bulkNumberingPattern,
+                          category,
+                          rate
+                        )
+                      }
+                      className="py-2 px-4 rounded-xl bg-gradient-to-r from-[#D4A745] to-[#BE8F2E] hover:from-[#C49837] hover:to-[#A87D24] text-white text-xs font-extrabold cursor-pointer shadow-xs"
+                    >
+                      Generate Room List ↓
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* EDITABLE GENERATED ROOMS LIST (Range & Bulk Modes) */}
+              {formMode === 'add' && (addCreationMode === 'range' || addCreationMode === 'bulk') && (() => {
+                const existingNums = new Set(rooms.map(r => String(r.number).trim()));
+                const batchCounts = new Map<string, number>();
+                bulkDraftRows.forEach(r => {
+                  const k = String(r.number || '').trim();
+                  if (k) batchCounts.set(k, (batchCounts.get(k) || 0) + 1);
+                });
+                const readyCount = bulkDraftRows.filter(r => {
+                  const k = String(r.number || '').trim();
+                  return k && !existingNums.has(k) && (batchCounts.get(k) || 0) === 1;
+                }).length;
+
+                return (
+                  <div className="rounded-2xl border border-[#E5D2A6] bg-white overflow-hidden shadow-2xs">
+                    <div className="px-4 py-2.5 bg-[#FBF6E9] border-b border-[#E5D2A6] flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-serif font-bold text-[#263449]">
+                          Generated Rooms Preview ({bulkDraftRows.length})
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-mono font-bold">
+                          {readyCount} Ready to Create
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setBulkDraftRows(prev =>
+                              prev.map(r => ({
+                                ...r,
+                                category: category.trim() || r.category,
+                                rate: Number(rate) > 0 ? Number(rate) : r.rate,
+                              }))
+                            )
+                          }
+                          className="px-2.5 py-1 rounded-lg bg-white hover:bg-[#FDF6E3] border border-[#DFC07A] text-[#7A5915] text-[10.5px] font-bold cursor-pointer"
+                          title="Apply selected Category & Base Price below to every row"
+                        >
+                          Apply Defaults to All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const last = bulkDraftRows[bulkDraftRows.length - 1];
+                            const nextNum = last && /^\d+$/.test(last.number) ? String(parseInt(last.number, 10) + 1) : '';
+                            setBulkDraftRows(prev => [
+                              ...prev,
+                              {
+                                draftId: `man-${Date.now()}-${prev.length}`,
+                                number: nextNum,
+                                floor: last?.floor || floor || '1st Floor',
+                                category: category.trim() || categories[0]?.name || 'Standard',
+                                rate: Number(rate) || categories[0]?.rate || 2000,
+                              },
+                            ]);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-[10.5px] font-bold cursor-pointer"
+                        >
+                          + Add Row
+                        </button>
+                      </div>
+                    </div>
+
+                    {bulkDraftRows.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-slate-500">
+                        Enter your range or floor counts above and click <strong>Generate List ↓</strong> to preview, edit, or remove rooms.
+                      </div>
+                    ) : (
+                      <div className="max-h-60 overflow-y-auto divide-y divide-slate-100">
+                        <div className="grid grid-cols-12 gap-2 px-3 py-1.5 bg-slate-50 text-[10px] font-mono font-bold uppercase text-slate-500 sticky top-0 z-10 border-b border-slate-200">
+                          <span className="col-span-2">Room No.</span>
+                          <span className="col-span-3">Floor</span>
+                          <span className="col-span-3">Category</span>
+                          <span className="col-span-2 text-right">Rate (₹)</span>
+                          <span className="col-span-2 text-center">Remove</span>
+                        </div>
+                        {bulkDraftRows.map(row => {
+                          const cleanN = String(row.number || '').trim();
+                          const isExistingDup = Boolean(cleanN && existingNums.has(cleanN));
+                          const isBatchDup = Boolean(cleanN && (batchCounts.get(cleanN) || 0) > 1);
+                          return (
+                            <div
+                              key={row.draftId}
+                              className={`grid grid-cols-12 gap-2 px-3 py-1.5 items-center text-xs ${
+                                isExistingDup || isBatchDup ? 'bg-rose-50/70' : 'hover:bg-[#FFFDF7]'
+                              }`}
+                            >
+                              <div className="col-span-2">
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={row.number}
+                                  placeholder="e.g. 101"
+                                  onChange={e => {
+                                    const digits = e.target.value.replace(/\D/g, '');
+                                    setBulkDraftRows(prev =>
+                                      prev.map(item =>
+                                        item.draftId === row.draftId ? { ...item, number: digits } : item
+                                      )
+                                    );
+                                  }}
+                                  className={`w-full px-2 py-1 border rounded-lg font-mono font-bold text-xs bg-white ${
+                                    isExistingDup || isBatchDup
+                                      ? 'border-rose-400 text-rose-800'
+                                      : 'border-slate-200 text-[#1F2937]'
+                                  }`}
+                                />
+                                {isExistingDup && (
+                                  <span className="text-[9px] text-rose-600 font-bold block leading-tight mt-0.5">
+                                    Exists (skip)
+                                  </span>
+                                )}
+                                {!isExistingDup && isBatchDup && (
+                                  <span className="text-[9px] text-amber-700 font-bold block leading-tight mt-0.5">
+                                    Duplicate
+                                  </span>
+                                )}
+                              </div>
+                              <div className="col-span-3">
+                                <input
+                                  type="text"
+                                  list="directstay-floor-presets"
+                                  value={row.floor}
+                                  placeholder="e.g. 1st Floor"
+                                  onChange={e =>
+                                    setBulkDraftRows(prev =>
+                                      prev.map(item =>
+                                        item.draftId === row.draftId ? { ...item, floor: e.target.value } : item
+                                      )
+                                    )
+                                  }
+                                  className="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs bg-white text-[#1F2937]"
+                                />
+                              </div>
+                              <div className="col-span-3">
+                                <input
+                                  type="text"
+                                  value={row.category}
+                                  placeholder="e.g. Deluxe"
+                                  onChange={e =>
+                                    setBulkDraftRows(prev =>
+                                      prev.map(item =>
+                                        item.draftId === row.draftId ? { ...item, category: e.target.value } : item
+                                      )
+                                    )
+                                  }
+                                  className="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs bg-white text-[#1F2937]"
+                                />
+                              </div>
+                              <div className="col-span-2">
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={row.rate === 0 ? '' : String(row.rate)}
+                                  placeholder="2000"
+                                  onChange={e => {
+                                    const d = e.target.value.replace(/[^0-9]/g, '');
+                                    setBulkDraftRows(prev =>
+                                      prev.map(item =>
+                                        item.draftId === row.draftId
+                                          ? { ...item, rate: d === '' ? 0 : parseInt(d, 10) }
+                                          : item
+                                      )
+                                    );
+                                  }}
+                                  className="w-full px-2 py-1 border border-slate-200 rounded-lg font-mono font-bold text-xs text-right bg-white text-[#1F2937]"
+                                />
+                              </div>
+                              <div className="col-span-2 flex justify-center">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setBulkDraftRows(prev => prev.filter(item => item.draftId !== row.draftId))
+                                  }
+                                  className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 cursor-pointer"
+                                  title={`Remove Room ${row.number || ''} from batch`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
@@ -1886,7 +2618,7 @@ export default function RoomManagementView({
                   </div>
                   {categories.length > 0 && !isCustomCategoryMode ? (
                     <select
-                      required
+                      required={formMode === 'edit' || addCreationMode === 'single'}
                       disabled={isRestrictedRole}
                       value={category}
                       onChange={(e) => {
@@ -1912,7 +2644,7 @@ export default function RoomManagementView({
                   ) : (
                     <input
                       type="text"
-                      required
+                      required={formMode === 'edit' || addCreationMode === 'single'}
                       disabled={isRestrictedRole}
                       value={category}
                       onChange={(e) => handleCategoryChangeInForm(e.target.value)}
@@ -1942,7 +2674,7 @@ export default function RoomManagementView({
               <div className="space-y-1">
                 <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Base Price (₹ / Night) *</label>
                 <input
-                  type="text" inputMode="numeric" required placeholder="0"
+                  type="text" inputMode="numeric" required={formMode === 'edit' || addCreationMode === 'single'} placeholder="0"
                   disabled={isRestrictedRole}
                   value={rate === 0 ? '' : String(rate)}
                   onFocus={(e) => e.currentTarget.select()}
@@ -2119,8 +2851,8 @@ export default function RoomManagementView({
                 )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center">
-                  <label className="flex items-center justify-center gap-2 px-3 py-2.5 bg-luxury-brown-900 hover:bg-black text-luxury-gold-300 rounded-xl text-xs font-bold cursor-pointer transition-all shadow-xs text-center">
-                    <ImageIcon className="w-4 h-4 text-luxury-gold-400 shrink-0" />
+                  <label className="flex items-center justify-center gap-2 px-3 py-2.5 bg-[#FDF6E3] hover:bg-[#F5E7C1] text-[#7A5915] border border-[#DFC07A] rounded-xl text-xs font-bold cursor-pointer transition-all shadow-2xs text-center">
+                    <ImageIcon className="w-4 h-4 text-[#B5822D] shrink-0" />
                     <span>{roomImages ? 'Change Room Photo' : 'Upload Room Photo'}</span>
                     <input
                       type="file"
@@ -2185,15 +2917,17 @@ export default function RoomManagementView({
                 <button
                   type="button"
                   onClick={() => setIsFormOpen(false)}
-                  className="px-4 py-2 border border-luxury-brown-250 hover:bg-luxury-beige-50 text-luxury-brown-700 text-xs font-semibold rounded-xl"
+                  className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-luxury-brown-900 hover:bg-black text-luxury-gold-300 font-bold text-xs rounded-xl shadow-md"
+                  className="px-5 py-2.5 bg-gradient-to-r from-[#D4A745] to-[#BE8F2E] hover:from-[#C49837] hover:to-[#A87D24] text-white font-extrabold text-xs rounded-xl shadow-sm cursor-pointer"
                 >
-                  Save Room Entity
+                  {formMode === 'add' && (addCreationMode === 'range' || addCreationMode === 'bulk')
+                    ? `Create ${bulkDraftRows.length} Room${bulkDraftRows.length === 1 ? '' : 's'}`
+                    : 'Save Room Entity'}
                 </button>
               </div>
             </form>

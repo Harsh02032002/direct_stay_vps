@@ -1160,37 +1160,35 @@ export default function DailyCollectionSheet({
   const ownerName = (hotelSettings as any)?.ownerName || 'Adarsh Sir';
 
   return (
-    <div className="space-y-6">
-      {/* -------------------- Top Action & Date Bar (Hidden in Print) -------------------- */}
-      <div className="bg-gradient-to-r from-luxury-brown-950 via-[#1C160C] to-luxury-brown-900 border border-luxury-gold-500/30 rounded-2xl p-5 md:p-6 shadow-xl space-y-5 text-white no-print">
+    <div className="space-y-5">
+      {/* -------------------- Top Action & Date Bar (Light Luxury Header — Hidden in Print) -------------------- */}
+      <div className="bg-gradient-to-br from-[#FFFDF9] via-[#FDF8EC] to-[#F8EED8] border border-[#E6D3A7] rounded-2xl p-5 md:p-6 shadow-sm space-y-5 text-[#1F2937] no-print">
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <span className="p-2.5 bg-luxury-gold-500/10 border border-luxury-gold-500/30 rounded-xl text-luxury-gold-400">
-                <FileSpreadsheet className="w-6 h-6" />
-              </span>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-xl md:text-2xl font-serif font-black tracking-wide text-white">
-                    Daily Reception Collection & Settlement Sheet
-                  </h1>
-                  <span className="text-[10px] font-mono font-extrabold px-2.5 py-0.5 bg-luxury-gold-500/20 text-luxury-gold-300 border border-luxury-gold-500/40 rounded-full uppercase tracking-wider">
-                    Official Audit Register
-                  </span>
-                </div>
-                <p className="text-xs text-luxury-brown-300 mt-1 leading-relaxed">
-                  Guest-by-guest room tariff, mode of payment (Cash, UPI, Bank), extra services, kitchen food settlement, and counter cash vault reconciliation.
-                </p>
+          <div className="flex items-start gap-3.5">
+            <span className="p-3 bg-gradient-to-br from-[#DFB962] to-[#C49A3A] rounded-2xl text-white shadow-sm shrink-0">
+              <FileSpreadsheet className="w-6 h-6" />
+            </span>
+            <div>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h1 className="text-xl md:text-2xl font-serif font-extrabold tracking-tight text-[#1F2937]">
+                  Daily Reception Collection &amp; Settlement Sheet
+                </h1>
+                <span className="text-[10px] font-mono font-extrabold px-2.5 py-0.5 bg-[#F6E8C3] text-[#8B691E] border border-[#DFC07A] rounded-full uppercase tracking-wider">
+                  Official Audit Register
+                </span>
               </div>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed max-w-2xl">
+                Guest-by-guest room tariff, mode of payment (Cash, UPI, Bank), extra services, kitchen food settlement, and counter cash vault reconciliation.
+              </p>
             </div>
           </div>
 
           {/* Action Buttons */}
-          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
             <button
               type="button"
               onClick={handlePrint}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-luxury-gold-500 hover:bg-luxury-gold-400 text-luxury-brown-950 text-xs font-extrabold rounded-xl shadow-md transition-all cursor-pointer hover:shadow-lg active:scale-98"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-[#D4A745] to-[#BE8F2E] hover:from-[#C49837] hover:to-[#A87D24] text-white text-xs font-extrabold rounded-xl shadow-sm transition-all cursor-pointer active:scale-98"
             >
               <Printer className="w-4 h-4" />
               <span>Print Landscape Sheet</span>
@@ -1199,25 +1197,29 @@ export default function DailyCollectionSheet({
             <button
               type="button"
               onClick={handleDownloadExcel}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold rounded-xl shadow-xs transition-all cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-extrabold rounded-xl shadow-2xs transition-all cursor-pointer"
             >
-              <FileSpreadsheet className="w-4 h-4" />
+              <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
               <span>Export Excel (.xls)</span>
             </button>
 
             <button
               type="button"
               onClick={handleDownloadCsv}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold rounded-xl transition-all cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-white hover:bg-[#FDF8EC] text-[#263449] border border-[#DCCBA6] text-xs font-bold rounded-xl shadow-2xs transition-all cursor-pointer"
             >
-              <Download className="w-4 h-4 text-luxury-gold-400" />
+              <Download className="w-4 h-4 text-[#B5822D]" />
               <span>Export CSV</span>
             </button>
 
             <button
               type="button"
               onClick={() => setIsEditingCounter(!isEditingCounter)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-amber-600/80 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-xl shadow-2xs border transition-all cursor-pointer ${
+                isEditingCounter
+                  ? 'bg-amber-100 text-amber-950 border-amber-400'
+                  : 'bg-white hover:bg-amber-50 text-[#8B691E] border-[#DFC07A]'
+              }`}
             >
               <Edit3 className="w-4 h-4" />
               <span>{isEditingCounter ? 'Done Editing' : 'Edit Balances & Notes'}</span>
@@ -1226,31 +1228,31 @@ export default function DailyCollectionSheet({
         </div>
 
         {/* Date Selector Row */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-white/15">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-[#E6D3A7]/70">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => handleShiftDate(-1)}
-              className="p-2 border border-white/20 hover:bg-white/10 rounded-xl text-white transition-colors cursor-pointer"
+              className="p-2 bg-white border border-[#DFC99B] hover:bg-[#FDF8EC] rounded-xl text-[#263449] shadow-2xs transition-colors cursor-pointer"
               title="Previous Day"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
 
-            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-white/10 border border-white/20 rounded-xl">
-              <Calendar className="w-4 h-4 text-luxury-gold-400" />
+            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-white border border-[#DFC99B] rounded-xl shadow-2xs">
+              <Calendar className="w-4 h-4 text-[#C49A3A]" />
               <input
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                className="bg-transparent text-xs font-mono font-bold text-white focus:outline-none cursor-pointer"
+                className="bg-transparent text-xs font-mono font-bold text-[#1F2937] focus:outline-none cursor-pointer"
               />
             </div>
 
             <button
               type="button"
               onClick={() => handleShiftDate(1)}
-              className="p-2 border border-white/20 hover:bg-white/10 rounded-xl text-white transition-colors cursor-pointer"
+              className="p-2 bg-white border border-[#DFC99B] hover:bg-[#FDF8EC] rounded-xl text-[#263449] shadow-2xs transition-colors cursor-pointer"
               title="Next Day"
             >
               <ChevronRight className="w-4 h-4" />
@@ -1259,56 +1261,56 @@ export default function DailyCollectionSheet({
             <button
               type="button"
               onClick={() => setSelectedDate(localTodayStr())}
-              className="px-3 py-1.5 text-xs font-mono font-bold bg-luxury-gold-500/20 hover:bg-luxury-gold-500/30 text-luxury-gold-300 border border-luxury-gold-500/40 rounded-xl transition-colors cursor-pointer"
+              className="px-3.5 py-2 text-xs font-mono font-bold bg-[#F6E8C3] hover:bg-[#EFE0B4] text-[#8B691E] border border-[#DFC07A] rounded-xl transition-colors cursor-pointer shadow-2xs"
             >
               Today
             </button>
           </div>
 
           {/* Quick Search */}
-          <div className="relative min-w-[240px]">
-            <Search className="w-4 h-4 text-luxury-brown-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <div className="relative min-w-[240px] flex-1 sm:flex-initial">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="Search guest name or room..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full text-xs pl-9 pr-3 py-2 bg-white/10 border border-white/20 rounded-xl focus:outline-none focus:border-luxury-gold-400 font-mono text-white placeholder-luxury-brown-400"
+              className="w-full text-xs pl-9 pr-3 py-2 bg-white border border-[#DFC99B] rounded-xl focus:outline-none focus:border-[#C49A3A] focus:ring-2 focus:ring-[#C49A3A]/20 font-mono text-[#1F2937] placeholder-slate-400 shadow-2xs"
             />
           </div>
         </div>
 
         {/* Counter Edit Panel (Visible only when Editing) */}
         {isEditingCounter && (
-          <div className="bg-white/10 border border-luxury-gold-500/40 p-4 rounded-xl space-y-3 animate-in fade-in duration-200">
-            <h3 className="text-xs font-mono font-bold text-luxury-gold-300 uppercase tracking-wider flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-luxury-gold-400" /> Edit Cash Counter Balances & Settlement Notes
+          <div className="bg-white border border-[#DFC07A] p-4 rounded-xl space-y-3 shadow-xs animate-in fade-in duration-200">
+            <h3 className="text-xs font-mono font-extrabold text-[#8B691E] uppercase tracking-wider flex items-center gap-1.5">
+              <DollarSign className="w-3.5 h-3.5 text-[#C49A3A]" /> Edit Cash Counter Balances &amp; Settlement Notes
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
               <div>
-                <label className="text-[11px] text-luxury-brown-300 block mb-1 font-bold">
+                <label className="text-[11px] text-slate-600 block mb-1 font-bold">
                   Opening Counter Balance (₹)
                 </label>
                 <input
                   type="number"
                   value={openingBalance}
                   onChange={(e) => setOpeningBalance(Number(e.target.value) || 0)}
-                  className="w-full p-2.5 bg-black/40 border border-white/20 rounded-lg font-bold text-white focus:outline-none focus:border-luxury-gold-400"
+                  className="w-full p-2.5 bg-[#FDFBF7] border border-[#DCE3EC] rounded-lg font-bold text-[#1F2937] focus:outline-none focus:border-[#C49A3A]"
                 />
               </div>
               <div>
-                <label className="text-[11px] text-luxury-brown-300 block mb-1 font-bold">
+                <label className="text-[11px] text-slate-600 block mb-1 font-bold">
                   Cash Taken by {ownerName} (₹)
                 </label>
                 <input
                   type="number"
                   value={ownerHandover}
                   onChange={(e) => setManualOwnerHandover(e.target.value === '' ? 0 : Number(e.target.value) || 0)}
-                  className="w-full p-2.5 bg-black/40 border border-white/20 rounded-lg font-bold text-white focus:outline-none focus:border-luxury-gold-400"
+                  className="w-full p-2.5 bg-[#FDFBF7] border border-[#DCE3EC] rounded-lg font-bold text-[#1F2937] focus:outline-none focus:border-[#C49A3A]"
                 />
               </div>
               <div>
-                <label className="text-[11px] text-luxury-brown-300 block mb-1 font-bold">
+                <label className="text-[11px] text-slate-600 block mb-1 font-bold">
                   Daily Expense / Handover Note
                 </label>
                 <input
@@ -1316,7 +1318,7 @@ export default function DailyCollectionSheet({
                   placeholder={`e.g. 8,500 - CASH TAKEN BY ${ownerName.toUpperCase()}`}
                   value={activeExpenseNote}
                   onChange={(e) => setCustomNote(e.target.value)}
-                  className="w-full p-2.5 bg-black/40 border border-white/20 rounded-lg font-mono text-xs uppercase text-white focus:outline-none focus:border-luxury-gold-400"
+                  className="w-full p-2.5 bg-[#FDFBF7] border border-[#DCE3EC] rounded-lg font-mono text-xs uppercase text-[#1F2937] focus:outline-none focus:border-[#C49A3A]"
                 />
               </div>
             </div>
@@ -1334,255 +1336,277 @@ export default function DailyCollectionSheet({
         )}
       </div>
 
-      {/* -------------------- EXECUTIVE KPI SUMMARY CARDS (NO PRINT) -------------------- */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 no-print">
+      {/* -------------------- EXECUTIVE KPI SUMMARY CARDS (100% LIGHT LUXURY — NO PRINT) -------------------- */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5 no-print">
         {/* Card 1: Room Tariff */}
-        <div className="bg-white p-3.5 rounded-2xl border border-luxury-brown-200/70 shadow-2xs flex flex-col justify-between">
-          <div className="flex justify-between items-center text-luxury-brown-400">
-            <span className="text-[10px] font-mono uppercase font-bold">Room Tariff</span>
-            <Building2 className="w-3.5 h-3.5 text-luxury-gold-600" />
+        <div className="bg-white p-4 rounded-2xl border border-[#E6DFCE] shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-[#DFB962] to-[#C49A3A]" />
+          <div className="flex justify-between items-center">
+            <span className="text-[10px] font-mono uppercase font-extrabold tracking-wider text-slate-500">Room Tariff</span>
+            <span className="p-1.5 rounded-lg bg-[#FDF6E3] text-[#B5822D]">
+              <Building2 className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-base sm:text-lg font-black font-mono text-luxury-brown-950 mt-1.5">
-            ₹{totals.roomTariff.toLocaleString()}
+          <div className="text-lg sm:text-xl font-black font-mono tabular-nums text-[#1F2937] mt-2">
+            ₹{totals.roomTariff.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-luxury-brown-400 font-mono mt-0.5">
-            {reportRows.length} Stays Logged
+          <div className="text-[10.5px] text-slate-500 font-medium mt-1">
+            {reportRows.length} {reportRows.length === 1 ? 'Stay' : 'Stays'} Logged
           </div>
         </div>
 
         {/* Card 2: Cash Inflow */}
-        <div className="bg-emerald-50/40 p-3.5 rounded-2xl border border-emerald-200/80 shadow-2xs flex flex-col justify-between">
-          <div className="flex justify-between items-center text-emerald-800">
-            <span className="text-[10px] font-mono uppercase font-bold">Cash Inflow</span>
-            <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+        <div className="bg-gradient-to-b from-[#F4FBF7] to-white p-4 rounded-2xl border border-emerald-200/90 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-emerald-400 to-emerald-600" />
+          <div className="flex justify-between items-center">
+            <span className="text-[10px] font-mono uppercase font-extrabold tracking-wider text-emerald-800">Cash Inflow</span>
+            <span className="p-1.5 rounded-lg bg-emerald-100/80 text-emerald-700">
+              <Wallet className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-base sm:text-lg font-black font-mono text-emerald-700 mt-1.5">
-            ₹{totalCashCollected.toLocaleString()}
+          <div className="text-lg sm:text-xl font-black font-mono tabular-nums text-emerald-700 mt-2">
+            ₹{totalCashCollected.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-emerald-600 font-mono mt-0.5">
+          <div className="text-[10.5px] text-emerald-700/80 font-medium mt-1">
             Physical Cash Collected
           </div>
         </div>
 
         {/* Card 3: Online & UPI */}
-        <div className="bg-blue-50/40 p-3.5 rounded-2xl border border-blue-200/80 shadow-2xs flex flex-col justify-between">
-          <div className="flex justify-between items-center text-blue-800">
-            <span className="text-[10px] font-mono uppercase font-bold">UPI / ICICI Bank</span>
-            <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+        <div className="bg-gradient-to-b from-[#F3F8FF] to-white p-4 rounded-2xl border border-sky-200/90 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-sky-400 to-blue-600" />
+          <div className="flex justify-between items-center">
+            <span className="text-[10px] font-mono uppercase font-extrabold tracking-wider text-sky-900">UPI / ICICI Bank</span>
+            <span className="p-1.5 rounded-lg bg-sky-100/80 text-sky-700">
+              <CreditCard className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-base sm:text-lg font-black font-mono text-blue-700 mt-1.5">
-            ₹{(totals.upi + totals.icici).toLocaleString()}
+          <div className="text-lg sm:text-xl font-black font-mono tabular-nums text-sky-700 mt-2">
+            ₹{(totals.upi + totals.icici).toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-blue-600 font-mono mt-0.5">
+          <div className="text-[10.5px] text-sky-700/80 font-medium mt-1">
             Digital Settlements
           </div>
         </div>
 
         {/* Card 4: Kitchen Food */}
-        <div className="bg-amber-50/40 p-3.5 rounded-2xl border border-amber-200/80 shadow-2xs flex flex-col justify-between">
-          <div className="flex justify-between items-center text-amber-900">
-            <span className="text-[10px] font-mono uppercase font-bold">Kitchen Food</span>
-            <Utensils className="w-3.5 h-3.5 text-amber-600" />
+        <div className="bg-gradient-to-b from-[#FFFBF2] to-white p-4 rounded-2xl border border-amber-200/90 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-amber-400 to-orange-500" />
+          <div className="flex justify-between items-center">
+            <span className="text-[10px] font-mono uppercase font-extrabold tracking-wider text-amber-900">Kitchen Food</span>
+            <span className="p-1.5 rounded-lg bg-amber-100/80 text-amber-700">
+              <Utensils className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-base sm:text-lg font-black font-mono text-amber-800 mt-1.5">
-            ₹{totals.totalFoodAmt.toLocaleString()}
+          <div className="text-lg sm:text-xl font-black font-mono tabular-nums text-amber-800 mt-2">
+            ₹{totals.totalFoodAmt.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-amber-700 font-mono mt-0.5">
-            F&B Total Revenue
+          <div className="text-[10.5px] text-amber-800/80 font-medium mt-1">
+            F&amp;B Total Revenue
           </div>
         </div>
 
         {/* Card 5: Opening Counter */}
-        <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs flex flex-col justify-between">
-          <div className="flex justify-between items-center text-slate-500">
-            <span className="text-[10px] font-mono uppercase font-bold">Opening Balance</span>
-            <DollarSign className="w-3.5 h-3.5 text-slate-600" />
+        <div className="bg-gradient-to-b from-[#F8FAFC] to-white p-4 rounded-2xl border border-slate-200 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-slate-300 to-slate-500" />
+          <div className="flex justify-between items-center">
+            <span className="text-[10px] font-mono uppercase font-extrabold tracking-wider text-slate-600">Opening Balance</span>
+            <span className="p-1.5 rounded-lg bg-slate-100 text-slate-600">
+              <DollarSign className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-base sm:text-lg font-black font-mono text-slate-900 mt-1.5">
-            ₹{openingBalance.toLocaleString()}
+          <div className="text-lg sm:text-xl font-black font-mono tabular-nums text-slate-800 mt-2">
+            ₹{openingBalance.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+          <div className="text-[10.5px] text-slate-500 font-medium mt-1">
             Drawer Start Balance
           </div>
         </div>
 
-        {/* Card 6: Closing Cash */}
-        <div className="bg-gradient-to-br from-luxury-brown-950 to-luxury-brown-900 p-3.5 rounded-2xl border border-luxury-gold-500/40 text-white shadow-md flex flex-col justify-between">
-          <div className="flex justify-between items-center text-luxury-gold-300">
-            <span className="text-[10px] font-mono uppercase font-bold">Closing Vault</span>
-            <TrendingUp className="w-3.5 h-3.5 text-luxury-gold-400" />
+        {/* Card 6: Closing Cash (Luminous Champagne Gold — Zero Dark BG!) */}
+        <div className="bg-gradient-to-br from-[#FFFDF7] via-[#FDF5DF] to-[#F7E6B7] p-4 rounded-2xl border-2 border-[#D4A745]/70 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-[#C49A3A] via-[#E5BE67] to-[#A87D24]" />
+          <div className="flex justify-between items-center">
+            <span className="text-[10px] font-mono uppercase font-extrabold tracking-wider text-[#7A5915]">Closing Vault</span>
+            <span className="p-1.5 rounded-lg bg-[#C49A3A]/15 text-[#8B691E]">
+              <TrendingUp className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-base sm:text-lg font-black font-mono text-luxury-gold-300 mt-1.5">
-            ₹{finalClosingBalance.toLocaleString()}
+          <div className="text-lg sm:text-xl font-black font-mono tabular-nums text-[#6E4D0E] mt-2">
+            ₹{finalClosingBalance.toLocaleString('en-IN')}
           </div>
-          <div className="text-[10px] text-white/60 font-mono mt-0.5">
+          <div className="text-[10.5px] text-[#8B691E] font-semibold mt-1">
             Net In-Hand Balance
           </div>
         </div>
       </div>
 
       {/* -------------------- PRINTABLE A4 LANDSCAPE SHEET CONTAINER -------------------- */}
-      <div 
-        id="daily-collection-print-sheet" 
-        className="bg-white p-5 md:p-6 border border-luxury-brown-200/90 shadow-md rounded-2xl space-y-4 print:border-0 print:p-0 print:shadow-none print:m-0"
+      <div
+        id="daily-collection-print-sheet"
+        className="bg-white p-5 md:p-6 border border-[#E6D8B8] shadow-sm rounded-2xl space-y-5 print:border-0 print:p-0 print:shadow-none print:m-0"
       >
         {/* Printable Header Bar */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end pb-3 border-b-2 border-luxury-brown-950 gap-2">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end pb-4 border-b-2 border-[#E5D2A6] gap-3">
           <div>
-            <h2 className="text-xl md:text-2xl font-serif font-black tracking-wider uppercase text-luxury-brown-950">
-              {hotelName}
-            </h2>
-            <p className="text-xs font-mono font-bold text-luxury-gold-700 tracking-wide mt-0.5">
-              DAILY RECEPTION COLLECTION & SETTLEMENT SHEET
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-6 rounded-full bg-gradient-to-b from-[#DFB962] to-[#B5822D] inline-block print:hidden" />
+              <h2 className="text-xl md:text-2xl font-serif font-black tracking-wide uppercase text-[#1F2937]">
+                {hotelName}
+              </h2>
+            </div>
+            <p className="text-xs font-mono font-bold text-[#9A7120] tracking-wider mt-1 pl-4 print:pl-0">
+              DAILY RECEPTION COLLECTION &amp; SETTLEMENT SHEET
             </p>
           </div>
-          <div className="text-right">
-            <span className="text-xs sm:text-sm font-mono font-black border-2 border-luxury-brown-950 px-3 py-1 bg-luxury-beige-50 text-luxury-brown-950 rounded-lg inline-block shadow-2xs">
-              Date: {formattedDisplayDate}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="text-xs font-mono font-bold px-3 py-1.5 bg-[#FBF6E9] text-[#7A5915] border border-[#DFC07A] rounded-xl inline-flex items-center gap-1.5 shadow-2xs">
+              <Calendar className="w-3.5 h-3.5 text-[#C49A3A]" />
+              <span>Date: {formattedDisplayDate}</span>
             </span>
           </div>
         </div>
 
-        {/* Main Grid Table - Luxury Responsive Design */}
-        <div className="overflow-x-auto rounded-xl border border-luxury-brown-300 shadow-md bg-white">
-          <table className="w-full border-collapse text-left text-[11px] font-mono min-w-[1380px]">
+        {/* Main Grid Table - Crisp Light Luxury Audit Ledger */}
+        <div className="overflow-x-auto rounded-2xl border border-[#E5D6B3] shadow-xs bg-white">
+          <table className="w-full border-collapse text-left text-[11px] font-mono min-w-[1380px] tabular-nums">
             <thead>
               {/* Date Banner Row matching Excel Row 7 */}
-              <tr className="bg-luxury-beige-100 text-luxury-brown-950 text-center font-black border-b border-luxury-brown-300 print:bg-white print:text-black">
-                <th colSpan={onEditCheckout ? 20 : 19} className="p-2 text-sm italic tracking-wider font-serif">
-                  {formattedDisplayDate}
+              <tr className="bg-gradient-to-r from-[#FDF8EC] via-[#F9EED4] to-[#FDF8EC] text-[#263449] text-center font-extrabold border-b border-[#E5D6B3] print:bg-white print:text-black">
+                <th colSpan={onEditCheckout ? 20 : 19} className="py-2.5 px-3 text-sm tracking-wider font-serif">
+                  Daily Settlement Ledger — {formattedDisplayDate}
                 </th>
               </tr>
 
-              {/* Header Row 1 */}
-              <tr className="bg-luxury-brown-950 text-luxury-gold-200 text-center font-extrabold border-b border-luxury-brown-800 print:bg-gray-100 print:text-black">
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 w-[3%] min-w-[42px] text-center whitespace-nowrap">
+              {/* Header Row 1 (100% Soft Pastel Light Luxury Headers — Zero Dark Cells!) */}
+              <tr className="bg-[#FBF6E9] text-[#263449] text-center font-extrabold border-b border-[#E2D3B0] print:bg-gray-100 print:text-black">
+                <th rowSpan={2} className="border-r border-[#E2D3B0] p-2.5 w-[3%] min-w-[44px] text-center whitespace-nowrap text-[#5B4720]">
                   SR. NO.
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[145px] text-left whitespace-nowrap">
+                <th rowSpan={2} className="border-r border-[#E2D3B0] p-2.5 min-w-[150px] text-left whitespace-nowrap text-[#263449]">
                   CUSTOMER NAME
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[65px] whitespace-nowrap">
+                <th rowSpan={2} className="border-r border-[#E2D3B0] p-2.5 min-w-[68px] whitespace-nowrap text-[#263449]">
                   ROOM NO.
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[55px] whitespace-nowrap">
+                <th rowSpan={2} className="border-r border-[#E2D3B0] p-2.5 min-w-[58px] whitespace-nowrap text-[#263449]">
                   NO OF DAYS
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[80px] text-right whitespace-nowrap text-sky-300 print:text-black">
+                <th rowSpan={2} className="border-r border-[#E2D3B0] p-2.5 min-w-[82px] text-right whitespace-nowrap bg-[#F0F7FF] text-sky-800 print:text-black">
                   OPENING<br/>BALANCE
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap" title="Agreed Room Tariff">
+                <th rowSpan={2} className="border-r border-[#E2D3B0] p-2.5 min-w-[88px] text-right whitespace-nowrap text-[#263449]" title="Agreed Room Tariff">
                   ROOM TARIFF
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[60px] text-right whitespace-nowrap">
+                <th rowSpan={2} className="border-r border-[#E2D3B0] p-2.5 min-w-[62px] text-right whitespace-nowrap text-[#263449]">
                   GST
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[88px] text-right whitespace-nowrap bg-luxury-brown-900 text-luxury-gold-300">
-                  TOTAL<br/><span className="text-[9px] font-bold">ROOM TARIFF (+) GST</span>
+                <th rowSpan={2} className="border-r border-[#E2D3B0] p-2.5 min-w-[94px] text-right whitespace-nowrap bg-[#F5E9CA] text-[#6E4D0E]">
+                  TOTAL<br/><span className="text-[9px] font-bold text-[#8B691E]">ROOM TARIFF (+) GST</span>
                 </th>
-                <th colSpan={4} className="border-r border-luxury-brown-800 p-2 bg-[#2D2214] text-amber-300 font-black tracking-wide whitespace-nowrap">
+                <th colSpan={4} className="border-r border-[#E6CCA0] p-2 bg-[#FEF5E7] text-[#9A5B13] font-black tracking-wide whitespace-nowrap">
                   EXTRA SERVICE
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[88px] text-right whitespace-nowrap bg-[#2D2214] text-amber-300 font-black">
+                <th rowSpan={2} className="border-r border-[#E6CCA0] p-2.5 min-w-[92px] text-right whitespace-nowrap bg-[#FDEBD0] text-[#7E4A0E] font-black">
                   TOTAL EXTRA<br/>SERVICE
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[100px] text-right whitespace-nowrap bg-[#1F170B] text-luxury-gold-300 font-black">
-                  TOTAL<br/><span className="text-[9px] font-bold">(ROOM TARIFF &amp; EXTRA)</span>
+                <th rowSpan={2} className="border-r border-[#DFC07A] p-2.5 min-w-[106px] text-right whitespace-nowrap bg-[#F4E3B8] text-[#5C3F08] font-black">
+                  TOTAL<br/><span className="text-[9px] font-bold text-[#7A5915]">(ROOM TARIFF &amp; EXTRA)</span>
                 </th>
-                <th colSpan={3} className="border-r border-luxury-brown-800 p-2 bg-emerald-950 text-emerald-300 font-black tracking-wide whitespace-nowrap">
+                <th colSpan={3} className="border-r border-emerald-200 p-2 bg-[#ECFDF5] text-emerald-800 font-black tracking-wide whitespace-nowrap">
                   PAYMENT
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[90px] text-right whitespace-nowrap bg-emerald-950 text-emerald-300 font-black">
+                <th rowSpan={2} className="border-r border-emerald-200 p-2.5 min-w-[94px] text-right whitespace-nowrap bg-[#D1FAE5] text-emerald-900 font-black">
                   TOTAL<br/>PAYMENT
                 </th>
-                <th rowSpan={2} className="border-r border-luxury-brown-800 p-2 min-w-[85px] text-right whitespace-nowrap bg-rose-950 text-rose-300 font-black">
+                <th rowSpan={2} className="border-r border-rose-200 p-2.5 min-w-[88px] text-right whitespace-nowrap bg-[#FFF1F2] text-rose-800 font-black">
                   BALANCE<br/>DUE
                 </th>
                 {onEditCheckout && (
-                  <th rowSpan={2} className="p-2 min-w-[65px] text-center whitespace-nowrap print:hidden">
+                  <th rowSpan={2} className="p-2.5 min-w-[70px] text-center whitespace-nowrap bg-slate-50 text-slate-600 print:hidden">
                     ACTION
                   </th>
                 )}
               </tr>
 
               {/* Header Row 2 */}
-              <tr className="bg-luxury-brown-900 text-luxury-gold-300 text-center font-bold border-b border-luxury-brown-800 print:bg-gray-200 print:text-black">
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[60px] text-right whitespace-nowrap">
+              <tr className="bg-[#FFF9EF] text-center font-bold border-b border-[#E2D3B0] print:bg-gray-200 print:text-black">
+                <th className="border-r border-[#E6CCA0] p-2 min-w-[64px] text-right whitespace-nowrap text-[#9A5B13]">
                   FOOD
                 </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[68px] text-right whitespace-nowrap">
+                <th className="border-r border-[#E6CCA0] p-2 min-w-[74px] text-right whitespace-nowrap text-[#9A5B13]">
                   WATER BOTTLE
                 </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[70px] text-right whitespace-nowrap">
+                <th className="border-r border-[#E6CCA0] p-2 min-w-[78px] text-right whitespace-nowrap text-[#9A5B13]">
                   LAUNDRY CHARGES
                 </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[68px] text-right whitespace-nowrap">
+                <th className="border-r border-[#E6CCA0] p-2 min-w-[72px] text-right whitespace-nowrap text-[#9A5B13]">
                   ANY OTHERS
                 </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
+                <th className="border-r border-emerald-200 p-2 min-w-[68px] text-right whitespace-nowrap bg-[#F0FDF4] text-emerald-800">
                   CASH
                 </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
+                <th className="border-r border-emerald-200 p-2 min-w-[68px] text-right whitespace-nowrap bg-[#F0F9FF] text-sky-800">
                   UPI
                 </th>
-                <th className="border-r border-luxury-brown-800 p-1.5 min-w-[65px] text-right whitespace-nowrap bg-emerald-900 text-emerald-200">
+                <th className="border-r border-emerald-200 p-2 min-w-[68px] text-right whitespace-nowrap bg-[#EEF2FF] text-indigo-800">
                   ICICI
                 </th>
               </tr>
 
               {/* Header Row 3: Column Index Numbers (1 to 19) */}
-              <tr className="bg-slate-200/90 text-rose-700 text-center font-black text-[10px] border-b border-slate-300 print:bg-gray-100">
+              <tr className="bg-[#FAF8F3] text-[#8B691E] text-center font-extrabold text-[10px] border-b border-[#EAE1CC] print:bg-gray-100">
                 {[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19].map((num) => (
-                  <th key={num} className="border-r border-slate-300 py-1 px-1 text-center font-black">
+                  <th key={num} className="border-r border-[#EAE1CC] py-1.5 px-1 text-center font-bold">
                     {num}
                   </th>
                 ))}
-                {onEditCheckout && <th className="py-1 px-1 print:hidden" />}
+                {onEditCheckout && <th className="py-1.5 px-1 bg-slate-50/70 print:hidden" />}
               </tr>
 
               {/* Header Row 4: Exact Formula Reference Row matching Excel Row 12 */}
-              <tr className="bg-slate-100 text-rose-700 text-center font-extrabold text-[10px] border-b-2 border-luxury-brown-950 print:bg-gray-50">
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1 text-rose-700 font-black" title="To be carried forward from last date">***</th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(5+6+7)</th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(9+10+11+12)</th>
-                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(8+13)</th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1"></th>
-                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(15+16+17)</th>
-                <th className="border-r border-slate-300 py-1 whitespace-nowrap">(14-18)</th>
-                {onEditCheckout && <th className="py-1 print:hidden" />}
+              <tr className="bg-white text-rose-700 text-center font-extrabold text-[10px] border-b-2 border-[#D8C18B] print:bg-gray-50">
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5 text-rose-600 font-black" title="To be carried forward from last date">***</th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5 whitespace-nowrap bg-[#FDF9EE] text-[#7A5915]">(5+6+7)</th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5 whitespace-nowrap bg-[#FFF9F0] text-[#9A5B13]">(9+10+11+12)</th>
+                <th className="border-r border-[#EAE1CC] py-1.5 whitespace-nowrap bg-[#FDF6E3] text-[#6E4D0E]">(8+13)</th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5"></th>
+                <th className="border-r border-[#EAE1CC] py-1.5 whitespace-nowrap bg-[#F0FDF4] text-emerald-800">(15+16+17)</th>
+                <th className="border-r border-[#EAE1CC] py-1.5 whitespace-nowrap bg-[#FFF5F5] text-rose-700">(14-18)</th>
+                {onEditCheckout && <th className="py-1.5 bg-slate-50/40 print:hidden" />}
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-luxury-brown-100/70 bg-white">
+            <tbody className="divide-y divide-[#F0E8D6] bg-white">
               {reportRows.length === 0 ? (
                 <tr>
-                  <td colSpan={onEditCheckout ? 20 : 19} className="p-10 text-center bg-luxury-beige-50/20">
+                  <td colSpan={onEditCheckout ? 20 : 19} className="p-10 text-center bg-[#FFFDF9]">
                     <div className="max-w-md mx-auto space-y-2.5 py-4">
-                      <div className="w-12 h-12 rounded-2xl bg-amber-100/70 text-amber-700 flex items-center justify-center mx-auto">
+                      <div className="w-12 h-12 rounded-2xl bg-[#FDF6E3] border border-[#E6D3A7] text-[#B5822D] flex items-center justify-center mx-auto">
                         <FileSpreadsheet className="w-6 h-6" />
                       </div>
-                      <div className="font-serif font-bold text-sm sm:text-base text-luxury-brown-950">
+                      <div className="font-serif font-bold text-sm sm:text-base text-[#1F2937]">
                         No Guest Settlements Recorded for {formattedDisplayDate}
                       </div>
-                      <p className="text-xs text-luxury-brown-500 font-sans leading-relaxed">
+                      <p className="text-xs text-slate-500 font-sans leading-relaxed">
                         There are no active stay collections or checkout transactions registered on this date.
                       </p>
                       <button
                         type="button"
                         onClick={() => setSelectedDate(localTodayStr())}
-                        className="mt-2 px-3.5 py-1.5 rounded-lg bg-luxury-brown-950 text-luxury-gold-300 font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer hover:bg-black transition-all"
+                        className="mt-2 px-4 py-2 rounded-xl bg-gradient-to-r from-[#D4A745] to-[#BE8F2E] text-white font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer hover:from-[#C49837] hover:to-[#A87D24] shadow-xs transition-all"
                       >
                         <Calendar className="w-3.5 h-3.5" /> Jump to Today's Records
                       </button>
@@ -1590,96 +1614,100 @@ export default function DailyCollectionSheet({
                   </td>
                 </tr>
               ) : (
-                reportRows.map((r, idx) => (
-                  <tr key={r.no} className="hover:bg-amber-50/40 text-center font-medium transition-colors border-b border-luxury-brown-100/60">
-                    <td className="p-2 border-r border-luxury-brown-100/70 font-bold text-luxury-brown-900 bg-luxury-beige-50/30">
+                reportRows.map((r) => (
+                  <tr key={r.no} className="even:bg-[#FDFBF7] hover:bg-[#FDF6E3]/65 text-center font-medium transition-colors border-b border-[#EFE8D8]">
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] font-bold text-slate-600">
                       {r.no}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-left font-bold truncate uppercase text-luxury-brown-950">
+                    <td className="py-2.5 px-2.5 border-r border-[#EFE8D8] text-left font-bold truncate uppercase text-[#1F2937]">
                       {r.guestName}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 font-bold text-luxury-brown-900">
-                      <span className="px-1.5 py-0.5 rounded bg-luxury-beige-100 text-luxury-brown-950 border border-luxury-brown-200">
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] font-bold">
+                      <span className="px-2 py-0.5 rounded-md bg-[#FBF6E9] text-[#7A5915] border border-[#E5D2A6]">
                         {r.roomNumber}
                       </span>
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 font-bold text-luxury-brown-700">
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] font-bold text-slate-700">
                       {r.nights}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-slate-500">
-                      {r.openingBalance > 0 ? `₹${r.openingBalance.toLocaleString()}` : '—'}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono text-slate-500">
+                      {r.openingBalance > 0 ? `₹${r.openingBalance.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-bold text-luxury-brown-950">
-                      {r.roomTariff > 0 ? `₹${r.roomTariff.toLocaleString()}` : '—'}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono font-bold text-[#1F2937]">
+                      {r.roomTariff > 0 ? `₹${r.roomTariff.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono">
                       {r.gst && r.gst !== '0' && r.gst !== 0 ? (
-                        <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-800 font-bold text-[10px]">
-                          {typeof r.gst === 'number' ? `₹${r.gst.toLocaleString()}` : r.gst}
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200/70 font-bold text-[10px]">
+                          {typeof r.gst === 'number' ? `₹${r.gst.toLocaleString('en-IN')}` : r.gst}
                         </span>
                       ) : (
-                        <span className="text-gray-400">0</span>
+                        <span className="text-slate-400">0</span>
                       )}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-bold text-luxury-brown-950 bg-luxury-beige-50/40">
-                      ₹{r.totalRoom.toLocaleString()}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono font-bold text-[#263449] bg-[#FDF9EE]/70">
+                      ₹{r.totalRoom.toLocaleString('en-IN')}
                     </td>
-                    
+
                     {/* Extra Services: Food, Water, Laundry, Any Others */}
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-amber-800 font-bold">
-                      {r.food > 0 ? `₹${r.food.toLocaleString()}` : '—'}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono text-amber-800 font-semibold">
+                      {r.food > 0 ? `₹${r.food.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
-                      {r.waterBottle > 0 ? `₹${r.waterBottle.toLocaleString()}` : '—'}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono text-slate-700">
+                      {r.waterBottle > 0 ? `₹${r.waterBottle.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
-                      {r.laundry > 0 ? `₹${r.laundry.toLocaleString()}` : '—'}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono text-slate-700">
+                      {r.laundry > 0 ? `₹${r.laundry.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono">
-                      {r.anyOthers > 0 ? `₹${r.anyOthers.toLocaleString()}` : '—'}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono text-slate-700">
+                      {r.anyOthers > 0 ? `₹${r.anyOthers.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-black text-amber-900 bg-amber-50/40">
-                      ₹{r.totalExtra.toLocaleString()}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono font-extrabold text-[#9A5B13] bg-[#FFF9F0]/80">
+                      ₹{r.totalExtra.toLocaleString('en-IN')}
                     </td>
 
                     {/* Total (Room + Extra) */}
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-black text-luxury-brown-950 bg-[#FDF8ED]">
-                      ₹{r.grandTotal.toLocaleString()}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono font-black text-[#1F2937] bg-[#FDF6E3]/80">
+                      ₹{r.grandTotal.toLocaleString('en-IN')}
                     </td>
 
                     {/* Payments: Cash, UPI, ICICI */}
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-emerald-700 font-bold">
-                      {r.cash > 0 ? `₹${r.cash.toLocaleString()}` : '—'}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono text-emerald-700 font-bold">
+                      {r.cash > 0 ? `₹${r.cash.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-blue-700 font-bold">
-                      {r.upi > 0 ? `₹${r.upi.toLocaleString()}` : '—'}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono text-sky-700 font-bold">
+                      {r.upi > 0 ? `₹${r.upi.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono text-indigo-700 font-bold">
-                      {r.icici > 0 ? `₹${r.icici.toLocaleString()}` : '—'}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono text-indigo-700 font-bold">
+                      {r.icici > 0 ? `₹${r.icici.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-black text-emerald-800 bg-emerald-50/40">
-                      ₹{r.totalPayment.toLocaleString()}
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono font-extrabold text-emerald-800 bg-[#F0FDF4]/80">
+                      ₹{r.totalPayment.toLocaleString('en-IN')}
                     </td>
 
                     {/* Balance Due */}
-                    <td className="p-2 border-r border-luxury-brown-100/70 text-right font-mono font-bold">
+                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono font-bold">
                       {r.balanceDue > 0 ? (
-                        <span className="text-rose-700 font-black">₹{r.balanceDue.toLocaleString()}</span>
+                        <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200/80 font-extrabold">
+                          ₹{r.balanceDue.toLocaleString('en-IN')}
+                        </span>
                       ) : (
-                        <span className="text-emerald-700 text-[10px] font-black">PAID (₹0)</span>
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-extrabold">
+                          PAID (₹0)
+                        </span>
                       )}
                     </td>
 
                     {onEditCheckout && (
-                      <td className="p-2 text-center print:hidden">
+                      <td className="py-2.5 px-2 text-center print:hidden">
                         {(r as any).checkinTarget ? (
                           <button
                             type="button"
                             onClick={() => onEditCheckout((r as any).checkinTarget)}
                             title="Edit Check-Out Settlement & Payment Modes"
-                            className="px-2 py-0.5 rounded-lg bg-[#F6DE98] hover:bg-[#E8CE84] border border-[#C49A3A] text-[#17120F] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                            className="px-2.5 py-1 rounded-lg bg-[#FDF6E3] hover:bg-[#F5E7C1] border border-[#DFC07A] text-[#7A5915] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-2xs transition-colors"
                           >
-                            <Edit3 className="w-3 h-3 text-[#8B691E]" /> Edit
+                            <Edit3 className="w-3 h-3 text-[#B5822D]" /> Edit
                           </button>
                         ) : (
                           <span className="text-slate-300">—</span>
@@ -1691,59 +1719,59 @@ export default function DailyCollectionSheet({
               )}
             </tbody>
 
-            {/* Table Totals Row */}
+            {/* Table Totals Row (100% Light Pastel Luxury — ZERO Dark/Black Cells!) */}
             <tfoot>
-              <tr className="bg-luxury-brown-950 text-luxury-gold-200 text-center font-extrabold border-t-2 border-luxury-brown-900 print:bg-gray-200 print:text-black">
-                <td colSpan={4} className="p-3 text-right uppercase tracking-wider text-xs border-r border-luxury-brown-800">
-                  TOTAL:
+              <tr className="bg-[#FBF6E9] text-[#1F2937] text-center font-extrabold border-t-2 border-[#C49A3A] print:bg-gray-200 print:text-black">
+                <td colSpan={4} className="p-3 text-right uppercase tracking-wider text-xs border-r border-[#E2D3B0] text-[#6E4D0E] font-black">
+                  GRAND TOTAL:
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
-                  {totals.openingBalance > 0 ? `₹${totals.openingBalance.toLocaleString()}` : '0'}
+                <td className="p-3 text-right font-mono text-xs border-r border-[#E2D3B0] text-sky-800 font-bold">
+                  {totals.openingBalance > 0 ? `₹${totals.openingBalance.toLocaleString('en-IN')}` : '₹0'}
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 font-bold text-luxury-gold-200">
-                  ₹{totals.roomTariff.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs border-r border-[#E2D3B0] font-extrabold text-[#1F2937]">
+                  ₹{totals.roomTariff.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
-                  {totals.gst > 0 ? `₹${totals.gst.toLocaleString()}` : '0'}
+                <td className="p-3 text-right font-mono text-xs border-r border-[#E2D3B0] text-emerald-800 font-bold">
+                  {totals.gst > 0 ? `₹${totals.gst.toLocaleString('en-IN')}` : '₹0'}
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 font-black text-luxury-gold-300 bg-luxury-brown-900">
-                  ₹{totals.totalRoom.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs border-r border-[#E2D3B0] font-black text-[#6E4D0E] bg-[#F5E9CA]">
+                  ₹{totals.totalRoom.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 text-amber-300">
-                  ₹{totals.food.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs border-r border-[#E6CCA0] text-amber-800 font-bold bg-[#FFFBF2]">
+                  ₹{totals.food.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
-                  ₹{totals.waterBottle.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs border-r border-[#E6CCA0] text-slate-800 bg-[#FFFBF2]">
+                  ₹{totals.waterBottle.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
-                  ₹{totals.laundry.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs border-r border-[#E6CCA0] text-slate-800 bg-[#FFFBF2]">
+                  ₹{totals.laundry.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800">
-                  ₹{totals.anyOthers.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs border-r border-[#E6CCA0] text-slate-800 bg-[#FFFBF2]">
+                  ₹{totals.anyOthers.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 font-black text-amber-300 bg-[#2D2214]">
-                  ₹{totals.totalExtra.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs border-r border-[#DFC07A] font-black text-[#8A4D0D] bg-[#FDEBD0]">
+                  ₹{totals.totalExtra.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs border-r border-luxury-brown-800 font-black text-luxury-gold-300 bg-[#1F170B]">
-                  ₹{totals.grandTotal.toLocaleString()}
+                <td className="p-3 text-right font-mono text-[13px] border-r border-[#DFC07A] font-black text-[#5C3F08] bg-[#F4E3B8]">
+                  ₹{totals.grandTotal.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs text-emerald-300 border-r border-luxury-brown-800">
-                  ₹{totals.cash.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs text-emerald-800 font-extrabold border-r border-emerald-200 bg-[#F0FDF4]">
+                  ₹{totals.cash.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs text-blue-300 border-r border-luxury-brown-800">
-                  ₹{totals.upi.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs text-sky-800 font-extrabold border-r border-emerald-200 bg-[#F0F9FF]">
+                  ₹{totals.upi.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs text-indigo-300 border-r border-luxury-brown-800">
-                  ₹{totals.icici.toLocaleString()}
+                <td className="p-3 text-right font-mono text-xs text-indigo-800 font-extrabold border-r border-emerald-200 bg-[#EEF2FF]">
+                  ₹{totals.icici.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs text-emerald-300 border-r border-luxury-brown-800 font-black bg-emerald-950">
-                  ₹{totals.totalPayment.toLocaleString()}
+                <td className="p-3 text-right font-mono text-[13px] text-emerald-900 border-r border-emerald-300 font-black bg-[#D1FAE5]">
+                  ₹{totals.totalPayment.toLocaleString('en-IN')}
                 </td>
-                <td className="p-3 text-right font-mono text-xs text-rose-300 border-r border-luxury-brown-800 font-black bg-rose-950">
-                  ₹{totals.balanceDue.toLocaleString()}
+                <td className="p-3 text-right font-mono text-[13px] text-rose-800 border-r border-rose-200 font-black bg-[#FFE4E6]">
+                  ₹{totals.balanceDue.toLocaleString('en-IN')}
                 </td>
                 {onEditCheckout && (
-                  <td className="p-3 print:hidden">—</td>
+                  <td className="p-3 bg-[#FBF6E9] text-slate-400 print:hidden">—</td>
                 )}
               </tr>
             </tfoot>
@@ -1754,53 +1782,58 @@ export default function DailyCollectionSheet({
         <DirtyRoomsPanel rooms={rooms} checkins={checkins} className="mt-2" />
 
         {/* -------------------- BOTTOM COUNTER RECONCILIATION & NOTE SECTION -------------------- */}
-        <div className="pt-2 grid grid-cols-1 md:grid-cols-2 gap-4 items-start text-luxury-brown-950">
+        <div className="pt-2 grid grid-cols-1 md:grid-cols-2 gap-4 items-start text-[#1F2937]">
           {/* Left Box: Counter Cash Drawer Reconciliation */}
-          <div className="border border-luxury-brown-200/90 rounded-2xl bg-white shadow-2xs overflow-hidden">
-            <div className="bg-luxury-brown-950 px-4 py-2.5 text-luxury-gold-200 font-serif font-bold text-xs uppercase tracking-wider flex items-center justify-between">
-              <span>Counter Cash Drawer Reconciliation</span>
-              <Wallet className="w-3.5 h-3.5 text-luxury-gold-400" />
+          <div className="border border-[#E5D2A6] rounded-2xl bg-white shadow-2xs overflow-hidden">
+            <div className="bg-gradient-to-r from-[#FBF5E6] to-[#F5E7C3] px-4 py-3 text-[#263449] border-b border-[#E5D2A6] font-serif font-extrabold text-xs uppercase tracking-wider flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-[#B5822D]" />
+                Counter Cash Drawer Reconciliation
+              </span>
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-white/80 border border-[#DFC07A] text-[#8B691E]">
+                Daily Vault Audit
+              </span>
             </div>
-            <table className="w-full text-xs font-mono font-medium border-collapse">
-              <tbody className="divide-y divide-luxury-brown-100">
-                <tr className="bg-amber-50/50 hover:bg-amber-50">
-                  <td className="p-2.5 font-black uppercase text-rose-700">
+            <table className="w-full text-xs font-mono font-medium border-collapse tabular-nums">
+              <tbody className="divide-y divide-[#F0E8D6]">
+                <tr className="bg-[#FFFBF2] hover:bg-[#FDF6E3]/60">
+                  <td className="p-3 font-extrabold uppercase text-rose-700">
                     Opening Cash Balance
                     <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold italic text-rose-600 normal-case">
-                      <ArrowRight className="w-3 h-3 inline text-blue-600" /> TO BE CARRIED FORWARD FROM LAST DATE
+                      <ArrowRight className="w-3 h-3 inline text-sky-600" /> Carried forward from last date
                     </span>
                   </td>
-                  <td className="p-2.5 text-right font-black text-rose-700">₹{openingBalance.toLocaleString()}</td>
+                  <td className="p-3 text-right font-black text-rose-700">₹{openingBalance.toLocaleString('en-IN')}</td>
                 </tr>
-                <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-emerald-800">
+                <tr className="hover:bg-[#FDFBF7]">
+                  <td className="p-3 font-bold uppercase text-emerald-800">
                     Cash Collection Today (+)
-                    <span className="ml-2 text-[10px] font-bold text-slate-500 normal-case">
-                      (*** Opening Bal Col 5 = Carried forward from last date)
+                    <span className="ml-2 text-[10px] font-medium text-slate-500 normal-case">
+                      (*** Opening Bal Col 5 = Carried forward)
                     </span>
                   </td>
-                  <td className="p-2.5 text-right font-black text-emerald-700">₹{totalCashCollected.toLocaleString()}</td>
+                  <td className="p-3 text-right font-black text-emerald-700">₹{totalCashCollected.toLocaleString('en-IN')}</td>
                 </tr>
-                <tr className="bg-luxury-beige-100/60 font-black text-luxury-brown-950">
-                  <td className="p-2.5 uppercase font-black">Total Cash</td>
-                  <td className="p-2.5 text-right font-black">₹{closingCounterSubtotal.toLocaleString()}</td>
+                <tr className="bg-[#FBF6E9] font-black text-[#1F2937]">
+                  <td className="p-3 uppercase font-black">Total Cash Available</td>
+                  <td className="p-3 text-right font-black">₹{closingCounterSubtotal.toLocaleString('en-IN')}</td>
                 </tr>
-                <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-rose-800">Less : Expenses (-)</td>
-                  <td className="p-2.5 text-right font-black text-rose-700">
-                    {totalExpenseAmt > 0 ? `₹${totalExpenseAmt.toLocaleString()}` : '—'}
+                <tr className="hover:bg-[#FDFBF7]">
+                  <td className="p-3 font-bold uppercase text-rose-800">Less : Expenses (−)</td>
+                  <td className="p-3 text-right font-black text-rose-700">
+                    {totalExpenseAmt > 0 ? `₹${totalExpenseAmt.toLocaleString('en-IN')}` : '—'}
                   </td>
                 </tr>
-                <tr className="hover:bg-luxury-beige-50/40">
-                  <td className="p-2.5 font-bold uppercase text-luxury-brown-700">Less : Taken by Owner ({ownerName.toUpperCase()}) (-)</td>
-                  <td className="p-2.5 text-right font-black text-luxury-brown-950">
-                    {ownerHandover > 0 ? `₹${ownerHandover.toLocaleString()}` : '—'}
+                <tr className="hover:bg-[#FDFBF7]">
+                  <td className="p-3 font-bold uppercase text-slate-700">Less : Taken by Owner ({ownerName.toUpperCase()}) (−)</td>
+                  <td className="p-3 text-right font-black text-[#1F2937]">
+                    {ownerHandover > 0 ? `₹${ownerHandover.toLocaleString('en-IN')}` : '—'}
                   </td>
                 </tr>
-                <tr className="bg-emerald-50 border-t-2 border-emerald-300 !text-emerald-900 font-black text-sm">
-                  <td className="p-3 uppercase tracking-wide">Closing Cash Balance</td>
-                  <td className="p-3 text-right font-mono font-black !text-emerald-800 text-base">
-                    ₹{finalClosingBalance.toLocaleString()}
+                <tr className="bg-gradient-to-r from-emerald-50 to-[#ECFDF5] border-t-2 border-emerald-300 text-emerald-950 font-black text-sm">
+                  <td className="p-3.5 uppercase tracking-wide">Closing Cash Balance</td>
+                  <td className="p-3.5 text-right font-mono font-black text-emerald-800 text-base">
+                    ₹{finalClosingBalance.toLocaleString('en-IN')}
                   </td>
                 </tr>
               </tbody>
@@ -1808,30 +1841,30 @@ export default function DailyCollectionSheet({
           </div>
 
           {/* Right Box: Expense Breakdown Note & Authorization */}
-          <div className="border border-luxury-brown-200/90 rounded-2xl bg-luxury-beige-50/40 p-4 space-y-3 shadow-2xs">
-            <div className="flex items-center justify-between border-b border-luxury-brown-200 pb-2">
-              <span className="text-xs font-serif font-black uppercase text-luxury-brown-950 tracking-wider">
-                NOTE - Daily Cash & Settlement Memo
+          <div className="border border-[#E5D2A6] rounded-2xl bg-gradient-to-b from-[#FFFDF9] to-[#FBF6EA]/70 p-4 space-y-3.5 shadow-2xs">
+            <div className="flex items-center justify-between border-b border-[#E5D2A6] pb-2.5">
+              <span className="text-xs font-serif font-extrabold uppercase text-[#263449] tracking-wider">
+                NOTE — Daily Cash &amp; Settlement Memo
               </span>
-              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold rounded-full border border-emerald-300">
-                Audit Verified
+              <span className="px-2.5 py-0.5 bg-emerald-50 text-emerald-800 text-[10px] font-mono font-bold rounded-full border border-emerald-300">
+                ✓ Audit Verified
               </span>
             </div>
-            
-            <div className="p-3 bg-white rounded-xl border border-luxury-brown-200 min-h-[64px] flex items-center">
-              <p className="text-xs font-mono font-bold text-luxury-brown-900 uppercase leading-relaxed">
+
+            <div className="p-3.5 bg-white rounded-xl border border-[#E6D8B8] min-h-[72px] flex items-center shadow-2xs">
+              <p className="text-xs font-mono font-bold text-[#263449] uppercase leading-relaxed">
                 {customNote || (ownerHandover > 0 ? `${ownerHandover.toLocaleString('en-IN')} - CASH TAKEN BY ${ownerName.toUpperCase()}` : activeExpenseNote)}
               </p>
             </div>
 
-            <div className="pt-3 text-[11px] text-luxury-brown-500 font-mono grid grid-cols-2 gap-4 border-t border-luxury-brown-200/80">
-              <div className="border-t-2 border-dashed border-luxury-brown-300 pt-1 text-center">
-                <span className="font-bold text-luxury-brown-800 block">Duty Manager</span>
-                <span className="text-[10px] text-luxury-brown-400">Signature & Clearance</span>
+            <div className="pt-4 text-[11px] text-slate-600 font-mono grid grid-cols-2 gap-4 border-t border-[#E6D8B8]">
+              <div className="border-t-2 border-dashed border-[#D8C18B] pt-1.5 text-center">
+                <span className="font-bold text-[#263449] block">Duty Manager</span>
+                <span className="text-[10px] text-slate-500">Signature &amp; Clearance</span>
               </div>
-              <div className="border-t-2 border-dashed border-luxury-brown-300 pt-1 text-center">
-                <span className="font-bold text-luxury-brown-800 block">Receptionist / Cashier</span>
-                <span className="text-[10px] text-luxury-brown-400">Drawer Reconciliation</span>
+              <div className="border-t-2 border-dashed border-[#D8C18B] pt-1.5 text-center">
+                <span className="font-bold text-[#263449] block">Receptionist / Cashier</span>
+                <span className="text-[10px] text-slate-500">Drawer Reconciliation</span>
               </div>
             </div>
           </div>
