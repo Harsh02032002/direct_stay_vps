@@ -16,8 +16,10 @@ import {
   AlertCircle,
   Building
 } from 'lucide-react';
-import { Hotel, HotelSettings, Staff, SubscriptionInvoice, UserRole } from '../types';
+import { Hotel, HotelSettings, SaaSPackage, Staff, SubscriptionInvoice, SystemWebsiteConfig, UserRole } from '../types';
 import SubscriptionInvoiceModal from './SubscriptionInvoiceModal';
+import MembershipRenewalCheckout, { computeDaysRemaining, resolveEffectiveActivePackages } from './MembershipRenewalCheckout';
+import WhatsAppSupportWidget, { DEFAULT_WHATSAPP_NUMBER } from './WhatsAppSupportWidget';
 import TaxSetupView from './profile/TaxSetupView';
 import PaymentModeView from './profile/PaymentModeView';
 import WhatsAppView from './profile/WhatsAppView';
@@ -43,6 +45,8 @@ interface ProfileSettingsViewProps {
   currentRole: UserRole;
   loggedInUser: string;
   hotels: Hotel[];
+  packages?: SaaSPackage[];
+  systemWebsite?: SystemWebsiteConfig;
   selectedHotelId: string;
   rawStaff: Staff[];
   hotelSettings?: HotelSettings;
@@ -59,6 +63,8 @@ export default function ProfileSettingsView({
   currentRole,
   loggedInUser,
   hotels = [],
+  packages = [],
+  systemWebsite,
   selectedHotelId,
   rawStaff = [],
   hotelSettings,
@@ -139,6 +145,8 @@ export default function ProfileSettingsView({
 
   // Admin Membership Renewal & Invoice Viewer State
   const [viewingSubInvoice, setViewingSubInvoice] = useState<SubscriptionInvoice | null>(null);
+  const [showRenewalCheckout, setShowRenewalCheckout] = useState(false);
+  const [checkoutInitialPkgId, setCheckoutInitialPkgId] = useState<string | undefined>(undefined);
   const [adminRenewPlan, setAdminRenewPlan] = useState<'Monthly' | 'HalfYearly' | 'Yearly'>('Yearly');
   const [adminRenewPaymentMode, setAdminRenewPaymentMode] = useState<string>('UPI');
   const [adminRenewUtr, setAdminRenewUtr] = useState<string>('');
@@ -533,106 +541,184 @@ export default function ProfileSettingsView({
         />
       )}
 
-      {effectiveSec === 'renewal' && (
+      {effectiveSec === 'renewal' && (() => {
+        const activePlans = resolveEffectiveActivePackages(packages);
+        const daysLeft = computeDaysRemaining(activeHotel.subscriptionEndDate);
+        const isExpired = activeHotel.subscriptionStatus === 'Expired' || (daysLeft !== null && daysLeft < 0);
+        const isExpiring = !isExpired && daysLeft !== null && daysLeft <= 30;
+        const currentPkg = activePlans.find((p) => p.id === activeHotel.packageId) || activePlans[0];
+        const paymentHistory = Array.isArray(activeHotel.subscriptionPayments) ? activeHotel.subscriptionPayments : [];
+        const waPhone = systemWebsite?.whatsappNumber || systemWebsite?.supportPhone || DEFAULT_WHATSAPP_NUMBER;
+
+        return (
         <div className="space-y-6">
           <div className="bg-white border border-luxury-brown-100 rounded-3xl p-6 shadow-sm space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-luxury-brown-50">
               <div>
                 <h3 className="text-base font-serif font-bold text-luxury-brown-950 flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 text-luxury-gold-600" />
-                  SaaS Membership Renewal &amp; Tax Invoices
+                  SaaS Membership, Renewal Checkout &amp; GST Tax Invoices
                 </h3>
                 <p className="text-xs text-luxury-brown-500 mt-0.5">
-                  Current Plan: <strong>{activeHotel.subscriptionPlan || 'Yearly'}</strong> • Valid Until:{' '}
-                  <strong className="font-mono">{activeHotel.subscriptionEndDate || 'N/A'}</strong> • Status:{' '}
-                  <strong className="text-emerald-700">{activeHotel.subscriptionStatus || 'Active'}</strong>
+                  Package: <strong>{currentPkg?.name || activeHotel.subscriptionPlan || 'Full PMS'}</strong> • Activated:{' '}
+                  <strong className="font-mono">{activeHotel.subscriptionActivatedAt || activeHotel.trialStartDate || 'N/A'}</strong> • Expires:{' '}
+                  <strong className="font-mono">{activeHotel.subscriptionEndDate || 'N/A'}</strong> •{' '}
+                  <strong className={isExpired ? 'text-rose-700' : isExpiring ? 'text-amber-700' : 'text-emerald-700'}>
+                    {daysLeft === null ? 'Active' : daysLeft < 0 ? `${Math.abs(daysLeft)}d overdue` : `${daysLeft}d remaining`}
+                  </strong>
                 </p>
               </div>
-              {activeHotel.renewalRequest?.status === 'Pending' && (
-                <span className="px-3 py-1.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 font-mono text-[10px] font-bold flex items-center gap-1.5 shrink-0">
-                  <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-                  <span>Renewal Pending Approval ({activeHotel.renewalRequest.requestedPackageName})</span>
-                </span>
-              )}
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                {activeHotel.renewalRequest?.status === 'Pending' && (
+                  <span className="px-3 py-1.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 font-mono text-[10px] font-bold flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                    <span>Pending Verification ({activeHotel.renewalRequest.requestedPackageName})</span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCheckoutInitialPkgId(activeHotel.packageId || activePlans[0]?.id);
+                    setShowRenewalCheckout(true);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-luxury-gold-500 hover:bg-luxury-gold-400 text-luxury-brown-950 font-bold text-xs shadow-sm cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <CreditCard className="w-3.5 h-3.5" />
+                  <span>{isExpired || isExpiring ? 'Renew Now' : 'Renew / Upgrade (UPI QR)'}</span>
+                </button>
+              </div>
             </div>
 
-            {renewalSuccessMsg && (
-              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-start gap-3 text-xs">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold">Request Dispatched</p>
-                  <p>{renewalSuccessMsg}</p>
+            {(isExpired || isExpiring) && (
+              <div
+                className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                  isExpired ? 'bg-rose-50 border-rose-300 text-rose-900' : 'bg-amber-50 border-amber-300 text-amber-950'
+                }`}
+              >
+                <p className="font-semibold">
+                  {isExpired
+                    ? 'Your hotel membership has expired. All property data is preserved — click Renew Now to complete UPI payment verification.'
+                    : `Your membership expires in ${daysLeft} day(s). Click Renew Now to open Direct UPI QR checkout & view upgrade plans.`}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCheckoutInitialPkgId(activeHotel.packageId || activePlans[0]?.id);
+                    setShowRenewalCheckout(true);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-luxury-brown-950 text-luxury-gold-400 font-bold text-xs shrink-0 cursor-pointer"
+                >
+                  Renew Now →
+                </button>
+              </div>
+            )}
+
+            {/* Dynamic Upgrade & Renewal Plans Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {activePlans.map((pkg) => {
+                const base = Number(pkg.priceYearly || pkg.priceMonthly || 5999);
+                const gst = Number(pkg.gstRate ?? 18);
+                const tot = base + Math.round(base * (gst / 100));
+                const isCur = pkg.id === activeHotel.packageId;
+                return (
+                  <div
+                    key={pkg.id}
+                    className={`p-4 rounded-2xl border flex flex-col justify-between space-y-3 ${
+                      pkg.isPopular ? 'border-2 border-luxury-gold-500 bg-luxury-beige-50/40' : 'border-luxury-brown-200 bg-white'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono uppercase font-bold text-luxury-gold-700">
+                          {pkg.badge || 'Annual Plan'}
+                        </span>
+                        {isCur && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-mono font-bold">
+                            Current
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="font-serif font-bold text-base text-luxury-brown-950">{pkg.name}</h4>
+                      <p className="text-[11px] text-luxury-brown-600">{pkg.tagline || pkg.roomTierLabel}</p>
+                      <p className="text-xl font-serif font-bold text-luxury-brown-950 pt-1">
+                        ₹{base.toLocaleString('en-IN')} <span className="text-[11px] font-normal">/ Year</span>
+                      </p>
+                      <p className="text-[10px] font-mono text-luxury-brown-500">
+                        + {gst}% GST (Total ₹{tot.toLocaleString('en-IN')})
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCheckoutInitialPkgId(pkg.id);
+                        setShowRenewalCheckout(true);
+                      }}
+                      className="w-full py-2 rounded-xl bg-luxury-brown-950 hover:bg-luxury-brown-900 text-luxury-gold-400 font-bold text-xs cursor-pointer"
+                    >
+                      {isCur ? 'Renew Now (UPI QR)' : 'Upgrade / Pay via UPI'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {paymentHistory.length > 0 && (
+              <div className="bg-white border border-luxury-brown-100 rounded-2xl overflow-hidden">
+                <div className="px-4 py-3 bg-luxury-beige-50 border-b border-luxury-brown-100">
+                  <span className="text-xs font-serif font-bold text-luxury-brown-950">
+                    Membership Payment History ({paymentHistory.length})
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-luxury-brown-100 text-[10px] font-mono uppercase text-luxury-brown-500">
+                        <th className="py-2.5 px-4">Date</th>
+                        <th className="py-2.5 px-4">Package</th>
+                        <th className="py-2.5 px-4">Mode / UTR</th>
+                        <th className="py-2.5 px-4 text-right">Amount</th>
+                        <th className="py-2.5 px-4 text-right">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-luxury-brown-100">
+                      {paymentHistory.map((pay) => (
+                        <tr key={pay.id} className="hover:bg-luxury-beige-50/40">
+                          <td className="py-2.5 px-4 font-mono text-[11px]">{pay.createdAt}</td>
+                          <td className="py-2.5 px-4 font-semibold">{pay.packageName}</td>
+                          <td className="py-2.5 px-4 font-mono text-[11px]">
+                            {pay.paymentMethod} {pay.utrNumber ? `(${pay.utrNumber})` : ''}
+                          </td>
+                          <td className="py-2.5 px-4 font-mono font-bold text-right">
+                            ₹{Number(pay.totalAmount || 0).toLocaleString('en-IN')}
+                          </td>
+                          <td className="py-2.5 px-4 text-right">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                                pay.status === 'Approved'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : pay.status === 'Pending'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}
+                            >
+                              {pay.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
 
-            {renewalErrorMsg && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl p-4 flex items-start gap-3 text-xs">
-                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold">Request Failed</p>
-                  <p>{renewalErrorMsg}</p>
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={handleAdminSubmitRenewalRequest} className="bg-luxury-beige-50/50 border border-luxury-brown-100 rounded-2xl p-5 space-y-4 text-xs">
-              <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-luxury-gold-700 block">
-                Request Membership Renewal / Package Upgrade
-              </span>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div>
-                  <label className="font-mono font-bold uppercase text-[10px] text-luxury-brown-600 block mb-1">
-                    Select Package Plan
-                  </label>
-                  <select
-                    value={adminRenewPlan}
-                    onChange={(e) => setAdminRenewPlan(e.target.value as any)}
-                    className="w-full bg-white border border-luxury-brown-200 rounded-xl px-3 py-2 font-bold text-luxury-brown-950"
-                  >
-                    <option value="Monthly">Monthly Pro — ₹1,899 (30 Days)</option>
-                    <option value="HalfYearly">6-Month Growth — ₹7,999 (180 Days)</option>
-                    <option value="Yearly">1-Year Enterprise — ₹14,000 (365 Days)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="font-mono font-bold uppercase text-[10px] text-luxury-brown-600 block mb-1">
-                    Payment Mode
-                  </label>
-                  <select
-                    value={adminRenewPaymentMode}
-                    onChange={(e) => setAdminRenewPaymentMode(e.target.value)}
-                    className="w-full bg-white border border-luxury-brown-200 rounded-xl px-3 py-2"
-                  >
-                    <option value="UPI">UPI (GPay / PhonePe)</option>
-                    <option value="Bank Transfer">Bank Transfer (NEFT / RTGS)</option>
-                    <option value="Card / Online">Credit / Debit Card</option>
-                    <option value="Cash">Cash Paid to Super Admin</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="font-mono font-bold uppercase text-[10px] text-luxury-brown-600 block mb-1">
-                    UTR / Transaction Ref
-                  </label>
-                  <input
-                    type="text"
-                    value={adminRenewUtr}
-                    onChange={(e) => setAdminRenewUtr(e.target.value)}
-                    placeholder="e.g. UTR82910421"
-                    className="w-full bg-white border border-luxury-brown-200 rounded-xl px-3 py-2 font-mono"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <button
-                    type="submit"
-                    disabled={isSubmittingAdminRenewal}
-                    className="w-full py-2.5 px-4 bg-luxury-gold-500 hover:bg-luxury-gold-400 text-luxury-brown-950 font-bold rounded-xl shadow-xs cursor-pointer transition-colors"
-                  >
-                    {isSubmittingAdminRenewal ? 'Sending...' : 'Request Renewal'}
-                  </button>
-                </div>
-              </div>
-            </form>
+            <WhatsAppSupportWidget
+              variant="banner"
+              phone={waPhone}
+              context="renewal"
+              hotelName={activeHotel.name}
+              packageName={currentPkg?.name}
+            />
 
             {Array.isArray(activeHotel.subscriptionInvoices) && activeHotel.subscriptionInvoices.length > 0 && (
               <div className="bg-white border border-luxury-brown-100 rounded-2xl overflow-hidden">
@@ -686,9 +772,35 @@ export default function ProfileSettingsView({
           <SubscriptionInvoiceModal
             invoice={viewingSubInvoice}
             onClose={() => setViewingSubInvoice(null)}
+            businessName={systemWebsite?.businessName}
+            supportPhone={systemWebsite?.supportPhone || DEFAULT_WHATSAPP_NUMBER}
+            supportEmail={systemWebsite?.supportEmail}
+            gstNumber={systemWebsite?.paymentSettings?.gstNumber}
+            sacCode={systemWebsite?.paymentSettings?.sacCode}
           />
+
+          {showRenewalCheckout && (
+            <MembershipRenewalCheckout
+              hotel={activeHotel}
+              packages={packages}
+              systemWebsite={systemWebsite}
+              initialPackageId={checkoutInitialPkgId}
+              requestedBy={loggedInUser || activeHotel.username || 'Hotel Admin'}
+              onClose={() => setShowRenewalCheckout(false)}
+              onSubmitted={(reqObj) => {
+                onUpdateGlobalHotels(
+                  hotels.map((h) => (h.id === activeHotel.id ? { ...h, renewalRequest: reqObj } : h))
+                );
+                onAddAuditLog?.(
+                  'Submitted Membership Renewal Payment',
+                  `Submitted ${reqObj.requestedPackageName} renewal (UTR: ${reqObj.transactionReference}) for billing verification.`
+                );
+              }}
+            />
+          )}
         </div>
-      )}
+        );
+      })()}
 
       {effectiveSec === 'compliance' && (
         <div className="bg-white border border-luxury-brown-100 rounded-3xl p-6 shadow-sm space-y-4">

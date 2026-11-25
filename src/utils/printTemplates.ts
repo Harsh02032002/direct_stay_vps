@@ -47,6 +47,12 @@ export interface InvoicePrintData {
   copyLabel?: string; // ORIGINAL FOR RECIPIENT
   footerNote?: string;
   documentTitle?: string;
+  isCreditNote?: boolean;
+  isSuperseded?: boolean;
+  supersededByInvoiceNumber?: string;
+  originalInvoiceNumber?: string;
+  creditNoteReason?: string;
+  reversedPayments?: Array<{ date: string; method: string; reference?: string; amount: number; note?: string }>;
 }
 
 export interface GrcPrintData {
@@ -105,8 +111,23 @@ const BASE_CSS = `
 // ---------------------------------------------------------------------------
 export function renderInvoiceHtml(d: InvoicePrintData): string {
   const b = d.bill;
-  const isTax = b.isGstInvoice;
+  const isCreditNote = Boolean(
+    d.isCreditNote ||
+      String(d.invoiceNumber || '').toUpperCase().startsWith('CN/') ||
+      String(d.documentTitle || '').toUpperCase().includes('CREDIT NOTE')
+  );
+  const isTax = b.isGstInvoice || (isCreditNote && Math.abs(Number(b.totalTax || 0)) > 0);
   const h = d.hotel;
+  const signedMoney = (v: number) => {
+    const n = Number(v) || 0;
+    if (Math.abs(n) < 0.005) return 'Rs. 0.00';
+    return n < 0 ? `- Rs. ${money(Math.abs(n))}` : `Rs. ${money(n)}`;
+  };
+  const origInvoiceRef =
+    d.originalInvoiceNumber ||
+    (isCreditNote && String(d.invoiceNumber || '').toUpperCase().startsWith('CN/')
+      ? String(d.invoiceNumber).slice(3)
+      : '');
 
   const addressLine = String(h.address || '')
     .split(/\n/)
@@ -158,8 +179,8 @@ export function renderInvoiceHtml(d: InvoicePrintData): string {
     return 'Stay Dates';
   };
 
-  // Charge lines mapping for ITEMIZED CHARGES table
-  const chargeLines = b.lines.filter(l => l.type !== 'receipt');
+  // Charge lines mapping for ITEMIZED CHARGES table (for Credit Notes, show only reversed charge lines with consistent negative sign)
+  const chargeLines = b.lines.filter(l => l.type !== 'receipt' && (!isCreditNote || l.type !== 'tax'));
   const itemizedChargeRows = chargeLines.length > 0
     ? chargeLines.map(l => {
         let rawDesc = l.description || '';
@@ -176,12 +197,13 @@ export function renderInvoiceHtml(d: InvoicePrintData): string {
         const unitLabel = l.roomNumber ? `Room ${esc(l.roomNumber)}` : (d.roomNumber ? `Room ${esc(d.roomNumber)}` : 'Room Unit');
         const datesLabel = esc(l.dateLabel) || shortDates(d.checkIn, d.checkOut);
         const qtyNights = d.nights && d.nights > 1 ? String(d.nights) : '1';
+        const lineAmt = isCreditNote ? -Math.abs(Number(l.charges || 0)) : Number(l.charges || 0);
         return `<tr style="border-bottom:1px solid #E5E7EB;">
           <td style="padding:8px 10px; font-weight:600; color:#111;">${itemDesc}</td>
           <td style="padding:8px 10px; color:#222;">${unitLabel}</td>
           <td style="padding:8px 10px; text-align:center; color:#333;">${datesLabel}</td>
           <td style="padding:8px 10px; text-align:center; font-weight:600; color:#111;">${qtyNights}</td>
-          <td style="padding:8px 10px; text-align:right; font-weight:700; color:#000;">Rs. ${money(l.charges)}</td>
+          <td style="padding:8px 10px; text-align:right; font-weight:700; color:${isCreditNote ? '#991B1B' : '#000'};">${signedMoney(lineAmt)}</td>
         </tr>`;
       }).join('')
     : `<tr style="border-bottom:1px solid #E5E7EB;">
@@ -189,12 +211,28 @@ export function renderInvoiceHtml(d: InvoicePrintData): string {
         <td style="padding:8px 10px; color:#222;">Room ${esc(d.roomNumber || d.roomLabel || '101')}</td>
         <td style="padding:8px 10px; text-align:center; color:#333;">${esc(shortDates(d.checkIn, d.checkOut))}</td>
         <td style="padding:8px 10px; text-align:center; font-weight:600; color:#111;">${d.nights || 1}</td>
-        <td style="padding:8px 10px; text-align:right; font-weight:700; color:#000;">Rs. ${money(b.taxableAmount || b.grandTotal)}</td>
+        <td style="padding:8px 10px; text-align:right; font-weight:700; color:${isCreditNote ? '#991B1B' : '#000'};">${signedMoney(isCreditNote ? -Math.abs(b.netSubtotal ?? b.subtotal ?? b.grandTotal) : (b.taxableAmount || b.grandTotal))}</td>
       </tr>`;
 
-  // Payment receipts rows
+  // Payment receipts rows (Credit Note strictly distinguishes reversed payments from new collections)
   const payItems = Array.isArray(b.paymentItems) ? b.paymentItems : [];
-  const paymentRowsHtml = payItems.length > 0
+  const revPayItems = Array.isArray(d.reversedPayments) ? d.reversedPayments : [];
+  const paymentRowsHtml = isCreditNote
+    ? (revPayItems.length > 0
+        ? revPayItems.map(p => {
+            const dtLbl = formatDateLabel(p.date) || esc(p.date || d.invoiceDate);
+            return `<tr style="border-bottom:1px solid #E5E7EB;">
+              <td style="padding:6px 8px; color:#222; font-weight:500;">${esc(dtLbl)}</td>
+              <td style="padding:6px 8px; color:#991B1B; font-weight:600;">${esc(p.method || 'Cash')} (Reversed)</td>
+              <td style="padding:6px 8px; text-align:center; color:#555;">${esc(p.reference || p.note || 'Checkout Reversal')}</td>
+              <td style="padding:6px 8px; text-align:right; font-weight:600; color:#991B1B;">${signedMoney(-Math.abs(Number(p.amount || 0)))}</td>
+            </tr>`;
+          }).join('')
+        : `<tr style="border-bottom:1px solid #E5E7EB;">
+            <td style="padding:6px 8px; color:#555;" colspan="3">Checkout invoice reversed via Credit Note (No new payment collected)</td>
+            <td style="padding:6px 8px; text-align:right; font-weight:600; color:#555;">Rs. 0.00</td>
+          </tr>`)
+    : payItems.length > 0
     ? payItems.map(p => {
         const dtLbl = formatDateLabel(p.date) || esc(p.date || d.invoiceDate);
         return `<tr style="border-bottom:1px solid #E5E7EB;">
@@ -217,19 +255,41 @@ export function renderInvoiceHtml(d: InvoicePrintData): string {
           </tr>`);
 
   // Taxes breakdown label
-  const totalTaxRate = b.taxRows && b.taxRows.length > 0 ? b.taxRows.reduce((acc, r) => acc + (r.rate || 0), 0) : 0;
+  const totalTaxRate = b.taxRows && b.taxRows.length > 0 ? b.taxRows.reduce((acc, r) => acc + Math.abs(Number(r.rate || 0)), 0) : Math.abs(Number(b.headlineGstRate || 0));
   const taxBreakdownLabel = totalTaxRate > 0
     ? `CGST ${(totalTaxRate / 2).toFixed(2)}%, SGST ${(totalTaxRate / 2).toFixed(2)}%`
     : (isTax ? 'CGST 2.50%, SGST 2.50%' : 'Taxes Exempt');
 
-  const balanceValue = b.refundDue > 0 ? b.refundDue : b.balance;
-  const statusLabel = balanceValue <= 0 ? 'CONFIRMED (PAID)' : 'CONFIRMED';
+  const isSupersededInv = Boolean(!isCreditNote && d.isSuperseded);
+  const balanceValue = isCreditNote ? 0 : (b.refundDue > 0 ? b.refundDue : b.balance);
+  const statusLabel = isCreditNote
+    ? 'CREDIT NOTE — REVERSAL ISSUED'
+    : isSupersededInv
+    ? 'SUPERSEDED (REVERSED)'
+    : (balanceValue <= 0 ? 'CONFIRMED (PAID)' : 'CONFIRMED');
+  const resolvedDocTitle = isCreditNote
+    ? 'CREDIT NOTE / CHECKOUT REVERSAL'
+    : (d.documentTitle || (isTax ? 'BOOKING CONFIRMATION & INVOICE' : 'BOOKING CONFIRMATION & BILL OF SUPPLY'));
+  const displayBaseSubtotal = isCreditNote
+    ? -Math.abs(Number(b.netSubtotal ?? (b.subtotal - b.discount)))
+    : Number(b.netSubtotal ?? Math.max(0, b.subtotal - b.discount));
+  const displayTaxableBase = isCreditNote
+    ? -Math.abs(Number(b.taxableAmount || 0))
+    : Number(b.taxableAmount || 0);
+  const displayTaxTotal = isCreditNote
+    ? -Math.abs(Number(b.totalTax || 0))
+    : Number(b.totalTax || 0);
+  const displayGrandTotal = isCreditNote
+    ? -Math.abs(Number(b.grandTotal || 0))
+    : Number(b.grandTotal || 0);
+  const showSeparateTaxableRow =
+    isTax && Math.abs(Math.abs(displayBaseSubtotal) - Math.abs(displayTaxableBase)) >= 0.01;
 
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>${esc(d.documentTitle || (isTax ? 'BOOKING CONFIRMATION & INVOICE' : 'BOOKING CONFIRMATION & BILL OF SUPPLY'))} ${esc(d.invoiceNumber)}</title>
+<title>${esc(resolvedDocTitle)} ${esc(d.invoiceNumber)}</title>
 <style>
 ${BASE_CSS}
   @page {
@@ -245,6 +305,7 @@ ${BASE_CSS}
     padding: 0;
   }
   .invoice-container {
+    position: relative;
     max-width: 196mm;
     min-height: 272mm;
     margin: 0 auto;
@@ -253,6 +314,23 @@ ${BASE_CSS}
     display: flex;
     flex-direction: column;
     justify-content: space-between;
+  }
+  .superseded-watermark {
+    position: absolute;
+    top: 38%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-30deg);
+    font-size: 56px;
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: rgba(220, 38, 38, 0.13);
+    border: 6px solid rgba(220, 38, 38, 0.16);
+    padding: 10px 28px;
+    border-radius: 12px;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 10;
+    text-transform: uppercase;
   }
   .invoice-top-body {
     flex: 1 1 auto;
@@ -265,6 +343,7 @@ ${BASE_CSS}
 </head>
 <body>
 <div class="invoice-container">
+  ${isSupersededInv ? `<div class="superseded-watermark">SUPERSEDED</div>` : ''}
   <div class="invoice-top-body">
 
     <!-- HEADER SECTION -->
@@ -283,13 +362,19 @@ ${BASE_CSS}
           </div>
         </td>
         <td style="vertical-align:top; width:42%; text-align:right;">
-          <div style="font-size:14.5px; font-weight:800; color:#000; letter-spacing:0.3px; text-transform:uppercase; margin-bottom:4px;">
-            ${esc(d.documentTitle || (isTax ? 'BOOKING CONFIRMATION & INVOICE' : 'BOOKING CONFIRMATION & BILL OF SUPPLY'))}
+          <div style="font-size:14.5px; font-weight:800; color:${isCreditNote ? '#991B1B' : '#000'}; letter-spacing:0.3px; text-transform:uppercase; margin-bottom:4px;">
+            ${esc(resolvedDocTitle)}
           </div>
           <div style="font-size:11.5px; color:#222; font-weight:600; margin-bottom:3px;">
-            Conf #: ${esc(d.reservationNo || d.invoiceNumber || '52055852')} &nbsp;|&nbsp; Date: ${esc(d.invoiceDate)}
+            ${isCreditNote
+              ? `Credit Note #: ${esc(d.invoiceNumber)} &nbsp;|&nbsp; Date: ${esc(d.invoiceDate)}`
+              : `Conf #: ${esc(d.reservationNo || d.invoiceNumber || '52055852')} &nbsp;|&nbsp; Date: ${esc(d.invoiceDate)}`}
           </div>
-          <div style="font-size:12px; font-weight:800; color:#000;">
+          ${isCreditNote ? `
+          <div style="font-size:11px; color:#333; font-weight:600; margin-bottom:3px;">
+            Orig. Invoice: <strong>${esc(origInvoiceRef || '—')}</strong> &nbsp;|&nbsp; Booking #: <strong>${esc(d.reservationNo || '—')}</strong>
+          </div>` : ''}
+          <div style="font-size:12px; font-weight:800; color:${isCreditNote || isSupersededInv ? '#991B1B' : '#000'};">
             Status: <span style="text-transform:uppercase;">${esc(statusLabel)}</span>
           </div>
         </td>
@@ -298,6 +383,11 @@ ${BASE_CSS}
 
     <!-- SOLID BLACK HORIZONTAL DIVIDER -->
     <div style="border-bottom:2px solid #000; margin:8px 0 16px 0;"></div>
+
+    ${isSupersededInv ? `
+    <div style="margin:0 0 14px 0; padding:10px 14px; background:#FEF2F2; border:2px solid #DC2626; border-radius:6px; color:#991B1B; font-size:12px; font-weight:800; line-height:1.45; letter-spacing:0.2px;">
+      SUPERSEDED — REVERSED${d.supersededByInvoiceNumber ? ` BY ${esc(d.supersededByInvoiceNumber)}` : ''} &nbsp;|&nbsp; Historical audit record only. Excluded from active revenue &amp; daily collection.
+    </div>` : ''}
 
     <!-- TWO-COLUMN GUEST INFO & STAY DETAILS -->
     <table style="width:100%; border-collapse:collapse; margin-bottom:20px;">
@@ -374,8 +464,8 @@ ${BASE_CSS}
 
     <!-- ITEMIZED CHARGES TABLE -->
     <div style="margin-bottom:20px;">
-      <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#000; margin-bottom:6px;">
-        ITEMIZED CHARGES
+      <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:${isCreditNote ? '#991B1B' : '#000'}; margin-bottom:6px;">
+        ${isCreditNote ? 'REVERSED / CREDITED CHARGES' : 'ITEMIZED CHARGES'}
       </div>
       <table style="width:100%; border-collapse:collapse; font-size:12px;">
         <thead>
@@ -398,13 +488,13 @@ ${BASE_CSS}
       <tr>
         <!-- Left Column: PAYMENT DETAILS & GUEST NOTES -->
         <td style="width:50%; vertical-align:top; padding-right:16px;">
-          <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#000; margin-bottom:6px;">
-            PAYMENT DETAILS
+          <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:${isCreditNote ? '#991B1B' : '#000'}; margin-bottom:6px;">
+            ${isCreditNote ? 'REVERSED PAYMENTS (NON-REVENUE AUDIT)' : 'PAYMENT DETAILS'}
           </div>
           <table style="width:100%; border-collapse:collapse; font-size:11.5px; margin-bottom:18px;">
             <thead>
               <tr style="background:#ECECEC; border-top:1px solid #D1D5DB; border-bottom:1px solid #D1D5DB;">
-                <th style="padding:6px 8px; text-align:left; font-weight:700; color:#000;">Date of Payment</th>
+                <th style="padding:6px 8px; text-align:left; font-weight:700; color:#000;">${isCreditNote ? 'Date' : 'Date of Payment'}</th>
                 <th style="padding:6px 8px; text-align:left; font-weight:700; color:#000;">Mode</th>
                 <th style="padding:6px 8px; text-align:center; font-weight:700; color:#000;">Reference</th>
                 <th style="padding:6px 8px; text-align:right; font-weight:700; color:#000;">Amount (INR)</th>
@@ -418,47 +508,59 @@ ${BASE_CSS}
           <!-- GUEST NOTES -->
           <div>
             <div style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.4px; color:#000; margin-bottom:6px; display:inline-block; background:#ECECEC; padding:2px 8px; border-radius:2px;">
-              GUEST NOTES
+              ${isCreditNote ? 'CREDIT NOTE AUDIT NOTES' : 'GUEST NOTES'}
             </div>
             <ul style="margin:4px 0 0 16px; padding:0; font-size:11px; color:#333; line-height:1.65;">
+              ${isCreditNote ? `
+              <li>This Credit Note reverses Original Invoice <strong>${esc(origInvoiceRef || '—')}</strong> for Booking <strong>${esc(d.reservationNo || '—')}</strong>.</li>
+              <li>Original finalized invoice remains preserved as Superseded for full audit compliance.</li>
+              <li>This document is a non-revenue reversal record — no new payment was collected.</li>
+              ${d.creditNoteReason ? `<li>${esc(d.creditNoteReason)}</li>` : ''}
+              ` : `
               <li>Standard reservation guaranteed.</li>
               <li>Please present valid photo ID during check-in.</li>
               <li>Valid Government Photo ID (Aadhaar / Passport / DL) required at front desk.</li>
               ${d.footerNote ? `<li>${esc(d.footerNote)}</li>` : ''}
+              `}
             </ul>
           </div>
         </td>
 
         <!-- Right Column: INVOICE SUMMARY -->
         <td style="width:50%; vertical-align:top; padding-left:16px;">
-          <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#000; margin-bottom:6px;">
-            INVOICE SUMMARY
+          <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:${isCreditNote ? '#991B1B' : '#000'}; margin-bottom:6px;">
+            ${isCreditNote ? 'CREDIT NOTE SUMMARY' : 'INVOICE SUMMARY'}
           </div>
           <table style="width:100%; border-collapse:collapse; font-size:12px;">
             <tbody>
               <tr style="border-bottom:1px solid #E5E7EB;">
-                <td style="padding:6.5px 8px; font-weight:500; color:#222;">Base Subtotal</td>
-                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#000;">Rs. ${money(b.taxableAmount)}</td>
+                <td style="padding:6.5px 8px; font-weight:500; color:#222;">${isCreditNote ? 'Reversed Base Subtotal' : 'Base Subtotal'}</td>
+                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:${isCreditNote ? '#991B1B' : '#000'};">${signedMoney(displayBaseSubtotal)}</td>
               </tr>
+              ${showSeparateTaxableRow ? `
               <tr style="border-bottom:1px solid #E5E7EB;">
-                <td style="padding:6.5px 8px; font-weight:500; color:#222;">Taxes (${esc(taxBreakdownLabel)})</td>
-                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#000;">Rs. ${money(b.totalTax)}</td>
+                <td style="padding:6.5px 8px; font-weight:500; color:#555;">${isCreditNote ? 'Reversed Taxable Value (excl. GST-Exempt)' : 'Taxable Value (excl. GST-Exempt)'}</td>
+                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#444;">${signedMoney(displayTaxableBase)}</td>
+              </tr>` : ''}
+              <tr style="border-bottom:1px solid #E5E7EB;">
+                <td style="padding:6.5px 8px; font-weight:500; color:#222;">${isCreditNote ? `Reversed Taxes (${esc(taxBreakdownLabel)})` : `Taxes (${esc(taxBreakdownLabel)})`}</td>
+                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:${isCreditNote ? '#991B1B' : '#000'};">${signedMoney(displayTaxTotal)}</td>
               </tr>
-              ${b.discount > 0 ? `
+              ${!isCreditNote && b.discount > 0 ? `
               <tr style="border-bottom:1px solid #E5E7EB;">
                 <td style="padding:6.5px 8px; font-weight:500; color:#222;">Discount</td>
                 <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#000;">- Rs. ${money(b.discount)}</td>
               </tr>` : ''}
-              <tr style="background:#ECECEC; border-top:1px solid #9CA3AF; border-bottom:1px solid #9CA3AF;">
-                <td style="padding:7.5px 8px; font-size:13px; font-weight:800; color:#000;">Grand Total</td>
-                <td style="padding:7.5px 8px; text-align:right; font-size:13px; font-weight:800; color:#000;">Rs. ${money(b.grandTotal)}</td>
+              <tr style="background:${isCreditNote ? '#FEF2F2' : '#ECECEC'}; border-top:1px solid ${isCreditNote ? '#FCA5A5' : '#9CA3AF'}; border-bottom:1px solid ${isCreditNote ? '#FCA5A5' : '#9CA3AF'};">
+                <td style="padding:7.5px 8px; font-size:13px; font-weight:800; color:${isCreditNote ? '#991B1B' : '#000'};">${isCreditNote ? 'Total Credit / Reversal' : 'Grand Total'}</td>
+                <td style="padding:7.5px 8px; text-align:right; font-size:13px; font-weight:800; color:${isCreditNote ? '#991B1B' : '#000'};">${signedMoney(displayGrandTotal)}</td>
               </tr>
               <tr style="border-bottom:1px solid #E5E7EB;">
-                <td style="padding:6.5px 8px; font-weight:500; color:#222;">Total Paid</td>
-                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#000;">Rs. ${money(b.receipts)}</td>
+                <td style="padding:6.5px 8px; font-weight:500; color:#222;">${isCreditNote ? 'New Payment Collected' : 'Total Paid'}</td>
+                <td style="padding:6.5px 8px; text-align:right; font-weight:600; color:#000;">${signedMoney(isCreditNote ? 0 : b.receipts)}</td>
               </tr>
               <tr style="background:#ECECEC; border-top:1px solid #9CA3AF; border-bottom:1px solid #9CA3AF;">
-                <td style="padding:7.5px 8px; font-size:13px; font-weight:800; color:#000;">Balance Due</td>
+                <td style="padding:7.5px 8px; font-size:13px; font-weight:800; color:#000;">${isCreditNote ? 'Net Payable Balance' : 'Balance Due'}</td>
                 <td style="padding:7.5px 8px; text-align:right; font-size:13px; font-weight:800; color:#000;">Rs. ${money(balanceValue)}</td>
               </tr>
             </tbody>
@@ -561,7 +663,7 @@ export function renderGrcHtml(d: GrcPrintData): string {
   <table class="grc-box">
     ${office('Room No.', d.roomNo || '—', 'Room Type', d.roomType || 'Standard')}
     ${office('Room Charge', (d.roomCharge !== '' && d.roomCharge !== undefined && d.roomCharge !== null) ? (typeof d.roomCharge === 'number' || !isNaN(Number(d.roomCharge)) ? `₹${Number(d.roomCharge).toLocaleString('en-IN')}` : String(d.roomCharge)) : '—', 'Plan Name', d.planName || 'EP')}
-    ${office('Tax', d.taxMode || 'Exclude', 'Booking No.', d.bookingNo || '—')}
+    ${office('Tax', d.taxMode || '—', 'Booking No.', d.bookingNo || '—')}
     ${office('Company', d.company || 'Walk-in', 'Voucher No.', d.voucherNo || '—')}
     ${office('Guest ID', String(d.guestIdType || 'Government ID').toUpperCase(), 'ID Number', d.guestIdNumber || '—')}
   </table>

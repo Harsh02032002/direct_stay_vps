@@ -51,6 +51,7 @@ export interface CalendarBookingViewProps {
   currentRole?: string;
   loggedInUser?: string;
   autoMarkDirtyOnCheckout?: boolean;
+  allowBackDatedCheckIn?: boolean;
   setActiveTab?: (tab: string) => void;
   setFrontDeskSubTab?: (sub: string) => void;
   onUpdateBookings: (bookings: Booking[]) => void;
@@ -196,6 +197,7 @@ export default function CalendarBookingView({
   currentRole = 'Admin',
   loggedInUser = 'Front Desk',
   autoMarkDirtyOnCheckout = true,
+  allowBackDatedCheckIn = false,
   setActiveTab,
   setFrontDeskSubTab,
   onOpenAdvanceBooking,
@@ -777,8 +779,8 @@ export default function CalendarBookingView({
 
   // Open Quick Create Modal on Empty Cell Click -> routes to Unified Check-In Form
   const handleEmptyCellClick = (room: Room, dateStr: string) => {
-    if (dateStr < todayStr) {
-      showToast('Cannot create booking for past dates. Please select today or a future date.', 'warning');
+    if (!allowBackDatedCheckIn && dateStr < todayStr) {
+      showToast('Backdated bookings are disabled in Hotel Settings. Enable "Allow Back-Dated Check-In" in Administration to book past dates.', 'warning');
       return;
     }
     const blkReason = getRoomBlockOverlap(room, dateStr, addDaysStr(dateStr, 1));
@@ -810,11 +812,15 @@ export default function CalendarBookingView({
 
     const nights = Math.max(1, Number(nightsCount) || 1);
     const checkInStr = targetDateStr;
-    if (checkInStr < todayStr) {
-      showToast('Cannot create booking for past dates. Please select today or a future date.', 'warning');
+    if (!allowBackDatedCheckIn && checkInStr < todayStr) {
+      showToast('Backdated bookings are disabled in Hotel Settings. Enable "Allow Back-Dated Check-In" to select past dates.', 'warning');
       return;
     }
     const checkOutStr = addDaysStr(checkInStr, nights);
+    if (checkOutStr <= checkInStr) {
+      showToast('Check-out date must be after check-in date.', 'warning');
+      return;
+    }
 
     if (!isUnallocatedCreate) {
       if (!targetRoomNumber) {
@@ -1037,8 +1043,8 @@ export default function CalendarBookingView({
       )
     );
     const newCheckInDate = targetDateStr;
-    if (newCheckInDate < todayStr) {
-      showToast('Cannot move bookings to past dates.', 'warning');
+    if (!allowBackDatedCheckIn && newCheckInDate < todayStr) {
+      showToast('Cannot move bookings to past dates while Back-Dated Check-In is disabled.', 'warning');
       return;
     }
     const newCheckOutDate = addDaysStr(newCheckInDate, nights);
@@ -2096,20 +2102,27 @@ export default function CalendarBookingView({
                                   const blkToday = isRoomBlockedOnNight(room, md.iso);
                                   const isHoverTarget = dragHoverKey === cellKey;
                                   const isPastDate = md.iso < todayStr;
+                                  const isPastDateBlocked = isPastDate && !allowBackDatedCheckIn;
 
                                   return (
                                     <td
                                       key={cellKey}
-                                      onDragOver={isPastDate ? undefined : (e) => handleDragOverCell(e, cellKey)}
-                                      onDrop={isPastDate ? undefined : (e) => handleDropOnCell(e, room, md.iso)}
+                                      onDragOver={isPastDateBlocked ? undefined : (e) => handleDragOverCell(e, cellKey)}
+                                      onDrop={isPastDateBlocked ? undefined : (e) => handleDropOnCell(e, room, md.iso)}
                                       onClick={() => {
-                                        if (isPastDate) {
-                                          showToast('Cannot create booking for past dates. Please select today or a future date.', 'warning');
+                                        if (isPastDateBlocked) {
+                                          showToast('Backdated bookings are disabled in Hotel Settings. Enable "Allow Back-Dated Check-In" to book past dates.', 'warning');
                                           return;
                                         }
                                         handleEmptyCellClick(room, md.iso);
                                       }}
-                                      title={isPastDate ? `${formatHumanDate(md.iso)} (Past Date — Booking Closed)` : undefined}
+                                      title={
+                                        isPastDateBlocked
+                                          ? `${formatHumanDate(md.iso)} (Past Date — Booking Closed)`
+                                          : isPastDate
+                                          ? `${formatHumanDate(md.iso)} (Backdated Booking Enabled)`
+                                          : undefined
+                                      }
                                       className={`relative h-11 w-[56px] min-w-[56px] max-w-[56px] p-0 border-r border-slate-100 transition-colors ${
                                         isHoverTarget
                                           ? 'bg-emerald-100/80 ring-2 ring-inset ring-emerald-500'
@@ -2117,8 +2130,10 @@ export default function CalendarBookingView({
                                           ? 'bg-amber-50/45 border-x border-x-[#C49A3A]/40'
                                           : blkToday
                                           ? 'bg-rose-50/50'
-                                          : isPastDate
+                                          : isPastDateBlocked
                                           ? 'bg-slate-100/40 text-slate-400 cursor-not-allowed select-none'
+                                          : isPastDate
+                                          ? 'bg-amber-50/25 hover:bg-emerald-50/40 cursor-pointer'
                                           : md.isWeekend
                                           ? 'bg-[#FBF8F1]/40 hover:bg-emerald-50/40 cursor-pointer'
                                           : 'hover:bg-emerald-50/40 cursor-pointer'
@@ -2470,13 +2485,13 @@ export default function CalendarBookingView({
                             </button>
                           </>
                         ) : !blk ? (
-                          selectedDateIso >= todayStr ? (
+                          allowBackDatedCheckIn || selectedDateIso >= todayStr ? (
                             <button
                               type="button"
                               onClick={() => handleEmptyCellClick(room, selectedDateIso)}
                               className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer"
                             >
-                              + Book Room {room.number}
+                              + {selectedDateIso < todayStr ? 'Backdated Book' : 'Book'} Room {room.number}
                             </button>
                           ) : (
                             <div className="w-full py-1.5 px-2 rounded-xl bg-slate-100 text-slate-400 font-semibold text-xs text-center select-none">
@@ -3476,12 +3491,12 @@ export default function CalendarBookingView({
                     <input
                       type="date"
                       required
-                      min={todayStr}
+                      min={allowBackDatedCheckIn ? undefined : todayStr}
                       value={targetDateStr}
                       onChange={(e) => {
                         const val = e.target.value;
-                        if (val < todayStr) {
-                          showToast('Check-in date cannot be in the past.', 'warning');
+                        if (!allowBackDatedCheckIn && val < todayStr) {
+                          showToast('Backdated bookings are disabled in Hotel Settings.', 'warning');
                           setTargetDateStr(todayStr);
                           return;
                         }

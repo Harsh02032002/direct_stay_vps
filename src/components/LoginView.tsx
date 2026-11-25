@@ -5,11 +5,13 @@ import {
   Crown, ArrowRight, Building, CheckCircle2, AlertCircle, HelpCircle, ArrowLeft,
   Phone, Mail, MessageSquare, Clock, AlertTriangle, CreditCard
 } from 'lucide-react';
-import { UserRole } from '../types';
+import { SaaSPackage, SystemWebsiteConfig, UserRole } from '../types';
 import { getPmsData, savePmsData } from '../utils/dummyData';
 import { isBackendServerActive, waitForPendingSyncs, recoverPasswordApi } from '../utils/supabaseClient';
 import { sha256 } from '../utils/crypto';
 import { showToast } from '../utils/toast';
+import MembershipRenewalCheckout from './MembershipRenewalCheckout';
+import WhatsAppSupportWidget, { DEFAULT_WHATSAPP_NUMBER } from './WhatsAppSupportWidget';
 
 export type LoginPortalMode = 'general' | 'superadmin' | 'admin' | 'hotelowner';
 
@@ -21,6 +23,8 @@ interface LoginViewProps {
   activeSessionInfo?: { role: UserRole; username: string } | null;
   onReturnToActiveSession?: () => void;
   onOnboardHotel?: () => void;
+  packages?: SaaSPackage[];
+  systemWebsite?: SystemWebsiteConfig;
 }
 
 
@@ -32,8 +36,12 @@ export default function LoginView({
   activeSessionInfo,
   onReturnToActiveSession,
   onOnboardHotel,
+  packages: propPackages,
+  systemWebsite: propSystemWebsite,
 }: LoginViewProps) {
-  const { systemWebsite } = getPmsData();
+  const pmsDataCache = getPmsData();
+  const systemWebsite = propSystemWebsite || pmsDataCache.systemWebsite;
+  const effectivePackages = propPackages && propPackages.length > 0 ? propPackages : pmsDataCache.packages;
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -442,14 +450,25 @@ export default function LoginView({
                 : srvRole;
             if (data.staff && portalMode !== 'hotelowner') {
               sessionStorage.setItem('pms_staff_username', data.staff.username || data.staff.name || '');
+              const staffRoleStr = String(data.staff.role || '').trim();
               const dept = data.staff.department;
-              if (data.staff.role === 'Owner' || data.staff.designation === 'Owner') finalRole = 'Owner';
-              else if (dept === 'Admin') finalRole = 'Admin';
-              else if (dept === 'Housekeeping') finalRole = 'Housekeeping';
-              else if (dept === 'Reception') finalRole = 'Reception';
-              else if (dept === 'Accounts') finalRole = 'Accounts';
-              else if (dept === 'Manager') finalRole = 'Manager';
-              else finalRole = 'Reception';
+              if (staffRoleStr) {
+                finalRole = staffRoleStr as UserRole;
+              } else if (data.staff.designation === 'Owner') {
+                finalRole = 'Owner';
+              } else if (dept === 'Admin') {
+                finalRole = 'Admin';
+              } else if (dept === 'Housekeeping') {
+                finalRole = 'Housekeeping';
+              } else if (dept === 'Reception') {
+                finalRole = 'Reception';
+              } else if (dept === 'Accounts') {
+                finalRole = 'Accounts';
+              } else if (dept === 'Manager') {
+                finalRole = 'Manager';
+              } else {
+                finalRole = 'Reception';
+              }
             } else {
               sessionStorage.removeItem('pms_staff_username');
             }
@@ -862,135 +881,42 @@ export default function LoginView({
             )}
 
             {showRenewForm && (
-              <div className="bg-black/60 border border-luxury-gold-500/40 rounded-2xl p-5 text-left space-y-4">
-                <div className="flex items-center justify-between border-b border-[#8C7355]/20 pb-2">
-                  <span className="text-xs font-serif font-bold text-luxury-gold-300 flex items-center gap-1.5">
-                    <Crown className="w-4 h-4 text-luxury-gold-400" />
-                    Select Renewal Package & Submit Payment Details
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowRenewForm(false)}
-                    className="text-xs text-luxury-brown-300 hover:text-white cursor-pointer"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  {[
-                    { plan: 'Monthly' as const, name: 'Monthly Pro Package', price: 1899, days: '30 Days' },
-                    { plan: 'HalfYearly' as const, name: '6-Month Growth Package', price: 7999, days: '180 Days' },
-                    { plan: 'Yearly' as const, name: '1-Year Enterprise Package', price: 14000, days: '365 Days' },
-                  ].map((opt) => {
-                    const active = renewPlanKey === opt.plan;
-                    return (
-                      <button
-                        key={opt.plan}
-                        type="button"
-                        onClick={() => {
-                          setRenewPlanKey(opt.plan);
-                          setRenewPackageName(opt.name);
-                          setRenewAmount(opt.price);
-                        }}
-                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                          active
-                            ? 'border-luxury-gold-400 bg-luxury-gold-500/20 text-white'
-                            : 'border-[#8C7355]/30 bg-white/5 text-[#e2d5c5]/80 hover:bg-white/10'
-                        }`}
-                      >
-                        <span className="text-[10px] font-mono uppercase text-luxury-gold-400 block">{opt.days}</span>
-                        <span className="font-serif font-bold text-xs block mt-0.5">{opt.name}</span>
-                        <span className="font-mono font-bold text-sm text-emerald-300 block mt-1">
-                          ₹{opt.price.toLocaleString('en-IN')}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <label className="text-[10px] font-mono uppercase text-luxury-brown-300 block mb-1">
-                      Payment Mode
-                    </label>
-                    <select
-                      value={renewPaymentMethod}
-                      onChange={(e) => setRenewPaymentMethod(e.target.value)}
-                      className="w-full bg-[#1C140E] border border-[#8C7355]/40 rounded-xl px-3 py-2 text-white text-xs"
-                    >
-                      <option value="UPI">UPI (GPay / PhonePe / Paytm)</option>
-                      <option value="Bank Transfer">Bank Transfer (NEFT / IMPS / RTGS)</option>
-                      <option value="Cash">Cash Paid to Super Admin</option>
-                      <option value="Card / Online">Card / Online Gateway</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-mono uppercase text-luxury-brown-300 block mb-1">
-                      UTR / Transaction Ref (Optional)
-                    </label>
-                    <input
-                      type="text"
-                      value={renewTxnRef}
-                      onChange={(e) => setRenewTxnRef(e.target.value)}
-                      placeholder="e.g. UTR412890123 / Paid"
-                      className="w-full bg-[#1C140E] border border-[#8C7355]/40 rounded-xl px-3 py-2 text-white text-xs font-mono"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={renewSubmitting}
-                  onClick={async () => {
-                    setRenewSubmitting(true);
-                    try {
-                      const res = await fetch('/api/hotels/renewal-request', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          hotelId: blockedHotel.id,
-                          requestedPackageName: renewPackageName,
-                          requestedPlan: renewPlanKey,
-                          requestedAmount: renewAmount,
-                          paymentMethod: renewPaymentMethod,
-                          transactionReference: renewTxnRef.trim(),
-                          requestedBy: username || blockedHotel.username || 'Hotel Admin',
-                        }),
-                      });
-                      const data = await res.json();
-                      if (data?.success && data.renewalRequest) {
-                        setBlockedHotel({ ...blockedHotel, renewalRequest: data.renewalRequest });
-                        setShowRenewForm(false);
-                        showToast(
-                          'Renewal request sent to Super Admin! Once Super Admin approves payment, your membership and invoice will be generated.',
-                          'success'
-                        );
-                      } else {
-                        showToast(data?.error || 'Could not send renewal request.', 'error');
-                      }
-                    } catch {
-                      showToast('Network error submitting renewal request.', 'error');
-                    } finally {
-                      setRenewSubmitting(false);
-                    }
-                  }}
-                  className="w-full py-3 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{renewSubmitting ? 'Sending Request to Super Admin...' : `Submit Renewal Request (₹${renewAmount.toLocaleString('en-IN')}) to Super Admin`}</span>
-                </button>
-              </div>
+              <MembershipRenewalCheckout
+                hotel={blockedHotel}
+                packages={effectivePackages}
+                systemWebsite={systemWebsite}
+                requestedBy={username || blockedHotel.username || 'Hotel Admin'}
+                onClose={() => setShowRenewForm(false)}
+                onSubmitted={(reqObj) => {
+                  setBlockedHotel({ ...blockedHotel, renewalRequest: reqObj });
+                  setShowRenewForm(false);
+                }}
+              />
             )}
+
+            <div className="bg-emerald-500/10 border border-emerald-400/25 rounded-2xl p-3 text-left text-[11px] text-emerald-200/90 flex items-center justify-between gap-2">
+              <span>
+                🔒 All your hotel rooms, bookings, invoices & guest data remain safely preserved.
+              </span>
+              <WhatsAppSupportWidget
+                variant="inline-button"
+                phone={systemWebsite?.whatsappNumber || systemWebsite?.supportPhone || DEFAULT_WHATSAPP_NUMBER}
+                context="renewal"
+                hotelName={blockedHotel.name}
+                packageName={blockedHotel.subscriptionPlan || 'Expired License'}
+                label="WhatsApp Help"
+                className="shrink-0 py-1.5 px-3 text-[11px]"
+              />
+            </div>
 
             <div className="flex flex-col sm:flex-row gap-3 pt-2">
               <button
                 id="renew-membership-btn"
-                onClick={() => setShowRenewForm((prev) => !prev)}
+                onClick={() => setShowRenewForm(true)}
                 className="flex-1 py-3 px-5 bg-gradient-to-r from-luxury-gold-500 to-[#8C7355] text-luxury-brown-950 font-serif font-bold text-xs rounded-xl shadow-md hover:opacity-90 transition-opacity flex items-center justify-center gap-2 cursor-pointer"
               >
                 <CreditCard className="w-4 h-4" />
-                {blockedHotel.renewalRequest?.status === 'Pending' ? 'Update Renewal Request' : 'Renew Membership'}
+                {blockedHotel.renewalRequest?.status === 'Pending' ? 'View / Update Renewal Checkout' : 'Renew Now (UPI / QR Checkout)'}
               </button>
               
               <button

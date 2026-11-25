@@ -13,7 +13,7 @@ import {
 import { stayNights } from './folioCollector';
 import { openPrintWindow } from './printDocument';
 import { defaultGrcTerms, InvoicePrintData, renderGrcHtml, renderInvoiceHtml } from './printTemplates';
-import { allocateGrcNumber, hotelToPrintHotel, toGrcPrintData } from './stayBilling';
+import { hotelToPrintHotel, resolveConsistentInvoiceTotals, toGrcPrintData } from './stayBilling';
 import { showToast } from './toast';
 
 function sanitizePdfText(input: unknown): string {
@@ -212,29 +212,38 @@ function buildBillResultFromInvoice(
   hotelSettings?: Partial<HotelSettings> | null,
   checkinRecord?: GuestCheckIn | null
 ): BillResult {
-  const extractedPayments = extractInvoicePaymentItems(invoice, checkinRecord);
+  const isCreditNoteInv = Boolean(
+    (invoice as any).isCreditNote === true ||
+      String(invoice.invoiceType || '').toLowerCase().trim() === 'credit note' ||
+      String(invoice.invoiceNumber || '').toUpperCase().startsWith('CN/')
+  );
+  const extractedPayments = isCreditNoteInv ? [] : extractInvoicePaymentItems(invoice, checkinRecord);
   const isNoGst =
     invoice.isWithoutGst === true ||
     (invoice.gstRate !== undefined && Number(invoice.gstRate) <= 0) ||
-    (invoice.gstRate === undefined && Number(invoice.gst || 0) <= 0);
+    (invoice.gstRate === undefined && Math.abs(Number(invoice.gst || 0)) <= 0);
 
   if (
     invoice.billEngine === 'v2' &&
     Array.isArray(invoice.ledgerLines) &&
     invoice.ledgerLines.length > 0
   ) {
-    const subtotal = r2(Number(invoice.subtotal || 0));
-    const discount = r2(Number(invoice.discount || 0));
-    const taxableAmount = r2(
-      Number(invoice.taxableAmount ?? Math.max(0, subtotal - discount))
-    );
-    const cgst = r2(Number(invoice.cgst || 0));
-    const sgst = r2(Number(invoice.sgst || 0));
-    const totalTax = r2(Number(invoice.gst ?? (invoice as any).taxAmount ?? cgst + sgst));
-    const grandTotal = r2(Number(invoice.finalAmount ?? invoice.totalAmount ?? taxableAmount + totalTax));
-    const receipts = r2(Number(invoice.paidAmount ?? invoice.advancePaid ?? 0));
-    const balance = r2(Number(invoice.pendingAmount ?? Math.max(0, grandTotal - receipts)));
-    const refundDue = r2(Number(invoice.refundDue ?? Math.max(0, receipts - grandTotal)));
+    const resolved = resolveConsistentInvoiceTotals(invoice);
+    const {
+      subtotal,
+      discount,
+      netSubtotal,
+      taxableAmount,
+      cgst,
+      sgst,
+      totalTax,
+      grandTotal,
+      receipts,
+      balance,
+      refundDue,
+      paymentStatus: resolvedPayStatus,
+      headlineGstRate,
+    } = resolved;
     const legacy = {
       roomCharges: r2(Number(invoice.roomCharges || 0)),
       extraBedCharges: r2(Number(invoice.extraBedCharges || 0)),
@@ -266,25 +275,15 @@ function buildBillResultFromInvoice(
                 date: l.dateLabel || invoice.dateCreated || '',
               };
             });
-    const resolvedPayStatus: 'Paid' | 'Partially Paid' | 'Unpaid' =
-      invoice.paymentStatus === 'Paid' ||
-      invoice.paymentStatus === 'Partially Paid' ||
-      invoice.paymentStatus === 'Unpaid'
-        ? invoice.paymentStatus
-        : grandTotal > 0 && balance <= 0
-        ? 'Paid'
-        : receipts > 0
-        ? 'Partially Paid'
-        : 'Unpaid';
     return {
       lines: typedLines,
       chargeLines: typedLines.filter((l) => l.type === 'charge'),
       taxRows: Array.isArray(invoice.taxRows)
         ? invoice.taxRows
-        : totalTax > 0
+        : Math.abs(totalTax) > 0
         ? [
             {
-              rate: Number(invoice.gstRate || 5),
+              rate: headlineGstRate || Number(invoice.gstRate || 5),
               taxable: taxableAmount,
               cgst,
               sgst,
@@ -309,6 +308,7 @@ function buildBillResultFromInvoice(
       paymentsByMode: summarizePaymentsByMode(fallbackItems),
       subtotal,
       discount,
+      netSubtotal,
       taxableAmount,
       cgst,
       sgst,
@@ -318,8 +318,8 @@ function buildBillResultFromInvoice(
       balance,
       refundDue,
       paymentStatus: resolvedPayStatus,
-      isGstInvoice: !isNoGst,
-      headlineGstRate: isNoGst ? 0 : Number(invoice.gstRate || 5),
+      isGstInvoice: !resolved.isNoGst,
+      headlineGstRate: resolved.isNoGst ? 0 : headlineGstRate,
       amountInWords: invoice.amountInWords || amountToIndianWords(grandTotal),
       legacy,
     };
@@ -589,6 +589,29 @@ export function invoiceRecordToPrintHtml(
       Number(bookingRecord?.children || 0) ||
     1;
 
+  const isCreditNoteDoc = Boolean(
+    (invoice as any).isCreditNote === true ||
+      String(invoice.invoiceType || '').toLowerCase().trim() === 'credit note' ||
+      String(invoice.invoiceNumber || '').toUpperCase().startsWith('CN/')
+  );
+  const originalInvNum =
+    String((invoice as any).originalInvoiceNumber || '').trim() ||
+    (isCreditNoteDoc && String(invoice.invoiceNumber || '').toUpperCase().startsWith('CN/')
+      ? String(invoice.invoiceNumber).slice(3)
+      : '');
+  const reversedPayList = isCreditNoteDoc
+    ? (Array.isArray((invoice as any).reversedPayments)
+        ? (invoice as any).reversedPayments
+        : []
+      ).map((p: any) => ({
+        date: String(p.date || p.dateTime || invoice.dateCreated || '').slice(0, 10),
+        method: String(p.paymentMethod || p.method || 'Cash'),
+        reference: p.referenceNo || p.reference || undefined,
+        amount: Math.abs(Number(p.amount || 0)),
+        note: p.notes || p.note || undefined,
+      }))
+    : undefined;
+
   const printData: InvoicePrintData = {
     hotel: hotelToPrintHotel(hotelSettings),
     invoiceNumber: String(invoice.invoiceNumber || invoice.id || ''),
@@ -674,7 +697,13 @@ export function invoiceRecordToPrintHtml(
     stayHours: (invoice as any).stayHours || checkinRecord?.stayHours || (bookingRecord as any)?.stayHours,
     bill,
     footerNote: invoice.notes || undefined,
-    documentTitle: docTitle,
+    documentTitle: isCreditNoteDoc ? 'CREDIT NOTE / CHECKOUT REVERSAL' : docTitle,
+    isCreditNote: isCreditNoteDoc,
+    isSuperseded: Boolean(!isCreditNoteDoc && (invoice.isSuperseded === true || invoice.invoiceStatus === 'Superseded')),
+    supersededByInvoiceNumber: (invoice as any).supersededByInvoiceNumber || undefined,
+    originalInvoiceNumber: originalInvNum || undefined,
+    creditNoteReason: isCreditNoteDoc ? (invoice.notes || undefined) : undefined,
+    reversedPayments: reversedPayList,
   };
 
   return renderInvoiceHtml(printData);
@@ -697,8 +726,7 @@ export function buildGuestGrcHtml(params: {
   const existingReg = String(
     (params.checkin as any)?.grcNumber || (params.booking as any)?.grcNumber || ''
   ).trim();
-  const regNo =
-    existingReg || allocateGrcNumber(params.existingGrcNumbers || [], settings);
+  const regNo = existingReg || 'PENDING (Assigned by Server)';
   const rawTerms = Array.isArray((params.hotelSettings as any)?.grcTerms)
     ? ((params.hotelSettings as any).grcTerms as string[]).filter(
         (t) => String(t || '').trim().length > 0

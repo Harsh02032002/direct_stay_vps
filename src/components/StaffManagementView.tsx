@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Staff, Department, StaffStatus, RolePermission, CheckInRecord, Booking, Room, Invoice } from '../types';
+import { Staff, Department, StaffStatus, RolePermission, CheckInRecord, Booking, Room, Invoice, StaffLeaveRequest } from '../types';
 import { sha256 } from '../utils/crypto';
 import { showToast } from '../utils/toast';
 import { 
@@ -12,17 +12,21 @@ import StaffAttendanceView from './hrm/StaffAttendanceView';
 import StaffRosterView from './hrm/StaffRosterView';
 import StaffLeavesView from './hrm/StaffLeavesView';
 import AllUsersView from './hrm/AllUsersView';
-import RolePermissionsView from './hrm/RolePermissionsView';
+import RolePermissionsView, { deriveAllowedSidebarTabsFromRolePerm } from './hrm/RolePermissionsView';
 
 interface StaffManagementViewProps {
   staff: Staff[];
   currentRole: string;
+  loggedInUser?: string;
+  hotelId?: string;
   rolePermissions: RolePermission[];
+  leaveRequests?: StaffLeaveRequest[];
   hotelName?: string;
   activeSubTab?: string;
   onSelectSubTab?: (subTab: string) => void;
   onUpdateStaff: (updated: Staff[]) => void;
   onUpdateRolePermissions: (updated: RolePermission[]) => void;
+  onUpdateLeaveRequests?: (updated: StaffLeaveRequest[]) => void;
   onUpdateAuditLogs?: (action: string, details: string) => void;
   checkins?: CheckInRecord[];
   bookings?: Booking[];
@@ -87,12 +91,16 @@ export function getDefaultModulesForRole(roleName: string): string[] {
 export default function StaffManagementView({
   staff,
   currentRole,
+  loggedInUser = '',
+  hotelId = 'hotel-1',
   rolePermissions,
+  leaveRequests = [],
   hotelName = 'Grand Pavilion Hotel',
   activeSubTab = 'directory',
   onSelectSubTab,
   onUpdateStaff,
   onUpdateRolePermissions,
+  onUpdateLeaveRequests,
   onUpdateAuditLogs,
   checkins = [],
   bookings = [],
@@ -120,12 +128,21 @@ export default function StaffManagementView({
   };
   
   // New Staff Local Form States
+  const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const [isAddingStaff, setIsAddingStaff] = useState(false);
+  const [employeeIdInput, setEmployeeIdInput] = useState('');
   const [name, setName] = useState('');
+  const [emailInput, setEmailInput] = useState('');
   const [mobile, setMobile] = useState('');
   const [address, setAddress] = useState('');
   const [department, setDepartment] = useState<Department>('Reception');
   const [designation, setDesignation] = useState('');
+  const [joiningDateInput, setJoiningDateInput] = useState(() => new Date().toISOString().substring(0, 10));
+  const [employmentStatus, setEmploymentStatus] = useState<StaffStatus>('Active');
+  const [shiftStartTime, setShiftStartTime] = useState('09:00');
+  const [shiftEndTime, setShiftEndTime] = useState('18:00');
+  const [workingHours, setWorkingHours] = useState<number>(9);
+  const [workingDays, setWorkingDays] = useState<string[]>(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
   const [salaryInput, setSalaryInput] = useState<number>(15000);
   const [selectedRole, setSelectedRole] = useState('Receptionist');
   const [allowedModules, setAllowedModules] = useState<string[]>(() => getDefaultModulesForRole('Receptionist'));
@@ -134,6 +151,15 @@ export default function StaffManagementView({
   const [showFormPassword, setShowFormPassword] = useState(true);
   const [revealedCardPasswords, setRevealedCardPasswords] = useState<Record<string, boolean>>({});
   const [credentialModalStaff, setCredentialModalStaff] = useState<Staff | null>(null);
+
+  const calcHoursFromShift = (start: string, end: string): number => {
+    const [sh, sm] = String(start || '09:00').split(':').map(Number);
+    const [eh, em] = String(end || '18:00').split(':').map(Number);
+    if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return 8;
+    let diffMins = (eh * 60 + em) - (sh * 60 + sm);
+    if (diffMins <= 0) diffMins += 24 * 60; // overnight shift support
+    return Math.round((diffMins / 60) * 10) / 10;
+  };
 
   // Edit Local Selected State
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
@@ -172,11 +198,19 @@ export default function StaffManagementView({
 
   const handleOpenEditStaff = (member: Staff) => {
     setEditingStaffId(member.id);
+    setEmployeeIdInput(member.employeeId || '');
     setName(member.name);
+    setEmailInput(member.email || '');
     setMobile(member.mobile);
     setAddress(member.address || '');
     setDepartment(member.department);
     setDesignation(member.designation);
+    setJoiningDateInput(member.joiningDate || member.joinDate || new Date().toISOString().substring(0, 10));
+    setEmploymentStatus(member.status || 'Active');
+    setShiftStartTime(member.shiftStartTime || '09:00');
+    setShiftEndTime(member.shiftEndTime || '18:00');
+    setWorkingHours(member.workingHours ?? calcHoursFromShift(member.shiftStartTime || '09:00', member.shiftEndTime || '18:00'));
+    setWorkingDays(Array.isArray(member.workingDays) && member.workingDays.length > 0 ? member.workingDays : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
     setSalaryInput(Number(member.salary ?? 15000) || 0);
     const roleVal = member.role || 'Receptionist';
     setSelectedRole(roleVal);
@@ -265,6 +299,12 @@ export default function StaffManagementView({
       return;
     }
 
+    const computedHours = Number(workingHours) > 0 ? Number(workingHours) : calcHoursFromShift(shiftStartTime, shiftEndTime);
+    const daysSummary = workingDays.length > 0 ? workingDays.join(', ') : 'Mon-Sat';
+    const shiftTimingLabel = `${shiftStartTime} – ${shiftEndTime} (${computedHours}h) • ${daysSummary}`;
+    const resolvedEmpId = employeeIdInput.trim() || `EMP-${String(staff.length + 101)}`;
+    const matchedRoleObj = rolePermissions.find((rp) => rp.roleName === selectedRole);
+
     let savedMember: Staff | null = null;
 
     if (editingStaffId) {
@@ -273,13 +313,24 @@ export default function StaffManagementView({
           const nextPlain = password.trim() ? password.trim() : (s.plainPassword || '');
           const updatedStaffObj: Staff = {
             ...s,
+            employeeId: employeeIdInput.trim() || s.employeeId || resolvedEmpId,
             name: name.trim(),
+            email: emailInput.trim(),
             mobile: mobile.trim(),
             address: address.trim(),
             department,
             designation: designation.trim(),
+            joiningDate: joiningDateInput || s.joiningDate,
+            joinDate: joiningDateInput || s.joiningDate,
+            status: employmentStatus,
+            shiftStartTime,
+            shiftEndTime,
+            workingHours: computedHours,
+            workingDays: workingDays.length > 0 ? workingDays : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+            shiftTiming: shiftTimingLabel,
             salary: Math.max(0, Number(salaryInput) || 0),
             role: selectedRole,
+            roleId: matchedRoleObj?.id,
             allowedModules,
             username: username.trim(),
             password: password.trim() ? sha256(password.trim()) : s.password,
@@ -292,14 +343,17 @@ export default function StaffManagementView({
       });
       onUpdateStaff(updated);
       if (onUpdateAuditLogs) {
-        onUpdateAuditLogs('Staff Updated', `Updated personnel record for ${name.trim()} (${selectedRole}) with ${allowedModules.length} module(s).`);
+        onUpdateAuditLogs('Staff Updated', `Updated personnel record for ${name.trim()} (${selectedRole}, Timing: ${shiftStartTime}–${shiftEndTime}, ${computedHours}h) with ${allowedModules.length} module(s).`);
       }
       triggerSuccess(`Updated personnel profile for ${name.trim()}.`);
     } else {
       const rawPass = password.trim() || 'password123';
       const newStaff: Staff = {
         id: `STF-${Date.now()}`,
+        hotelId,
+        employeeId: resolvedEmpId,
         name: name.trim(),
+        email: emailInput.trim(),
         mobile: mobile.trim(),
         address: address.trim(),
         department,
@@ -307,12 +361,19 @@ export default function StaffManagementView({
         salary: Math.max(0, Number(salaryInput) || 0),
         salaryStatus: 'Pending',
         role: selectedRole,
+        roleId: matchedRoleObj?.id,
         allowedModules,
         username: username.trim(),
         password: sha256(rawPass),
         plainPassword: rawPass,
-        status: 'Active',
-        joiningDate: new Date().toISOString().substring(0, 10),
+        status: employmentStatus || 'Active',
+        joiningDate: joiningDateInput || new Date().toISOString().substring(0, 10),
+        joinDate: joiningDateInput || new Date().toISOString().substring(0, 10),
+        shiftStartTime,
+        shiftEndTime,
+        workingHours: computedHours,
+        workingDays: workingDays.length > 0 ? workingDays : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        shiftTiming: shiftTimingLabel,
         checkInsCount: 0,
         checkOutsCount: 0,
         roomsCleanedCount: 0,
@@ -484,9 +545,9 @@ export default function StaffManagementView({
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-3">
           <div>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-luxury-gold-500/10 text-luxury-gold-700 border border-luxury-gold-500/20 text-[10px] font-mono uppercase tracking-wider font-bold mb-1.5">
-              {['allUsers', 'roles'].includes(internalSubTab) ? (
+              {internalSubTab === 'allUsers' ? (
                 <>
-                  <ShieldCheck className="w-3.5 h-3.5 text-luxury-gold-600" /> Administration Central
+                  <ShieldCheck className="w-3.5 h-3.5 text-luxury-gold-600" /> Administration • Users
                 </>
               ) : (
                 <>
@@ -495,14 +556,14 @@ export default function StaffManagementView({
               )}
             </div>
             <h1 className="text-2xl font-serif text-luxury-brown-950 font-bold tracking-wide flex items-center gap-2">
-              {['allUsers', 'roles'].includes(internalSubTab)
-                ? 'System Administration & User Governance'
+              {internalSubTab === 'allUsers'
+                ? 'System Users Directory'
                 : 'Hotel Human Resources & Personnel Hub'}
             </h1>
             <p className="text-xs text-luxury-brown-500 mt-0.5">
-              {['allUsers', 'roles'].includes(internalSubTab)
-                ? 'Centralized access control, employee credentials, RBAC module rights, and guest customer accounts.'
-                : 'Employee directory, biometric shift clock-ins, monthly salary payouts, weekly duty rosters, and leave approvals.'}
+              {internalSubTab === 'allUsers'
+                ? 'View registered user accounts, contact details, and account statuses.'
+                : 'Staff onboarding & work timings, attendance, payroll, shift rosters, leave approvals, and Staff Roles & RBAC.'}
             </p>
           </div>
 
@@ -513,35 +574,8 @@ export default function StaffManagementView({
         </div>
 
         {/* Sub-Tabs Pill Navigation Bar */}
+        {internalSubTab !== 'allUsers' && (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-2 border-t border-luxury-brown-50 scrollbar-thin">
-          {['allUsers', 'roles'].includes(internalSubTab) ? (
-            <>
-              <button
-                type="button"
-                onClick={() => handleSubTabChange('allUsers')}
-                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                  internalSubTab === 'allUsers'
-                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
-                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5 text-luxury-gold-500" />
-                <span>Users Directory (Staff + Guests)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSubTabChange('roles')}
-                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                  internalSubTab === 'roles'
-                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
-                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-luxury-gold-500" />
-                <span>User Roles &amp; RBAC Matrix</span>
-              </button>
-            </>
-          ) : (
             <>
               <button
                 type="button"
@@ -554,6 +588,18 @@ export default function StaffManagementView({
               >
                 <Users className="w-3.5 h-3.5 text-luxury-gold-500" />
                 <span>Staff Directory &amp; Onboarding</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSubTabChange('roles')}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  internalSubTab === 'roles'
+                    ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-sm'
+                    : 'bg-luxury-beige-50/70 hover:bg-luxury-beige-100 text-luxury-brown-700 border border-luxury-brown-100'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-luxury-gold-500" />
+                <span>Staff Roles &amp; RBAC</span>
               </button>
               <button
                 type="button"
@@ -604,8 +650,8 @@ export default function StaffManagementView({
                 <span>Leave Management</span>
               </button>
             </>
-          )}
         </div>
+        )}
       </div>
 
       {successMsg && (
@@ -634,31 +680,34 @@ export default function StaffManagementView({
       {internalSubTab === 'leaves' && (
         <StaffLeavesView
           staff={staff}
+          leaveRequests={leaveRequests}
+          onUpdateLeaveRequests={onUpdateLeaveRequests}
+          currentRole={currentRole}
+          loggedInUser={loggedInUser}
+          hotelId={hotelId}
           hotelName={hotelName}
+          rolePermissions={rolePermissions}
           onAddAuditLog={onUpdateAuditLogs}
         />
       )}
 
-      {/* --- ADMINISTRATION SUB-VIEWS --- */}
+      {/* --- ALL USERS DIRECTORY (Staff + Guest Customers + Bookings — without Add Staff) --- */}
       {internalSubTab === 'allUsers' && (
         <AllUsersView
           staff={staff}
           checkins={checkins}
           bookings={bookings}
           hotelName={hotelName}
-          onOpenAddStaff={() => {
-            setIsAddingStaff(true);
-            setEditingStaffId(null);
-          }}
           onOpenEditStaff={handleOpenEditStaff}
           onSendWhatsAppCredentials={handleSendWhatsAppCredentials}
-          onAddAuditLog={onUpdateAuditLogs}
         />
       )}
 
+      {/* --- HRM STAFF ROLES & MODULE RBAC --- */}
       {internalSubTab === 'roles' && (
         <RolePermissionsView
           rolePermissions={rolePermissions}
+          staff={staff}
           onUpdateRolePermissions={onUpdateRolePermissions}
           onAddAuditLog={onUpdateAuditLogs}
         />
@@ -741,6 +790,24 @@ export default function StaffManagementView({
                   />
                 </div>
                 <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-luxury-brown-600 block uppercase">Employee ID</label>
+                  <input
+                    type="text"
+                    placeholder={`e.g. EMP-${staff.length + 101}`}
+                    value={employeeIdInput} onChange={(e) => setEmployeeIdInput(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-lg bg-white text-luxury-brown-950 font-mono text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-luxury-brown-600 block uppercase">Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="e.g. ram@hotel.com"
+                    value={emailInput} onChange={(e) => setEmailInput(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-lg bg-white text-luxury-brown-950 font-sans text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
                   <label className="text-[10px] font-bold text-luxury-brown-600 block uppercase">Mobile Number *</label>
                   <input
                     type="text" required
@@ -748,6 +815,26 @@ export default function StaffManagementView({
                     value={mobile} onChange={(e) => setMobile(e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg bg-white text-luxury-brown-950 font-sans text-sm"
                   />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-luxury-brown-600 block uppercase">Joining Date *</label>
+                  <input
+                    type="date" required
+                    value={joiningDateInput} onChange={(e) => setJoiningDateInput(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-lg bg-white text-luxury-brown-950 font-mono text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-luxury-brown-600 block uppercase">Employment Status *</label>
+                  <select
+                    value={employmentStatus} onChange={(e) => setEmploymentStatus(e.target.value as StaffStatus)}
+                    className="w-full px-3 py-2 border rounded-lg bg-white text-luxury-brown-950 text-sm font-semibold"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                    <option value="On Leave">On Leave</option>
+                    <option value="Suspended">Suspended</option>
+                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-luxury-brown-600 block uppercase">Department *</label>
@@ -771,8 +858,14 @@ export default function StaffManagementView({
                     value={selectedRole} onChange={(e) => {
                       const rName = e.target.value;
                       setSelectedRole(rName);
+                      const rp = rolePermissions.find((item) => item.roleName === rName);
                       if (!editingStaffId) {
-                        setAllowedModules(getDefaultModulesForRole(rName));
+                        const roleTabs = rp ? deriveAllowedSidebarTabsFromRolePerm(rp) : [];
+                        setAllowedModules(
+                          roleTabs.length > 0
+                            ? roleTabs.filter((id) => PMS_MODULES_CATALOG.some((m) => m.id === id))
+                            : getDefaultModulesForRole(rName)
+                        );
                       }
                       // Auto department selection helper based on role templates
                       if (rName === 'Manager') setDepartment('Manager');
@@ -810,6 +903,86 @@ export default function StaffManagementView({
                     onChange={(e) => setSalaryInput(Math.max(0, parseInt(e.target.value, 10) || 0))}
                     className="w-full px-3 py-2 border rounded-lg bg-white text-luxury-brown-950 font-mono font-bold text-sm"
                   />
+                </div>
+
+                {/* WORK TIMING & SHIFT SCHEDULE */}
+                <div className="col-span-1 md:col-span-2 bg-amber-50/50 border border-amber-200/80 rounded-xl p-3.5 space-y-3">
+                  <div className="flex items-center justify-between border-b border-amber-200/60 pb-2">
+                    <span className="text-xs font-serif font-bold text-luxury-brown-950 flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-luxury-gold-600" /> Work Timing &amp; Weekly Duty Schedule
+                    </span>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-white border border-amber-300 text-amber-900">
+                      {shiftStartTime} – {shiftEndTime} ({workingHours} hrs/day)
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-luxury-brown-700 block uppercase">Shift Start Time *</label>
+                      <input
+                        type="time"
+                        required
+                        value={shiftStartTime}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setShiftStartTime(next);
+                          setWorkingHours(calcHoursFromShift(next, shiftEndTime));
+                        }}
+                        className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg bg-white text-luxury-brown-950 font-mono text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-luxury-brown-700 block uppercase">Shift End Time *</label>
+                      <input
+                        type="time"
+                        required
+                        value={shiftEndTime}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setShiftEndTime(next);
+                          setWorkingHours(calcHoursFromShift(shiftStartTime, next));
+                        }}
+                        className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg bg-white text-luxury-brown-950 font-mono text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-luxury-brown-700 block uppercase">Working Hours / Day</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={24}
+                        step={0.5}
+                        value={workingHours}
+                        onChange={(e) => setWorkingHours(Math.max(1, Math.min(24, Number(e.target.value) || 8)))}
+                        className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg bg-white text-luxury-brown-950 font-mono font-bold text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-luxury-brown-700 block uppercase">Working Days</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {WEEK_DAYS.map((day) => {
+                        const selected = workingDays.includes(day);
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            onClick={() =>
+                              setWorkingDays((prev) =>
+                                prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+                              )
+                            }
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                              selected
+                                ? 'bg-luxury-brown-950 text-luxury-gold-400 border-luxury-brown-950'
+                                : 'bg-white text-luxury-brown-600 border-luxury-brown-200 hover:bg-luxury-beige-50'
+                            }`}
+                          >
+                            {day}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
                 <div className="col-span-2 bg-luxury-beige-50/70 border border-luxury-gold-500/30 rounded-xl p-3.5 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-luxury-brown-200/60 pb-2">

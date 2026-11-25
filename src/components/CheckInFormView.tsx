@@ -4,7 +4,7 @@ import {
   Contact, Printer, Check, Receipt, RefreshCw, FileCheck, Users, 
   Sparkles, DollarSign, Plus, Trash2, Landmark, Send, Download, 
   ClipboardList, Settings, Sliders, Hotel, Calendar, UserCheck, Inbox, ShieldCheck,
-  Globe, Building, FileSpreadsheet, ShieldAlert, FileText, Layers, Eye, Search, Filter, Clock, PenTool, X, ChevronDown, ChevronUp, BedDouble, AlertCircle, GlassWater, Minus
+  Globe, Building, FileSpreadsheet, ShieldAlert, FileText, Layers, Eye, Search, Filter, Clock, PenTool, X, ChevronDown, ChevronUp, BedDouble, AlertCircle, GlassWater, Minus, ArrowLeft, Edit3
 } from 'lucide-react';
 import { showToast } from '../utils/toast';
 import QuickDateInput from './QuickDateInput';
@@ -17,7 +17,7 @@ import {
   normalizeBillSettings,
 } from '../utils/billCalculator';
 import { calculateCheckInExtraCharges } from '../utils/checkInExtraCharges';
-import { allocateGrcNumber, toGrcPrintData } from '../utils/stayBilling';
+import { requestAtomicGrcNumber, toGrcPrintData } from '../utils/stayBilling';
 import { collectStayCharges } from '../utils/folioCollector';
 import { defaultGrcTerms, renderGrcHtml } from '../utils/printTemplates';
 import { openPrintWindow } from '../utils/printDocument';
@@ -50,6 +50,10 @@ interface CheckInFormViewProps {
   onUpdateInventoryMovements?: (movements: InventoryStockMovement[]) => void;
   travelAgents?: TravelAgent[];
   onUpdateTravelAgents?: (agents: TravelAgent[]) => void;
+  initialEditCheckIn?: GuestCheckIn | null;
+  initialViewOnly?: boolean;
+  onClearInitialEditCheckIn?: () => void;
+  onBackToInHouse?: () => void;
 }
 
 const getIstNowParts = () => {
@@ -181,6 +185,10 @@ export default function CheckInFormView({
   inventoryStockMovements = [],
   onUpdateInventoryMovements,
   travelAgents = [],
+  initialEditCheckIn = null,
+  initialViewOnly = false,
+  onClearInitialEditCheckIn,
+  onBackToInHouse,
 }: CheckInFormViewProps) {
   const allowBackDatedCheckIn = Boolean(hotelSettings?.allowBackDatedCheckIn);
 
@@ -586,7 +594,17 @@ export default function CheckInFormView({
   const [customAddonQty, setCustomAddonQty] = useState<number>(1);
   const [customAddonRate, setCustomAddonRate] = useState<number>(0);
   const [customAddonNotes, setCustomAddonNotes] = useState<string>('');
-  const [customExtraRows, setCustomExtraRows] = useState<Array<{ id: string; label: string; qty: number | ''; rate: number | '' }>>([]);
+  const [customExtraRows, setCustomExtraRows] = useState<
+    Array<{
+      id: string;
+      label: string;
+      qty: number | '';
+      rate: number | '';
+      sourceExtraId?: string;
+      sourceCategory?: ExtraCharge['category'];
+      sourceDateTime?: string;
+    }>
+  >([]);
   const [stayHours, setStayHours] = useState<number | ''>('');
   const [servicePriceMap, setServicePriceMap] = useState<Record<string, number | ''>>({});
   const [extraPersonRateOverride, setExtraPersonRateOverride] = useState<number | ''>('');
@@ -604,12 +622,33 @@ export default function CheckInFormView({
   const [gstInvoiceCategory, setGstInvoiceCategory] = useState<'B2C' | 'B2B'>('B2C');
   const [isHybridCheckInPay, setIsHybridCheckInPay] = useState<boolean>(false);
   const [checkInSplitRows, setCheckInSplitRows] = useState<
-    Array<{ id: string; method: PaymentMethod; amount: number | ''; ref: string }>
+    Array<{
+      id: string;
+      method: PaymentMethod;
+      amount: number | '';
+      ref: string;
+      reference?: string;
+      sourcePaymentId?: string;
+      sourceDate?: string;
+      sourceDateTime?: string;
+      sourcePaymentType?: PaymentRecord['paymentType'];
+      sourceNotes?: string;
+    }>
   >([
     { id: 'ci-sp-1', method: 'Cash', amount: '', ref: '' },
     { id: 'ci-sp-2', method: 'UPI', amount: '', ref: '' },
   ]);
   const [singlePaymentRef, setSinglePaymentRef] = useState<string>('');
+  const [isViewOnly, setIsViewOnly] = useState<boolean>(Boolean(initialViewOnly));
+  const [loadedExtraChargeIds, setLoadedExtraChargeIds] = useState<string[]>([]);
+  const [loadedPaymentIds, setLoadedPaymentIds] = useState<string[]>([]);
+  const [loadedSinglePaymentMeta, setLoadedSinglePaymentMeta] = useState<{
+    id?: string;
+    date?: string;
+    dateTime?: string;
+    paymentType?: PaymentRecord['paymentType'];
+    notes?: string;
+  } | null>(null);
   const [confirmGuestChecked, setConfirmGuestChecked] = useState<boolean>(true);
   const [confirmRoomChecked, setConfirmRoomChecked] = useState<boolean>(true);
 
@@ -1476,7 +1515,8 @@ export default function CheckInFormView({
   );
 
   const earlyCheckInInfo = calculateEarlyCheckIn(arrivalTime, hotelSettings);
-  const effectiveEarlyCheckInCharge = (earlyCheckInInfo.isEarly && applyEarlyCheckInCharge)
+  const hasSavedEarlyCheckIn = Boolean(editingCheckIn && Number(editingCheckIn.earlyCheckInCharge) > 0);
+  const effectiveEarlyCheckInCharge = ((earlyCheckInInfo.isEarly || hasSavedEarlyCheckIn) && applyEarlyCheckInCharge)
     ? (earlyCheckInCustomRate !== '' ? Math.max(0, Number(earlyCheckInCustomRate)) : earlyCheckInInfo.chargeAmount)
     : 0;
   const earlyCheckInCharge = effectiveEarlyCheckInCharge;
@@ -1516,6 +1556,7 @@ export default function CheckInFormView({
       rooms,
       settings: billSettings,
     });
+    const loadedExtraIdSet = new Set(loadedExtraChargeIds);
     const seenKeys = new Set<string>();
     return collected.charges.filter(ch => {
       if (
@@ -1524,7 +1565,8 @@ export default function CheckInFormView({
         ch.kind === 'extra_person' ||
         ch.kind === 'early_checkin' ||
         String(ch.id || '').startsWith('ALLOC-CHK-') ||
-        String(ch.id || '').startsWith('AUX-CHK-')
+        String(ch.id || '').startsWith('AUX-CHK-') ||
+        loadedExtraIdSet.has(String(ch.id || ''))
       ) {
         return false;
       }
@@ -1533,7 +1575,7 @@ export default function CheckInFormView({
       if (dedupKey) seenKeys.add(dedupKey);
       return true;
     });
-  }, [selectedBooking, editingCheckIn, posOrders, waterBottles, rooms, billSettings]);
+  }, [selectedBooking, editingCheckIn, posOrders, waterBottles, rooms, billSettings, loadedExtraChargeIds]);
 
   const existingStayFolioSubtotal =
     Math.round(
@@ -2405,8 +2447,9 @@ export default function CheckInFormView({
     setCheckedInBy('Raghu Sir (Owner)');
   };
 
-  const handleEditCheckIn = (c: GuestCheckIn) => {
+  const handleEditCheckIn = (c: GuestCheckIn, viewOnlyMode = false) => {
     setEditingCheckIn(c);
+    setIsViewOnly(Boolean(viewOnlyMode));
     setSelectedBooking(null);
     setCheckInMode(c.isGroupCheckIn ? 'group' : 'single');
     setGuestName(c.guestName || '');
@@ -2452,37 +2495,129 @@ export default function CheckInFormView({
     setSettlementReason('');
     setCheckInDate(c.checkInDate || getTodayDateStr());
     setCheckOutDate(c.checkOutDate || getTomorrowDateStr());
+    setArrivalTime(c.arrivalTime || getCurrentTimeStr());
+    setDepartureTime(c.departureTime || '11:00 AM');
+    const savedEarlyFee = Math.max(0, Number(c.earlyCheckInCharge) || 0);
+    setApplyEarlyCheckInCharge(savedEarlyFee > 0);
+    setEarlyCheckInCustomRate(savedEarlyFee > 0 ? savedEarlyFee : '');
     setAdults(c.adults ?? Math.max(1, (c.numGuests || 2) - (c.secondaryGuests?.length || 0)));
     setChildren(c.children ?? 0);
-    setAdvanceAmount(c.advanceAmount || 0);
-    const existingDeskSplits = (c.payments || []).filter(
-      (p) =>
+
+    // Load editable custom extra charges (non-water, non-POS, non-service-catalog) without double-counting
+    const editableCustomExtras = (c.extraCharges || []).filter(ec => {
+      if (!ec || Number(ec.amount) <= 0) return false;
+      const idStr = String(ec.id || '');
+      const catLower = String(ec.category || '').toLowerCase();
+      const srcType = String((ec as any).sourceType || '').toLowerCase();
+      if (
+        idStr.startsWith('ALLOC-CHK-') ||
+        idStr.startsWith('AUX-CHK-') ||
+        idStr.startsWith('ADDON-CHK-') ||
+        idStr.startsWith('EC-WB-') ||
+        srcType === 'water_bottle' ||
+        srcType === 'pos_order' ||
+        srcType === 'guest_service' ||
+        catLower.includes('water') ||
+        catLower === 'food'
+      ) {
+        return false;
+      }
+      return true;
+    });
+    setLoadedExtraChargeIds(editableCustomExtras.map(ec => String(ec.id || '')).filter(Boolean));
+    setCustomExtraRows(
+      editableCustomExtras.map((ec, idx) => {
+        const rawDesc = String(ec.description || ec.category || 'Extra Charge').trim();
+        const qtyMatch = rawDesc.match(/^(.*?)\s*[×x]\s*(\d+)\s*$/i);
+        const parsedLabel = qtyMatch ? qtyMatch[1].trim() : rawDesc;
+        const parsedQty = qtyMatch ? Math.max(1, parseInt(qtyMatch[2], 10) || 1) : 1;
+        const parsedAmount = Math.max(0, Number(ec.amount) || 0);
+        const parsedRate = parsedQty > 1 ? Math.round((parsedAmount / parsedQty) * 100) / 100 : parsedAmount;
+        return {
+          id: String(ec.id || `edit-cx-${idx + 1}`),
+          label: parsedLabel,
+          qty: parsedQty,
+          rate: parsedRate,
+          sourceExtraId: String(ec.id || ''),
+          sourceCategory: ec.category,
+          sourceDateTime: ec.dateTime,
+        };
+      })
+    );
+    setCustomAddonLabel('');
+    setCustomAddonQty(1);
+    setCustomAddonRate(0);
+    setCustomAddonNotes('');
+    setOtherCharges(0);
+
+    // Prefill ALL existing positive payments (Advance Deposit + Partial Payment) cleanly with zero duplication
+    const linkedBookingForPayments = bookings.find(b => b.id === c.id);
+    const rawStayPayments: any[] =
+      Array.isArray(c.payments) && c.payments.length > 0
+        ? c.payments
+        : Array.isArray((linkedBookingForPayments as any)?.payments)
+        ? (linkedBookingForPayments as any).payments
+        : [];
+    const existingPositivePayments = rawStayPayments.filter(
+      p =>
         p &&
         Number(p.amount) > 0 &&
-        p.paymentType !== 'Advance Deposit' &&
-        !String(p.id || '').endsWith('-adv') &&
-        !String(p.id || '').includes(`PAY-${c.id}-adv`)
+        !String(p.notes || '').toLowerCase().includes('marked as due')
     );
-    if (existingDeskSplits.length >= 2) {
+    if (existingPositivePayments.length >= 2) {
+      setAdvanceAmount(0);
+      setLoadedPaymentIds(existingPositivePayments.map(p => String(p.id || '')).filter(Boolean));
+      setLoadedSinglePaymentMeta(null);
       setIsHybridCheckInPay(true);
       setCheckInSplitRows(
-        existingDeskSplits.map((p, idx) => ({
+        existingPositivePayments.map((p, idx) => ({
           id: `chk-split-edit-${idx + 1}`,
-          method: ((p as any).method || p.paymentMethod || 'Cash') as any,
+          method: ((p as any).method || p.paymentMethod || 'Cash') as PaymentMethod,
           amount: Number(p.amount) || 0,
+          ref: (p as any).referenceId || p.referenceNo || '',
           reference: (p as any).referenceId || p.referenceNo || '',
+          sourcePaymentId: String(p.id || ''),
+          sourceDate: String((p as any).date || p.dateTime || '').slice(0, 10) || undefined,
+          sourceDateTime: p.dateTime,
+          sourcePaymentType: p.paymentType,
+          sourceNotes: p.notes,
         }))
       );
-      setPaidAmount(existingDeskSplits.reduce((s, p) => s + (Number(p.amount) || 0), 0));
-    } else {
+      setPaidAmount(existingPositivePayments.reduce((s, p) => s + (Number(p.amount) || 0), 0));
+      setPaymentMethod(((existingPositivePayments[0] as any).method || existingPositivePayments[0].paymentMethod || 'Cash') as any);
+      setSinglePaymentRef('');
+    } else if (existingPositivePayments.length === 1) {
+      const singlePay = existingPositivePayments[0];
+      setAdvanceAmount(0);
+      setLoadedPaymentIds([String(singlePay.id || '')].filter(Boolean));
+      setLoadedSinglePaymentMeta({
+        id: String(singlePay.id || ''),
+        date: String((singlePay as any).date || singlePay.dateTime || '').slice(0, 10) || undefined,
+        dateTime: singlePay.dateTime,
+        paymentType: singlePay.paymentType,
+        notes: singlePay.notes,
+      });
       setIsHybridCheckInPay(false);
       setCheckInSplitRows([
-        { id: 'chk-split-1', method: 'Cash', amount: 0, reference: '' },
-        { id: 'chk-split-2', method: 'UPI', amount: 0, reference: '' },
+        { id: 'chk-split-1', method: 'Cash', amount: 0, ref: '' },
+        { id: 'chk-split-2', method: 'UPI', amount: 0, ref: '' },
       ]);
-      setPaidAmount((c.cashAmountPaid || 0) + (c.onlineAmountPaid || 0));
+      setPaidAmount(Number(singlePay.amount) || 0);
+      setPaymentMethod(((singlePay as any).method || singlePay.paymentMethod || 'Cash') as any);
+      setSinglePaymentRef((singlePay as any).referenceId || singlePay.referenceNo || '');
+    } else {
+      setAdvanceAmount(Number(c.advanceAmount) || 0);
+      setLoadedPaymentIds([]);
+      setLoadedSinglePaymentMeta(null);
+      setIsHybridCheckInPay(false);
+      setCheckInSplitRows([
+        { id: 'chk-split-1', method: 'Cash', amount: 0, ref: '' },
+        { id: 'chk-split-2', method: 'UPI', amount: 0, ref: '' },
+      ]);
+      setPaidAmount((Number(c.cashAmountPaid) || 0) + (Number(c.onlineAmountPaid) || 0));
+      setPaymentMethod((c.paymentMethod as any) || (c.onlineAmountPaid && !c.cashAmountPaid ? 'UPI' : 'Cash'));
+      setSinglePaymentRef('');
     }
-    setPaymentMethod((c.paymentMethod as any) || (c.onlineAmountPaid && !c.cashAmountPaid ? 'UPI' : 'Cash'));
     setWizardStep(1);
     const existingStayInv = (invoices || []).find(
       inv => !inv.isSeparateInvoice && (inv.bookingId === c.id || inv.checkInId === c.id)
@@ -2540,11 +2675,41 @@ export default function CheckInFormView({
       );
     }
     setActiveSubTab('form');
-    showToast(`Editing Walk-In / Stay Record #${c.id} (${c.guestName}, Room ${c.roomNumber}).`, 'info');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    showToast(
+      viewOnlyMode
+        ? `Viewing Stay Details #${c.id} (${c.guestName}, Room ${c.roomNumber}) — Read-Only.`
+        : `Editing Stay Record #${c.id} (${c.guestName}, Room ${c.roomNumber}).`,
+      'info'
+    );
   };
+
+  // Auto-load guest stay when navigated here from In-House Roster (View or Edit button)
+  const lastAppliedInitialEditKeyRef = React.useRef<string>('');
+  useEffect(() => {
+    if (!initialEditCheckIn) {
+      lastAppliedInitialEditKeyRef.current = '';
+      return;
+    }
+    const key = `${initialEditCheckIn.id}:${initialViewOnly ? 'view' : 'edit'}`;
+    if (lastAppliedInitialEditKeyRef.current === key) return;
+    lastAppliedInitialEditKeyRef.current = key;
+    handleEditCheckIn(initialEditCheckIn, Boolean(initialViewOnly));
+  }, [initialEditCheckIn, initialViewOnly]);
 
   const handleCancelEditCheckIn = () => {
     setEditingCheckIn(null);
+    setIsViewOnly(false);
+    setLoadedExtraChargeIds([]);
+    setLoadedPaymentIds([]);
+    setLoadedSinglePaymentMeta(null);
+    setCustomExtraRows([]);
+    setApplyEarlyCheckInCharge(false);
+    setEarlyCheckInCustomRate('');
+    setSinglePaymentRef('');
+    onClearInitialEditCheckIn?.();
     setGuestName('');
     setMobile('');
     setEmailAddress('');
@@ -2578,8 +2743,8 @@ export default function CheckInFormView({
     setSettlementReason('');
     setIsHybridCheckInPay(false);
     setCheckInSplitRows([
-      { id: 'chk-split-1', method: 'Cash', amount: 0, reference: '' },
-      { id: 'chk-split-2', method: 'UPI', amount: 0, reference: '' },
+      { id: 'chk-split-1', method: 'Cash', amount: 0, ref: '' },
+      { id: 'chk-split-2', method: 'UPI', amount: 0, ref: '' },
     ]);
     setWizardStep(1);
     setHasExtraBed(false);
@@ -3038,8 +3203,9 @@ export default function CheckInFormView({
 
   const handleSaveCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isViewOnly) return;
     // If new booking has a future arrival date, save as Confirmed Advance Booking (never occupy room early!)
-    if (isFutureAdvanceArrival && effectiveMode !== 'walkin') {
+    if (!editingCheckIn && isFutureAdvanceArrival && effectiveMode !== 'walkin') {
       await handleCreateReservationAction('Confirmed', 'Advance Booking Confirmed');
       return;
     }
@@ -3273,9 +3439,11 @@ export default function CheckInFormView({
         address: ''
       }));
 
+    const loadedPaymentIdSet = new Set(loadedPaymentIds);
     const preservedInStayPayments: PaymentRecord[] = (editingCheckIn?.payments || []).filter(
       p =>
         p &&
+        !loadedPaymentIdSet.has(String(p.id || '')) &&
         !String(p.id || '').endsWith('-adv') &&
         !String(p.id || '').includes(`PAY-${resolvedCheckInId}-adv`) &&
         !String(p.id || '').includes(`PAY-${resolvedCheckInId}-checkin`)
@@ -3323,29 +3491,36 @@ export default function CheckInFormView({
     const payDateLocal = paymentDate || getTodayDateStr();
     if (isHybridCheckInPay && activeCheckInSplits.length > 0) {
       activeCheckInSplits.forEach((sp, idx) => {
+        const spDate = sp.sourceDate || payDateLocal;
+        const spRef = (sp.ref || sp.reference || '').trim();
         initialPayments.push({
-          id: `PAY-${resolvedCheckInId}-checkin-sp-${idx + 1}`,
+          id: sp.sourcePaymentId || `PAY-${resolvedCheckInId}-checkin-sp-${idx + 1}`,
           amount: Number(sp.amount) || 0,
           paymentMethod: sp.method as any,
-          paymentType: 'Partial Payment',
-          dateTime: `${payDateLocal}T12:00:00`,
-          date: payDateLocal,
-          notes: `Check-in Hybrid Payment (${sp.method}${(sp.ref || (sp as any).reference || '').trim() ? ` • Ref: ${(sp.ref || (sp as any).reference || '').trim()}` : ''})`,
+          paymentType: sp.sourcePaymentType || 'Partial Payment',
+          dateTime: sp.sourceDateTime || `${spDate}T12:00:00`,
+          date: spDate,
+          referenceNo: spRef || undefined,
+          notes:
+            sp.sourceNotes ||
+            `Check-in Hybrid Payment (${sp.method}${spRef ? ` • Ref: ${spRef}` : ''})`,
         });
       });
     } else if (effectiveDeskReceivedNow > 0) {
+      const singleDate = (editingCheckIn && loadedSinglePaymentMeta?.date) || payDateLocal;
       initialPayments.push({
-        id: `PAY-${resolvedCheckInId}-checkin`,
+        id: (editingCheckIn && loadedSinglePaymentMeta?.id) || `PAY-${resolvedCheckInId}-checkin`,
         amount: effectiveDeskReceivedNow,
         paymentMethod: paymentMethod as any,
-        paymentType: 'Partial Payment',
-        dateTime: `${payDateLocal}T12:00:00`,
-        date: payDateLocal,
+        paymentType: (editingCheckIn && loadedSinglePaymentMeta?.paymentType) || 'Partial Payment',
+        dateTime: (editingCheckIn && loadedSinglePaymentMeta?.dateTime) || `${singleDate}T12:00:00`,
+        date: singleDate,
+        referenceNo: singlePaymentRef.trim() || undefined,
         notes:
           paymentNotes.trim() ||
           (singlePaymentRef.trim()
             ? `Check-in payment received (Ref: ${singlePaymentRef.trim()})`
-            : 'Check-in payment received at desk'),
+            : (editingCheckIn && loadedSinglePaymentMeta?.notes) || 'Check-in payment received at desk'),
       });
     }
     initialPayments.push(...preservedInStayPayments);
@@ -3410,8 +3585,9 @@ export default function CheckInFormView({
     const nowIsoSrv = new Date().toISOString();
     const isFormService = (id?: string) => String(id || '').startsWith('ALLOC-CHK-');
     const isFormAux = (id?: string) => String(id || '').startsWith('AUX-CHK-') || String(id || '').startsWith('ADDON-CHK-');
+    const loadedExtraIdSetForSave = new Set(loadedExtraChargeIds);
     const preservedExtraCharges: ExtraCharge[] = (editingCheckIn?.extraCharges || []).filter(
-      ec => !isFormService(ec.id) && !isFormAux(ec.id)
+      ec => !isFormService(ec.id) && !isFormAux(ec.id) && !loadedExtraIdSetForSave.has(String(ec.id || ''))
     );
     // Carry forward any pre-arrival folio / POS charges stored on selectedBooking.otherServices so they stay on the live GuestCheckIn folio
     const bookingOtherServicesList: any[] = Array.isArray((effectiveBooking as any)?.otherServices)
@@ -3480,15 +3656,19 @@ export default function CheckInFormView({
         dateTime: nowIsoSrv,
       });
     }
-    customExtraRowCharges.forEach(c => {
-      stayServiceExtraCharges.push({
-        id: `${c.id}-${resolvedCheckInId}`,
-        category: 'Other' as const,
-        description: c.description,
-        amount: c.amount,
-        dateTime: nowIsoSrv,
+    customExtraRows
+      .filter(r => String(r.label || '').trim() && (Number(r.qty) || 0) > 0 && (Number(r.rate) || 0) > 0)
+      .forEach(r => {
+        const qty = Math.max(1, Number(r.qty) || 1);
+        const amt = Math.round(qty * (Number(r.rate) || 0) * 100) / 100;
+        stayServiceExtraCharges.push({
+          id: r.sourceExtraId || `ci-cx-${r.id}-${resolvedCheckInId}`,
+          category: r.sourceCategory || ('Other' as const),
+          description: `${String(r.label).trim()} × ${qty}`,
+          amount: amt,
+          dateTime: r.sourceDateTime || nowIsoSrv,
+        });
       });
-    });
     if (otherCharges > 0) {
       stayServiceExtraCharges.push({
         id: `AUX-CHK-${resolvedCheckInId}`,
@@ -3548,13 +3728,17 @@ export default function CheckInFormView({
     const resolvedWalkInSource: BookingSource =
       selectedAgentId && walkInBookingSource === 'Walk-in' ? 'Travel Agent' : walkInBookingSource;
 
-    const existingGrcNums = [
-      ...checkins.map(c => (c as any).grcNumber as string | undefined),
-      ...bookings.map(b => (b as any).grcNumber as string | undefined),
-    ];
+    const persistedGrcNo = String(
+      (editingCheckIn as any)?.grcNumber || (effectiveBooking as any)?.grcNumber || ''
+    ).trim();
     const allocatedGrcNo =
-      String((editingCheckIn as any)?.grcNumber || (effectiveBooking as any)?.grcNumber || '').trim() ||
-      allocateGrcNumber(existingGrcNums, billSettings);
+      persistedGrcNo ||
+      (await requestAtomicGrcNumber({
+        existingGrc: persistedGrcNo,
+        checkinId: resolvedCheckInId,
+        bookingId: effectiveBooking?.id || resolvedCheckInId,
+        settings: billSettings,
+      }));
 
     const newCheckIn: GuestCheckIn = {
       ...(editingCheckIn || {}),
@@ -3612,8 +3796,8 @@ export default function CheckInFormView({
       isBackDated: checkInDate < getTodayDateStr() || (checkInDate === getTodayDateStr() && to24hTime(arrivalTime, getIstNowParts().hhmm) < getIstNowParts().hhmm),
       actualLoggedAt: new Date().toISOString(),
       stayHours: checkInDate === checkOutDate ? (Number(stayHours) || computedStayHours || 3) : undefined,
-      isEarlyCheckIn: earlyCheckInInfo.isEarly,
-      earlyCheckInHours: earlyCheckInInfo.earlyHours,
+      isEarlyCheckIn: earlyCheckInInfo.isEarly || (hasSavedEarlyCheckIn && applyEarlyCheckInCharge),
+      earlyCheckInHours: earlyCheckInInfo.earlyHours || editingCheckIn?.earlyCheckInHours || 0,
       earlyCheckInCharge: earlyCheckInCharge,
       numGuests: checkInMode === 'single' ? Math.max(totalOccupants, 1 + finalSecondaryGuests.length) : groupTotalGuests,
       roomNumber: checkInMode === 'group' ? groupRooms.map(gr => gr.roomNumber).join(', ') : primaryRoom,
@@ -3920,7 +4104,13 @@ export default function CheckInFormView({
       parentInvoiceId: mustCreateSeparateInvAtCheckIn ? existingPrimaryInvForStay?.id : undefined,
     });
 
-    if (evalResult.invoice && onUpdateInvoices) {
+    const existingPrimaryIsFinalized = Boolean(
+      existingPrimaryInvForStay &&
+        (existingPrimaryInvForStay.isFinalInvoice === true ||
+          existingPrimaryInvForStay.invoiceStatus === 'Finalized')
+    );
+
+    if (evalResult.invoice && onUpdateInvoices && (!existingPrimaryIsFinalized || mustCreateSeparateInvAtCheckIn)) {
       const invToSave: Invoice = {
         ...evalResult.invoice,
         hotelId: activeHotelId,
@@ -4097,6 +4287,15 @@ export default function CheckInFormView({
     setSelectedBooking(null);
     setActiveSessionBookingId(null);
     setEditingCheckIn(null);
+    setIsViewOnly(false);
+    setLoadedExtraChargeIds([]);
+    setLoadedPaymentIds([]);
+    setLoadedSinglePaymentMeta(null);
+    setCustomExtraRows([]);
+    setApplyEarlyCheckInCharge(false);
+    setEarlyCheckInCustomRate('');
+    setSinglePaymentRef('');
+    onClearInitialEditCheckIn?.();
     setChargeableWaterBottles(0);
     setComplimentaryWaterBottles(Math.min(2, Math.max(0, availableWaterStock - totalRequestedWaterBottles)));
     setShowQuickAddWaterStock(false);
@@ -4204,7 +4403,7 @@ export default function CheckInFormView({
     setWalkInIdSeed(Number(String(Date.now()).slice(-6)));
   };
 
-  const handlePrintOfficialGrc = (targetCheckIn?: GuestCheckIn | null) => {
+  const handlePrintOfficialGrc = async (targetCheckIn?: GuestCheckIn | null) => {
     const docTarget = targetCheckIn || activePrintDocument;
     if (!docTarget) return;
     const liveDoc = checkins.find(c => c.id === docTarget.id) || docTarget;
@@ -4214,13 +4413,16 @@ export default function CheckInFormView({
           b.id === liveDoc.id ||
           ((liveDoc as any).bookingId && b.id === (liveDoc as any).bookingId)
       ) || null;
-    const existingGrcNums = [
-      ...checkins.map(c => (c as any).grcNumber as string | undefined),
-      ...bookings.map(b => (b as any).grcNumber as string | undefined),
-    ];
+    const persistedRegNo = String((liveDoc as any).grcNumber || (matchedBk as any)?.grcNumber || '').trim();
     const regNo =
-      String((liveDoc as any).grcNumber || (matchedBk as any)?.grcNumber || '').trim() ||
-      allocateGrcNumber(existingGrcNums, billSettings);
+      persistedRegNo ||
+      (await requestAtomicGrcNumber({
+        existingGrc: persistedRegNo,
+        checkinId: liveDoc.id,
+        bookingId: matchedBk?.id || (liveDoc as any).bookingId || liveDoc.id,
+        settings: billSettings,
+      })) ||
+      'PENDING (Assigned by Server)';
     const rmObj = rooms.find(r => r.number === liveDoc.roomNumber);
     const rawTerms = Array.isArray(hotelSettings?.grcTerms)
       ? hotelSettings.grcTerms.filter(t => String(t || '').trim().length > 0)
@@ -5038,7 +5240,14 @@ export default function CheckInFormView({
                           Room {c.roomNumber}
                         </span>
                         <div className="text-left">
-                          <div className="text-xs font-bold text-[#263449] leading-tight">{c.guestName}</div>
+                          <div className="text-xs font-bold text-[#263449] leading-tight flex items-center gap-1.5 flex-wrap">
+                            <span>{c.guestName}</span>
+                            {c.grcNumber && (
+                              <span className="px-1.5 py-0.5 bg-amber-50 border border-amber-300 text-amber-900 font-mono text-[10px] font-bold rounded">
+                                {c.grcNumber}
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[10px] font-mono text-slate-500">
                             Out: {c.checkOutDate} • ₹{(c.roomRate || 0).toLocaleString()}/night
                           </div>
@@ -5083,7 +5292,7 @@ export default function CheckInFormView({
               );
             })()}
 
-            {editingCheckIn && (
+            {editingCheckIn && !isViewOnly && (
               <div className="bg-amber-50 border-2 border-amber-400 p-4 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 animate-fade-in">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
@@ -7351,61 +7560,127 @@ export default function CheckInFormView({
                 <div className="flex flex-wrap items-center gap-2.5">
                   <h2 className="text-base sm:text-lg font-serif font-bold text-[#263449]">
                     {editingCheckIn
-                      ? `Edit Stay — #${editingCheckIn.id}`
+                      ? isViewOnly
+                        ? `View Stay Details — #${editingCheckIn.id}`
+                        : `Edit Stay — #${editingCheckIn.id}`
                       : selectedBooking
                       ? `Check-In Reservation — #${selectedBooking.id}`
                       : isFutureAdvanceArrival
                       ? 'New Advance Reservation'
                       : 'New Check-In & Reservation'}
                   </h2>
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvanceLookup(prev => !prev)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer inline-flex items-center gap-1.5 ${
-                      showAdvanceLookup || selectedBooking
-                        ? 'bg-[#FDF8ED] border-[#C49A3A] text-[#8B691E]'
-                        : 'bg-white border-[#DCE3EC] text-[#263449] hover:bg-[#F4F6F9]'
-                    }`}
-                  >
-                    <UserCheck className="w-3.5 h-3.5" />
-                    {selectedBooking
-                      ? `Loaded: ${selectedBooking.id}`
-                      : `Load Existing Booking (${eligibleReservations.length})`}
-                  </button>
+                  {editingCheckIn && isViewOnly && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] text-[#1E40AF] text-[10px] font-mono font-extrabold uppercase tracking-wide">
+                      <Eye className="w-3 h-3" /> Read-Only View
+                    </span>
+                  )}
+                  {editingCheckIn && !isViewOnly && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#FDF8ED] border border-[#C49A3A] text-[#8B691E] text-[10px] font-mono font-extrabold uppercase tracking-wide">
+                      <Edit3 className="w-3 h-3" /> Editing Stay
+                    </span>
+                  )}
+                  {!(editingCheckIn && isViewOnly) && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanceLookup(prev => !prev)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer inline-flex items-center gap-1.5 ${
+                        showAdvanceLookup || selectedBooking
+                          ? 'bg-[#FDF8ED] border-[#C49A3A] text-[#8B691E]'
+                          : 'bg-white border-[#DCE3EC] text-[#263449] hover:bg-[#F4F6F9]'
+                      }`}
+                    >
+                      <UserCheck className="w-3.5 h-3.5" />
+                      {selectedBooking
+                        ? `Loaded: ${selectedBooking.id}`
+                        : `Load Existing Booking (${eligibleReservations.length})`}
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveSubTab('folios')}
-                    className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#F4F6F9] border border-[#DCE3EC] text-xs font-bold text-[#263449] cursor-pointer"
-                  >
-                    ← Folios &amp; History
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isSubmittingAction}
-                    onClick={() => handleCreateReservationAction('Draft', 'Draft Saved')}
-                    className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#FDF8ED] border border-[#C2CDD9] text-xs font-bold text-[#263449] cursor-pointer disabled:opacity-50"
-                  >
-                    Save Draft
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmittingAction}
-                    className="px-4 py-1.5 rounded-lg bg-[#C49A3A] hover:bg-[#A8812B] text-white border border-[#A8812B] text-xs font-extrabold inline-flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
-                  >
-                    <FileCheck className="w-3.5 h-3.5" />
-                    {editingCheckIn
-                      ? 'Update Stay'
-                      : isFutureAdvanceArrival
-                      ? 'Confirm Advance Booking'
-                      : selectedBooking
-                      ? 'Complete Check-In Now'
-                      : 'Reserve & Check-In Now'}
-                  </button>
+                  {editingCheckIn && onBackToInHouse ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleCancelEditCheckIn();
+                        onBackToInHouse();
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#F4F6F9] border border-[#DCE3EC] text-xs font-bold text-[#263449] cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" /> Back to In-House Guests
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setActiveSubTab('folios')}
+                      className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#F4F6F9] border border-[#DCE3EC] text-xs font-bold text-[#263449] cursor-pointer"
+                    >
+                      ← Folios &amp; History
+                    </button>
+                  )}
+
+                  {editingCheckIn && isViewOnly ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsViewOnly(false);
+                        showToast(`Switched to Edit Mode for ${editingCheckIn.guestName} (Room ${editingCheckIn.roomNumber}).`, 'info');
+                      }}
+                      className="px-4 py-1.5 rounded-lg bg-[#C49A3A] hover:bg-[#A8812B] text-white border border-[#A8812B] text-xs font-extrabold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" /> Edit This Stay
+                    </button>
+                  ) : (
+                    <>
+                      {!editingCheckIn && (
+                        <button
+                          type="button"
+                          disabled={isSubmittingAction}
+                          onClick={() => handleCreateReservationAction('Draft', 'Draft Saved')}
+                          className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#FDF8ED] border border-[#C2CDD9] text-xs font-bold text-[#263449] cursor-pointer disabled:opacity-50"
+                        >
+                          Save Draft
+                        </button>
+                      )}
+                      {editingCheckIn && (
+                        <button
+                          type="button"
+                          onClick={() => setIsViewOnly(true)}
+                          className="px-3 py-1.5 rounded-lg bg-[#EFF6FF] hover:bg-[#DBEAFE] border border-[#BFDBFE] text-xs font-bold text-[#1E40AF] cursor-pointer inline-flex items-center gap-1.5"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> View Mode
+                        </button>
+                      )}
+                      <button
+                        type="submit"
+                        disabled={isSubmittingAction}
+                        className="px-4 py-1.5 rounded-lg bg-[#C49A3A] hover:bg-[#A8812B] text-white border border-[#A8812B] text-xs font-extrabold inline-flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+                      >
+                        <FileCheck className="w-3.5 h-3.5" />
+                        {editingCheckIn
+                          ? 'Update Stay'
+                          : isFutureAdvanceArrival
+                          ? 'Confirm Advance Booking'
+                          : selectedBooking
+                          ? 'Complete Check-In Now'
+                          : 'Reserve & Check-In Now'}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
+
+              {editingCheckIn && isViewOnly && (
+                <div className="bg-[#EFF6FF] border border-[#BFDBFE] rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[#1E3A8A] no-print">
+                  <div className="flex items-center gap-2">
+                    <Eye className="w-4 h-4 text-[#2563EB] shrink-0" />
+                    <span>
+                      <strong>Read-Only Stay View:</strong> Displaying all check-in details, room tariff, add-ons, GST, and payments for{' '}
+                      <strong>{editingCheckIn.guestName}</strong> (Room <strong>{editingCheckIn.roomNumber}</strong>). Click <strong>Edit This Stay</strong> to modify.
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* INLINE BACKEND-CONFIRMED SUCCESS BANNER */}
               {inlineBookingSuccess && (
@@ -7457,6 +7732,14 @@ export default function CheckInFormView({
               )}
 
               {/* MAIN 2-COLUMN WORKSPACE: LEFT STICKY SIDEBAR + RIGHT SINGLE-PAGE SECTIONS */}
+              <fieldset
+                disabled={isViewOnly}
+                className={`border-0 p-0 m-0 min-w-0 ${
+                  isViewOnly
+                    ? '[&_input]:bg-[#F8FAFC] [&_select]:bg-[#F8FAFC] [&_textarea]:bg-[#F8FAFC] [&_input]:text-[#1E293B] [&_select]:text-[#1E293B] [&_input]:opacity-100 [&_select]:opacity-100'
+                    : ''
+                }`}
+              >
               <div className="grid grid-cols-1 lg:grid-cols-[272px_minmax(0,1fr)] gap-5 items-start">
                 {/* ================= LEFT SIDEBAR ================= */}
                 <div className="space-y-4 lg:sticky lg:top-4 no-print bg-transparent">
@@ -7991,7 +8274,7 @@ export default function CheckInFormView({
                     )}
 
                     {/* Early Check-In Surcharge Detection & Editable Charge Toggle */}
-                    {earlyCheckInInfo.isEarly && (
+                    {(earlyCheckInInfo.isEarly || hasSavedEarlyCheckIn || applyEarlyCheckInCharge) && (
                       <div className="p-3.5 rounded-xl bg-gradient-to-r from-[#FFFDF7] via-[#FDF6E3] to-[#FAF0D7] border border-[#DFC07A] space-y-2.5 text-xs">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex items-center gap-2 text-[#263449]">
@@ -10614,6 +10897,11 @@ export default function CheckInFormView({
 
                         {/* 4 BOOKING ACTION BUTTONS */}
                         <div className="space-y-2 pt-1">
+                          {editingCheckIn && isViewOnly ? (
+                            <div className="w-full py-2.5 px-3 rounded-xl bg-[#EFF6FF] border border-[#BFDBFE] text-[#1E40AF] text-xs font-bold text-center">
+                              Read-Only View Mode — click &ldquo;Edit This Stay&rdquo; at the top to make changes
+                            </div>
+                          ) : (
                           <button
                             type="submit"
                             disabled={isSubmittingAction}
@@ -10630,6 +10918,7 @@ export default function CheckInFormView({
                               ? `Reserve & Check-In Now (${activeSessionBookingId})`
                               : 'Reserve & Check-In Now'}
                           </button>
+                          )}
 
                           {!editingCheckIn && (
                             <>
@@ -10668,6 +10957,7 @@ export default function CheckInFormView({
                   </section>
                 </div>
               </div>
+              </fieldset>
               {/* MOBILE STICKY TOTAL & ACTION BAR */}
               <div className="lg:hidden sticky bottom-0 z-20 -mx-1 px-3 py-2.5 bg-white/95 backdrop-blur border-t-2 border-[#C49A3A] rounded-t-2xl shadow-lg flex items-center justify-between gap-3 no-print">
                 <div className="font-mono leading-tight">
@@ -10677,13 +10967,23 @@ export default function CheckInFormView({
                     {balanceAmount > 0 ? `Due ₹${balanceAmount.toLocaleString('en-IN')}` : 'PAID'}
                   </span>
                 </div>
-                <button
-                  type="submit"
-                  disabled={isSubmittingAction}
-                  className="px-4 py-2 rounded-xl bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50 border border-[#C49A3A] text-xs font-extrabold cursor-pointer disabled:opacity-50"
-                >
-                  {editingCheckIn ? 'Update Stay' : isFutureAdvanceArrival ? 'Confirm Advance Booking' : 'Reserve & Check-In'}
-                </button>
+                {editingCheckIn && isViewOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsViewOnly(false)}
+                    className="px-4 py-2 rounded-xl bg-[#C49A3A] text-white border border-[#A8812B] text-xs font-extrabold cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" /> Edit This Stay
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={isSubmittingAction}
+                    className="px-4 py-2 rounded-xl bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50 border border-[#C49A3A] text-xs font-extrabold cursor-pointer disabled:opacity-50"
+                  >
+                    {editingCheckIn ? 'Update Stay' : isFutureAdvanceArrival ? 'Confirm Advance Booking' : 'Reserve & Check-In'}
+                  </button>
+                )}
               </div>
             </form>
               </>

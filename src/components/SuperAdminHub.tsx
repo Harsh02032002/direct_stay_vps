@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
-import { Hotel, Room, Booking, Invoice, UserRole, SystemWebsiteConfig, Testimonial, Staff, SaaSPackage, PackageModulePermissions, CustomPage, WebsiteHeroPillar, WebsiteFeatureCard, WebsitePricingCard, WebsiteVisionPillar, WebsiteCustomSection, WebsiteCustomSectionItem, WebsiteBlogPost, SubscriptionInvoice } from '../types';
+import { Hotel, Room, Booking, Invoice, UserRole, SystemWebsiteConfig, Testimonial, Staff, SaaSPackage, PackageModulePermissions, CustomPage, WebsiteHeroPillar, WebsiteFeatureCard, WebsitePricingCard, WebsiteVisionPillar, WebsiteCustomSection, WebsiteCustomSectionItem, WebsiteBlogPost, SubscriptionInvoice, SeoMetaConfig, SeoRedirectRule, WebsiteNavItem, SubscriptionPaymentRecord } from '../types';
 import { INITIAL_SAAS_PACKAGES, INITIAL_CUSTOM_PAGES, INITIAL_SYSTEM_WEBSITE, savePmsData } from '../utils/dummyData';
 import { sha256 } from '../utils/crypto';
 import SubscriptionInvoiceModal from './SubscriptionInvoiceModal';
+import RichTextEditor from './RichTextEditor';
+import { DEFAULT_SAAS_PACKAGES_CATALOG, computeDaysRemaining } from './MembershipRenewalCheckout';
+import { DEFAULT_WHATSAPP_NUMBER, buildDirectStayWhatsappUrl } from './WhatsAppSupportWidget';
 import { 
   Plus, Hotel as HotelIcon, Trash2, ArrowRight, ArrowLeft, TrendingUp, ShieldAlert,
   Users, Layers, DollarSign, ExternalLink, Sparkles, Building, Phone, Mail,
@@ -12,7 +15,7 @@ import {
 } from 'lucide-react';
 import { showToast } from '../utils/toast';
 import { syncAllToSupabase } from '../utils/supabaseClient';
-import { getConversionEventsLog } from '../utils/seoManager';
+import { getConversionEventsLog, runSiteSeoAudit, DIRECTSTAY_DOMAIN } from '../utils/seoManager';
 
 export interface HotelAdminUser {
   id: string;
@@ -268,11 +271,36 @@ export default function SuperAdminHub({
   const [pageSlug, setPageSlug] = useState('');
   const [pageContent, setPageContent] = useState('');
   const [pageImageUrl, setPageImageUrl] = useState('');
+  const [pageFeaturedImageAlt, setPageFeaturedImageAlt] = useState('');
   const [pageLinkUrl, setPageLinkUrl] = useState('');
   const [pageLinkText, setPageLinkText] = useState('View Link');
   const [pagePublished, setPagePublished] = useState(true);
+  const [pageStatus, setPageStatus] = useState<'draft' | 'scheduled' | 'published'>('published');
+  const [pageScheduledAt, setPageScheduledAt] = useState('');
+  const [pageCategory, setPageCategory] = useState('General');
+  const [pageTagsText, setPageTagsText] = useState('');
+  const [pageShowInHeader, setPageShowInHeader] = useState(false);
+  const [pageShowInFooter, setPageShowInFooter] = useState(false);
+  const [pageSeo, setPageSeo] = useState<SeoMetaConfig>({
+    seoTitle: '',
+    metaDescription: '',
+    canonicalUrl: '',
+    focusKeyword: '',
+    ogImage: '',
+    imageAlt: '',
+    robotsIndex: 'index',
+    robotsFollow: 'follow',
+  });
   const [viewingPage, setViewingPage] = useState<CustomPage | null>(null);
   const [pageToast, setPageToast] = useState<string | null>(null);
+
+  // SaaS Dashboard Payments Ledger & Website CMS Sub-Panels
+  const [cmsSubPanel, setCmsSubPanel] = useState<'content' | 'navigation' | 'seo' | 'payments'>('content');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<'All' | 'Pending' | 'Approved' | 'Rejected' | 'Failed'>('All');
+  const [verifyingPaymentId, setVerifyingPaymentId] = useState<string | null>(null);
+  const [newRedirectFrom, setNewRedirectFrom] = useState('');
+  const [newRedirectTo, setNewRedirectTo] = useState('');
+  const [newRedirectCode, setNewRedirectCode] = useState<301 | 302>(301);
 
   const handleOpenAddPage = () => {
     setEditingPageId(null);
@@ -280,9 +308,26 @@ export default function SuperAdminHub({
     setPageSlug('');
     setPageContent('');
     setPageImageUrl('');
+    setPageFeaturedImageAlt('');
     setPageLinkUrl('');
     setPageLinkText('View Link');
     setPagePublished(true);
+    setPageStatus('published');
+    setPageScheduledAt('');
+    setPageCategory('General');
+    setPageTagsText('');
+    setPageShowInHeader(false);
+    setPageShowInFooter(false);
+    setPageSeo({
+      seoTitle: '',
+      metaDescription: '',
+      canonicalUrl: '',
+      focusKeyword: '',
+      ogImage: '',
+      imageAlt: '',
+      robotsIndex: 'index',
+      robotsFollow: 'follow',
+    });
     setShowPageModal(true);
   };
 
@@ -291,10 +336,28 @@ export default function SuperAdminHub({
     setPageTitle(p.title);
     setPageSlug(p.slug);
     setPageContent(p.content);
-    setPageImageUrl(p.imageUrl || '');
+    setPageImageUrl(p.featuredImageUrl || p.imageUrl || '');
+    setPageFeaturedImageAlt(p.featuredImageAlt || p.seo?.imageAlt || '');
     setPageLinkUrl(p.linkUrl || '');
     setPageLinkText(p.linkText || 'View Link');
-    setPagePublished(p.published);
+    const resolvedStatus = p.status || (p.published ? 'published' : 'draft');
+    setPagePublished(resolvedStatus === 'published');
+    setPageStatus(resolvedStatus);
+    setPageScheduledAt(p.scheduledAt || '');
+    setPageCategory(p.category || 'General');
+    setPageTagsText(Array.isArray(p.tags) ? p.tags.join(', ') : '');
+    setPageShowInHeader(Boolean(p.showInHeader));
+    setPageShowInFooter(Boolean(p.showInFooter));
+    setPageSeo({
+      seoTitle: p.seo?.seoTitle || '',
+      metaDescription: p.seo?.metaDescription || '',
+      canonicalUrl: p.seo?.canonicalUrl || '',
+      focusKeyword: p.seo?.focusKeyword || '',
+      ogImage: p.seo?.ogImage || '',
+      imageAlt: p.seo?.imageAlt || p.featuredImageAlt || '',
+      robotsIndex: p.seo?.robotsIndex || 'index',
+      robotsFollow: p.seo?.robotsFollow || 'follow',
+    });
     setShowPageModal(true);
   };
 
@@ -305,37 +368,59 @@ export default function SuperAdminHub({
       return;
     }
 
-    const generatedSlug = pageSlug.trim() 
-      ? pageSlug.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') 
-      : pageTitle.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const generatedSlug = (pageSlug.trim() || pageTitle.trim())
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    const parsedTags = pageTagsText
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const isLivePublished = pageStatus === 'published';
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const pageFields: Partial<CustomPage> = {
+      title: pageTitle.trim(),
+      slug: generatedSlug,
+      content: pageContent.trim(),
+      imageUrl: pageImageUrl.trim(),
+      featuredImageUrl: pageImageUrl.trim(),
+      featuredImageAlt: pageFeaturedImageAlt.trim() || pageSeo.imageAlt?.trim() || '',
+      linkUrl: pageLinkUrl.trim(),
+      linkText: pageLinkText.trim() || 'View Link',
+      category: pageCategory.trim() || 'General',
+      tags: parsedTags,
+      status: pageStatus,
+      scheduledAt: pageStatus === 'scheduled' ? pageScheduledAt : '',
+      published: isLivePublished,
+      showInHeader: pageShowInHeader,
+      showInFooter: pageShowInFooter,
+      seo: {
+        ...pageSeo,
+        imageAlt: pageFeaturedImageAlt.trim() || pageSeo.imageAlt?.trim() || '',
+      },
+      updatedAt: todayStr,
+    };
 
     let updatedList: CustomPage[];
     if (editingPageId) {
-      updatedList = customPagesList.map(p => p.id === editingPageId ? {
-        ...p,
-        title: pageTitle.trim(),
-        slug: generatedSlug,
-        content: pageContent.trim(),
-        imageUrl: pageImageUrl.trim(),
-        linkUrl: pageLinkUrl.trim(),
-        linkText: pageLinkText.trim() || 'View Link',
-        published: pagePublished
-      } : p);
-      setPageToast(`✓ Custom page "${pageTitle}" updated successfully.`);
+      updatedList = customPagesList.map((p) =>
+        p.id === editingPageId ? { ...p, ...pageFields } : p
+      );
+      setPageToast(`✓ Custom page "${pageTitle}" updated (${pageStatus}).`);
     } else {
       const newPage: CustomPage = {
         id: `page-${Date.now()}`,
         title: pageTitle.trim(),
         slug: generatedSlug,
         content: pageContent.trim(),
-        imageUrl: pageImageUrl.trim(),
-        linkUrl: pageLinkUrl.trim(),
-        linkText: pageLinkText.trim() || 'View Link',
-        published: pagePublished,
-        createdAt: new Date().toISOString().split('T')[0]
+        published: isLivePublished,
+        createdAt: todayStr,
+        ...pageFields,
       };
       updatedList = [newPage, ...customPagesList];
-      setPageToast(`✓ New custom page "${pageTitle}" published successfully.`);
+      setPageToast(`✓ New custom page "${pageTitle}" saved (${pageStatus}).`);
     }
 
     if (onUpdateCustomPages) {
@@ -344,7 +429,7 @@ export default function SuperAdminHub({
     savePmsData({ customPages: updatedList });
     syncAllToSupabase({ customPages: updatedList }).then((res) => {
       if (res?.success) {
-        showToast('Custom page saved to database!', 'success');
+        showToast('Custom page & SEO metadata saved to database!', 'success');
       }
     }).catch(() => {});
     setShowPageModal(false);
@@ -420,26 +505,54 @@ export default function SuperAdminHub({
   const [assignPkgModal, setAssignPkgModal] = useState<SaaSPackage | null>(null);
   const [pkgToast, setPkgToast] = useState<string | null>(null);
 
+  // Extended SaaS Package Management fields
+  const [pkgFormGstRate, setPkgFormGstRate] = useState<number>(18);
+  const [pkgFormRegularPriceYearly, setPkgFormRegularPriceYearly] = useState<number>(0);
+  const [pkgFormDiscountLabel, setPkgFormDiscountLabel] = useState<string>('');
+  const [pkgFormDurationDays, setPkgFormDurationDays] = useState<number>(365);
+  const [pkgFormOtaLimit, setPkgFormOtaLimit] = useState<number>(0);
+  const [pkgFormOtaLimitLabel, setPkgFormOtaLimitLabel] = useState<string>('');
+  const [pkgFormFeaturesText, setPkgFormFeaturesText] = useState<string>('');
+  const [pkgFormTrialEnabled, setPkgFormTrialEnabled] = useState<boolean>(true);
+  const [pkgFormTrialDays, setPkgFormTrialDays] = useState<number>(7);
+  const [pkgFormRenewalGraceDays, setPkgFormRenewalGraceDays] = useState<number>(7);
+  const [pkgFormRenewalRulesText, setPkgFormRenewalRulesText] = useState<string>('');
+  const [pkgFormIsActive, setPkgFormIsActive] = useState<boolean>(true);
+  const [pkgFormIsPopular, setPkgFormIsPopular] = useState<boolean>(false);
+
   const handleOpenAddPackage = () => {
     setEditingPackageId(null);
     setPkgFormName('');
     setPkgFormTagline('');
-    setPkgFormBadge('Standard');
-    setPkgFormPriceMonthly(1999);
-    setPkgFormPriceYearly(19999);
-    setPkgFormMaxRooms(25);
+    setPkgFormBadge('Annual Plan');
+    setPkgFormPriceMonthly(599);
+    setPkgFormPriceYearly(5999);
+    setPkgFormRegularPriceYearly(0);
+    setPkgFormDiscountLabel('');
+    setPkgFormGstRate(18);
+    setPkgFormDurationDays(365);
+    setPkgFormMaxRooms(999);
+    setPkgFormOtaLimit(0);
+    setPkgFormOtaLimitLabel('');
+    setPkgFormFeaturesText('Unlimited Rooms & Floors\nFront Desk, Check-In & Digital GRC\nGST Billing, Invoices & Daily Collection\nPOS Terminal & Reports');
+    setPkgFormTrialEnabled(true);
+    setPkgFormTrialDays(7);
+    setPkgFormRenewalGraceDays(7);
+    setPkgFormRenewalRulesText('Annual license renews for 365 days upon verified payment. Expired hotels retain all data safely.');
+    setPkgFormIsActive(true);
+    setPkgFormIsPopular(false);
     setPkgFormDesc('');
     setPkgFormModules({
       ota: false,
-      staff: false,
+      staff: true,
       reports: true,
       cashHandover: true,
       expenses: true,
       invoices: true,
       policies: true,
       website: true,
-      pos: false,
-      inventory: false
+      pos: true,
+      inventory: true
     });
     setShowPackageModal(true);
   };
@@ -451,7 +564,20 @@ export default function SuperAdminHub({
     setPkgFormBadge(pkg.badge || 'Popular');
     setPkgFormPriceMonthly(pkg.priceMonthly);
     setPkgFormPriceYearly(pkg.priceYearly);
+    setPkgFormRegularPriceYearly(pkg.regularPriceYearly || 0);
+    setPkgFormDiscountLabel(pkg.discountLabel || '');
+    setPkgFormGstRate(pkg.gstRate ?? 18);
+    setPkgFormDurationDays(pkg.durationDays ?? 365);
     setPkgFormMaxRooms(pkg.maxRooms);
+    setPkgFormOtaLimit(pkg.otaLimit ?? (pkg.modules?.ota ? 10 : 0));
+    setPkgFormOtaLimitLabel(pkg.otaLimitLabel || '');
+    setPkgFormFeaturesText(Array.isArray(pkg.features) ? pkg.features.join('\n') : '');
+    setPkgFormTrialEnabled(pkg.trialEnabled !== false);
+    setPkgFormTrialDays(pkg.trialDays ?? 7);
+    setPkgFormRenewalGraceDays(pkg.renewalGraceDays ?? 7);
+    setPkgFormRenewalRulesText(pkg.renewalRulesText || '');
+    setPkgFormIsActive(pkg.isActive !== false);
+    setPkgFormIsPopular(Boolean(pkg.isPopular));
     setPkgFormDesc(pkg.description || '');
     setPkgFormModules(pkg.modules || {
       ota: false,
@@ -462,10 +588,37 @@ export default function SuperAdminHub({
       invoices: true,
       policies: true,
       website: true,
-      pos: false,
-      inventory: false
+      pos: true,
+      inventory: true
     });
     setShowPackageModal(true);
+  };
+
+  const handleTogglePackageActive = (pkg: SaaSPackage) => {
+    const nextActive = pkg.isActive === false;
+    const updatedList = packagesList.map((p) =>
+      p.id === pkg.id ? { ...p, isActive: nextActive } : p
+    );
+    if (onUpdatePackages) onUpdatePackages(updatedList);
+    savePmsData({ packages: updatedList });
+    syncAllToSupabase({ packages: updatedList }).catch(() => {});
+    showToast(`Package "${pkg.name}" ${nextActive ? 'activated' : 'deactivated'} (existing hotel subscriptions preserved).`, 'success');
+  };
+
+  const handleLoadStandardDirectStayPackages = () => {
+    const existingNames = new Set(packagesList.map((p) => String(p.name || '').trim().toLowerCase()));
+    const toAdd = DEFAULT_SAAS_PACKAGES_CATALOG.filter(
+      (def) => !existingNames.has(def.name.trim().toLowerCase())
+    );
+    if (toAdd.length === 0) {
+      showToast('All 3 standard DirectStay packages (Full PMS, Starter + OTA, Growth + OTA) already exist.', 'info');
+      return;
+    }
+    const updatedList = [...packagesList, ...toAdd];
+    if (onUpdatePackages) onUpdatePackages(updatedList);
+    savePmsData({ packages: updatedList });
+    syncAllToSupabase({ packages: updatedList }).catch(() => {});
+    showToast(`Added ${toAdd.length} DirectStay SaaS package(s) to database!`, 'success');
   };
 
   const ensurePasswordHash = (pw?: string, fallback?: string): string => {
@@ -491,17 +644,49 @@ export default function SuperAdminHub({
     }
 
     const roomLabel = pkgFormMaxRooms >= 999 ? 'Unlimited Rooms' : `Up to ${pkgFormMaxRooms} Rooms`;
+    const parsedFeatures = pkgFormFeaturesText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const regularYearly = Number(pkgFormRegularPriceYearly) || 0;
+    const yearlyPrice = Number(pkgFormPriceYearly) || 0;
+    const computedDiscount =
+      regularYearly > yearlyPrice && regularYearly > 0
+        ? Math.round(((regularYearly - yearlyPrice) / regularYearly) * 100)
+        : 0;
+
     const newPkg: SaaSPackage = {
       id: editingPackageId || `pkg-${Date.now()}`,
+      code: pkgFormName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       name: pkgFormName.trim(),
       tagline: pkgFormTagline.trim(),
       badge: pkgFormBadge.trim(),
       priceMonthly: Number(pkgFormPriceMonthly) || 0,
-      priceYearly: Number(pkgFormPriceYearly) || 0,
+      priceYearly: yearlyPrice,
+      regularPriceYearly: regularYearly > 0 ? regularYearly : undefined,
+      discountPercent: computedDiscount > 0 ? computedDiscount : undefined,
+      discountLabel: pkgFormDiscountLabel.trim() || undefined,
+      gstRate: Number(pkgFormGstRate) || 18,
+      durationDays: Number(pkgFormDurationDays) || 365,
       maxRooms: Number(pkgFormMaxRooms) || 10,
       roomTierLabel: roomLabel,
+      otaLimit: Number(pkgFormOtaLimit) || 0,
+      otaLimitLabel:
+        pkgFormOtaLimitLabel.trim() ||
+        (pkgFormModules.ota
+          ? Number(pkgFormOtaLimit) >= 999
+            ? 'Growth Channel Manager (Unlimited)'
+            : `OTA Sync up to ${pkgFormOtaLimit || pkgFormMaxRooms} Rooms`
+          : 'Full PMS (No OTA Sync)'),
       description: pkgFormDesc.trim(),
-      billingCycle: 'Both',
+      features: parsedFeatures,
+      trialEnabled: pkgFormTrialEnabled,
+      trialDays: Number(pkgFormTrialDays) || 7,
+      renewalGraceDays: Number(pkgFormRenewalGraceDays) || 7,
+      renewalRulesText: pkgFormRenewalRulesText.trim(),
+      isActive: pkgFormIsActive,
+      isPopular: pkgFormIsPopular,
+      billingCycle: 'Yearly',
       modules: { ...pkgFormModules }
     };
 
@@ -1053,7 +1238,55 @@ export default function SuperAdminHub({
   const [blogSummary, setBlogSummary] = useState('');
   const [blogContent, setBlogContent] = useState('');
   const [blogPublished, setBlogPublished] = useState(true);
+  const [blogSlug, setBlogSlug] = useState('');
+  const [blogStatus, setBlogStatus] = useState<'draft' | 'scheduled' | 'published'>('published');
+  const [blogScheduledAt, setBlogScheduledAt] = useState('');
+  const [blogTagsText, setBlogTagsText] = useState('');
+  const [blogFeaturedImageAlt, setBlogFeaturedImageAlt] = useState('');
+  const [blogSeo, setBlogSeo] = useState<SeoMetaConfig>({
+    seoTitle: '',
+    metaDescription: '',
+    canonicalUrl: '',
+    focusKeyword: '',
+    ogImage: '',
+    imageAlt: '',
+    robotsIndex: 'index',
+    robotsFollow: 'follow',
+  });
   const [viewingBlog, setViewingBlog] = useState<WebsiteBlogPost | null>(null);
+
+  const handleVerifySubscriptionPayment = async (
+    paymentId: string,
+    decision: 'Approved' | 'Rejected' | 'Failed',
+    rejectionReason?: string
+  ) => {
+    setVerifyingPaymentId(paymentId);
+    try {
+      const res = await fetch('/api/subscriptions/verify-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paymentId, decision, rejectionReason }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        showToast(data?.error || 'Could not update payment verification status.', 'error');
+        return;
+      }
+      if (data.hotel && onUpdateHotels) {
+        onUpdateHotels(hotels.map((h) => (h.id === data.hotel.id ? data.hotel : h)));
+      }
+      showToast(
+        decision === 'Approved'
+          ? `Payment verified! License activated & GST Invoice ${data.invoice?.invoiceNumber || ''} generated.`
+          : `Payment marked as ${decision}.`,
+        decision === 'Approved' ? 'success' : 'info'
+      );
+    } catch (err: any) {
+      showToast(err?.message || 'Network error verifying payment.', 'error');
+    } finally {
+      setVerifyingPaymentId(null);
+    }
+  };
 
   const persistUpdatedBlogs = (nextBlogs: WebsiteBlogPost[], extraFields?: Partial<SystemWebsiteConfig>) => {
     const nextConfig: SystemWebsiteConfig = {
@@ -1070,28 +1303,59 @@ export default function SuperAdminHub({
   const handleOpenAddBlog = () => {
     setEditingBlogId(null);
     setBlogTitle('');
+    setBlogSlug('');
     setBlogCategory('Hospitality & PMS');
     setBlogAuthor('DirectStay Editorial Desk');
     setBlogPublishedAt(new Date().toISOString().split('T')[0]);
     setBlogReadTime('4 min read');
     setBlogImageUrl('');
+    setBlogFeaturedImageAlt('');
     setBlogSummary('');
     setBlogContent('');
+    setBlogTagsText('');
+    setBlogStatus('published');
+    setBlogScheduledAt('');
     setBlogPublished(true);
+    setBlogSeo({
+      seoTitle: '',
+      metaDescription: '',
+      canonicalUrl: '',
+      focusKeyword: '',
+      ogImage: '',
+      imageAlt: '',
+      robotsIndex: 'index',
+      robotsFollow: 'follow',
+    });
     setShowBlogModal(true);
   };
 
   const handleOpenEditBlog = (b: WebsiteBlogPost) => {
     setEditingBlogId(b.id);
     setBlogTitle(b.title);
+    setBlogSlug(b.slug || '');
     setBlogCategory(b.category || 'Hospitality & PMS');
     setBlogAuthor(b.author || 'DirectStay Editorial Desk');
     setBlogPublishedAt(b.publishedAt || new Date().toISOString().split('T')[0]);
     setBlogReadTime(b.readTime || '4 min read');
     setBlogImageUrl(b.imageUrl || '');
+    setBlogFeaturedImageAlt(b.featuredImageAlt || b.seo?.imageAlt || '');
     setBlogSummary(b.summary || '');
     setBlogContent(b.content || '');
-    setBlogPublished(b.published !== false);
+    setBlogTagsText(Array.isArray(b.tags) ? b.tags.join(', ') : '');
+    const st = b.status || (b.published !== false ? 'published' : 'draft');
+    setBlogStatus(st);
+    setBlogScheduledAt(b.scheduledAt || '');
+    setBlogPublished(st === 'published');
+    setBlogSeo({
+      seoTitle: b.seo?.seoTitle || '',
+      metaDescription: b.seo?.metaDescription || '',
+      canonicalUrl: b.seo?.canonicalUrl || '',
+      focusKeyword: b.seo?.focusKeyword || '',
+      ogImage: b.seo?.ogImage || '',
+      imageAlt: b.seo?.imageAlt || b.featuredImageAlt || '',
+      robotsIndex: b.seo?.robotsIndex || 'index',
+      robotsFollow: b.seo?.robotsFollow || 'follow',
+    });
     setShowBlogModal(true);
   };
 
@@ -1101,46 +1365,63 @@ export default function SuperAdminHub({
       showToast('Blog Title is required', 'warning');
       return;
     }
-    const slug = blogTitle.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const summaryText = blogSummary.trim() || blogContent.trim().slice(0, 160);
+    const slug = (blogSlug.trim() || blogTitle.trim())
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const parsedTags = blogTagsText
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const plainContent = blogContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const summaryText = blogSummary.trim() || plainContent.slice(0, 160);
+    const isLivePublished = blogStatus === 'published';
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const blogPayload: Partial<WebsiteBlogPost> = {
+      title: blogTitle.trim(),
+      slug,
+      category: blogCategory.trim() || 'Hospitality & PMS',
+      tags: parsedTags,
+      author: blogAuthor.trim() || 'DirectStay Editorial Desk',
+      publishedAt: blogPublishedAt || todayStr,
+      scheduledAt: blogStatus === 'scheduled' ? blogScheduledAt : '',
+      status: blogStatus,
+      readTime: blogReadTime.trim() || '4 min read',
+      imageUrl: blogImageUrl.trim(),
+      featuredImageAlt: blogFeaturedImageAlt.trim() || blogSeo.imageAlt?.trim() || '',
+      summary: summaryText,
+      content: blogContent.trim() || summaryText,
+      published: isLivePublished,
+      seo: {
+        ...blogSeo,
+        imageAlt: blogFeaturedImageAlt.trim() || blogSeo.imageAlt?.trim() || '',
+      },
+      updatedAt: todayStr,
+    };
+
     let nextBlogs: WebsiteBlogPost[];
     if (editingBlogId) {
       nextBlogs = blogsList.map((b) =>
-        b.id === editingBlogId
-          ? {
-              ...b,
-              title: blogTitle.trim(),
-              slug,
-              category: blogCategory.trim() || 'Hospitality & PMS',
-              author: blogAuthor.trim() || 'DirectStay Editorial Desk',
-              publishedAt: blogPublishedAt || new Date().toISOString().split('T')[0],
-              readTime: blogReadTime.trim() || '4 min read',
-              imageUrl: blogImageUrl.trim(),
-              summary: summaryText,
-              content: blogContent.trim() || summaryText,
-              published: blogPublished
-            }
-          : b
+        b.id === editingBlogId ? { ...b, ...blogPayload } : b
       );
-      showToast(`Blog "${blogTitle.trim()}" updated and published to Home Page!`, 'success');
+      showToast(`Blog "${blogTitle.trim()}" updated (${blogStatus}) with SEO metadata!`, 'success');
     } else {
       const newPost: WebsiteBlogPost = {
         id: `blog-${Date.now()}`,
         title: blogTitle.trim(),
-        slug,
         category: blogCategory.trim() || 'Hospitality & PMS',
-        author: blogAuthor.trim() || 'DirectStay Editorial Desk',
-        publishedAt: blogPublishedAt || new Date().toISOString().split('T')[0],
-        readTime: blogReadTime.trim() || '4 min read',
+        publishedAt: blogPublishedAt || todayStr,
+        summary: summaryText,
+        content: blogContent.trim() || summaryText,
+        published: isLivePublished,
+        ...blogPayload,
         imageUrl:
           blogImageUrl.trim() ||
           'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800&auto=format&fit=crop&q=80',
-        summary: summaryText,
-        content: blogContent.trim() || summaryText,
-        published: blogPublished
       };
       nextBlogs = [newPost, ...blogsList];
-      showToast(`New blog "${blogTitle.trim()}" added to Home Page!`, 'success');
+      showToast(`New blog "${blogTitle.trim()}" saved (${blogStatus})!`, 'success');
     }
     persistUpdatedBlogs(nextBlogs);
     setShowBlogModal(false);
@@ -1502,12 +1783,45 @@ export default function SuperAdminHub({
               </p>
             </div>
 
-            <button
-              onClick={handleOpenAddPackage}
-              className="inline-flex items-center gap-2 bg-luxury-gold-500 hover:bg-luxury-gold-400 text-luxury-brown-950 font-bold px-4 py-2.5 rounded-xl shadow-md transition-all text-xs cursor-pointer whitespace-nowrap hover:scale-102"
-            >
-              <Plus className="w-4 h-4" /> Create New Package Plan
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleLoadStandardDirectStayPackages}
+                className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-luxury-gold-300 border border-luxury-gold-500/30 font-bold px-3.5 py-2.5 rounded-xl transition-all text-xs cursor-pointer whitespace-nowrap"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Add Standard DirectStay Plans (₹5,999 / ₹12,999 / ₹14,999)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = { ...cmsConfig, useDynamicPackagesOnPricing: !cmsConfig.useDynamicPackagesOnPricing };
+                  setCmsConfig(next);
+                  onUpdateSystemWebsite(next);
+                  savePmsData({ systemWebsite: next });
+                  syncAllToSupabase({ systemWebsite: next }).catch(() => {});
+                  showToast(
+                    next.useDynamicPackagesOnPricing
+                      ? 'Public Pricing Page is now dynamically connected to Package Management!'
+                      : 'Public Pricing Page switched back to manual Website CMS Pricing Cards.',
+                    'success'
+                  );
+                }}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl font-bold text-xs border transition-all cursor-pointer whitespace-nowrap ${
+                  cmsConfig.useDynamicPackagesOnPricing
+                    ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                    : 'bg-white/10 border-white/20 text-white/80 hover:bg-white/20'
+                }`}
+              >
+                <Globe className="w-3.5 h-3.5" />
+                {cmsConfig.useDynamicPackagesOnPricing ? 'Pricing Page: Dynamic ✓' : 'Link Pricing Page'}
+              </button>
+              <button
+                onClick={handleOpenAddPackage}
+                className="inline-flex items-center gap-2 bg-luxury-gold-500 hover:bg-luxury-gold-400 text-luxury-brown-950 font-bold px-4 py-2.5 rounded-xl shadow-md transition-all text-xs cursor-pointer whitespace-nowrap hover:scale-102"
+              >
+                <Plus className="w-4 h-4" /> Create New Package Plan
+              </button>
+            </div>
           </div>
 
           {/* Package Cards Grid */}
@@ -1526,15 +1840,28 @@ export default function SuperAdminHub({
                     {/* Header */}
                     <div className="flex justify-between items-start gap-2">
                       <div>
-                        <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-luxury-gold-500/10 text-luxury-brown-900 border border-luxury-gold-500/30 uppercase tracking-wider mb-1">
-                          {pkg.badge || 'Plan'}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                          <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-luxury-gold-500/10 text-luxury-brown-900 border border-luxury-gold-500/30 uppercase tracking-wider">
+                            {pkg.badge || 'Plan'}
+                          </span>
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase ${
+                              pkg.isActive === false
+                                ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            }`}
+                          >
+                            {pkg.isActive === false ? 'Inactive' : 'Active'}
+                          </span>
+                        </div>
                         <h3 className="text-xl font-serif font-bold text-luxury-brown-950">{pkg.name}</h3>
                       </div>
                       <div className="text-right">
-                        <span className="text-2xl font-serif font-extrabold text-luxury-brown-950">₹{Number(pkg.priceMonthly || 0).toLocaleString('en-IN')}</span>
-                        <span className="block text-[10px] font-mono text-luxury-brown-500">/ month</span>
-                        <span className="text-[10px] font-mono text-emerald-700 block font-semibold mt-0.5">₹{Number(pkg.priceYearly || 0).toLocaleString('en-IN')}/yr</span>
+                        <span className="text-2xl font-serif font-extrabold text-luxury-brown-950">₹{Number(pkg.priceYearly || pkg.priceMonthly || 0).toLocaleString('en-IN')}</span>
+                        <span className="block text-[10px] font-mono text-luxury-brown-500">/ year (+ {pkg.gstRate ?? 18}% GST)</span>
+                        {pkg.regularPriceYearly && pkg.regularPriceYearly > (pkg.priceYearly || 0) && (
+                          <span className="text-[10px] font-mono text-rose-600 line-through block">₹{Number(pkg.regularPriceYearly).toLocaleString('en-IN')}</span>
+                        )}
                       </div>
                     </div>
 
@@ -1622,19 +1949,32 @@ export default function SuperAdminHub({
                   </div>
 
                   {/* Card Actions Footer */}
-                  <div className="bg-luxury-beige-50/80 p-4 border-t border-luxury-brown-100 flex items-center justify-between gap-2">
+                  <div className="bg-luxury-beige-50/80 p-4 border-t border-luxury-brown-100 flex items-center justify-between gap-2 flex-wrap">
                     <button
                       onClick={() => handleOpenEditPackage(pkg)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-luxury-brown-200 text-luxury-brown-800 text-xs font-semibold hover:bg-luxury-brown-900 hover:text-white transition-all cursor-pointer"
                     >
-                      <Edit className="w-3.5 h-3.5" /> Edit Package
+                      <Edit className="w-3.5 h-3.5" /> Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleTogglePackageActive(pkg)}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                        pkg.isActive === false
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
+                          : 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'
+                      }`}
+                    >
+                      {pkg.isActive === false ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                      {pkg.isActive === false ? 'Activate' : 'Deactivate'}
                     </button>
 
                     <button
                       onClick={() => setAssignPkgModal(pkg)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-luxury-gold-500 text-luxury-brown-950 text-xs font-bold hover:bg-luxury-gold-400 transition-all cursor-pointer"
                     >
-                      <Building className="w-3.5 h-3.5" /> Assign Properties
+                      <Building className="w-3.5 h-3.5" /> Assign
                     </button>
 
                     <button
@@ -2134,7 +2474,456 @@ export default function SuperAdminHub({
               </div>
             )}
 
+            {/* Master Sub-View Tabs inside Website CMS: Content | Navigation | Complete SEO | UPI & WhatsApp */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-luxury-brown-100 pb-4">
+              {[
+                { id: 'content' as const, label: 'Website Content & Sections' },
+                { id: 'navigation' as const, label: 'Header / Footer Nav & Dynamic Pricing' },
+                { id: 'seo' as const, label: 'Complete SEO, Sitemap, Redirects & Audit' },
+                { id: 'payments' as const, label: 'UPI Payment, GST & WhatsApp Config' },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setCmsSubPanel(t.id)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                    cmsSubPanel === t.id
+                      ? 'bg-luxury-brown-950 text-luxury-gold-400 border-luxury-brown-950 shadow-sm'
+                      : 'bg-luxury-beige-50/70 text-luxury-brown-700 border-luxury-brown-200 hover:bg-luxury-beige-100'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {cmsSubPanel === 'navigation' && (
+              <div className="space-y-6">
+                <div className="p-5 rounded-2xl border border-luxury-brown-200 bg-luxury-beige-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-serif font-bold text-luxury-brown-950">
+                      Dynamic Pricing Page Connection
+                    </h3>
+                    <p className="text-xs text-luxury-brown-600 mt-0.5">
+                      When enabled, the public <code>/pricing</code> page automatically renders active plans from <strong>Packages &amp; Plans</strong> (₹5,999 / ₹12,999 / ₹14,999 + 18% GST).
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-white border border-luxury-brown-200 text-xs font-bold cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(cmsConfig.useDynamicPackagesOnPricing)}
+                      onChange={(e) =>
+                        setCmsConfig({ ...cmsConfig, useDynamicPackagesOnPricing: e.target.checked })
+                      }
+                      className="w-4 h-4 accent-emerald-600"
+                    />
+                    <span>Connect Pricing Page to Package Manager</span>
+                  </label>
+                </div>
+
+                {/* Header Navigation Links */}
+                <div className="p-5 rounded-2xl border border-luxury-brown-200 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-serif font-bold text-luxury-brown-950">
+                        Custom Header Navigation Menu Links
+                      </h3>
+                      <p className="text-xs text-luxury-brown-500">
+                        Add custom links (e.g. <code>/page/offers</code>, <code>/blog/</code>, or external URLs) to the public header navbar.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur = Array.isArray(cmsConfig.headerNavLinks) ? cmsConfig.headerNavLinks : [];
+                        const next: WebsiteNavItem[] = [
+                          ...cur,
+                          { id: `hnav-${Date.now()}`, label: 'New Link', href: '/pricing', isVisible: true, isExternal: false },
+                        ];
+                        setCmsConfig({ ...cmsConfig, headerNavLinks: next });
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-luxury-brown-950 text-luxury-gold-400 text-xs font-bold cursor-pointer inline-flex items-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Header Link
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {(cmsConfig.headerNavLinks || []).map((nav, idx) => (
+                      <div key={nav.id || idx} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-luxury-beige-50/50 p-2.5 rounded-xl border border-luxury-brown-100 text-xs">
+                        <input
+                          type="text"
+                          value={nav.label}
+                          onChange={(e) => {
+                            const next = [...(cmsConfig.headerNavLinks || [])];
+                            next[idx] = { ...nav, label: e.target.value };
+                            setCmsConfig({ ...cmsConfig, headerNavLinks: next });
+                          }}
+                          placeholder="Label"
+                          className="sm:col-span-4 px-2.5 py-1.5 rounded-lg border border-luxury-brown-200 bg-white font-semibold"
+                        />
+                        <input
+                          type="text"
+                          value={nav.href}
+                          onChange={(e) => {
+                            const next = [...(cmsConfig.headerNavLinks || [])];
+                            next[idx] = { ...nav, href: e.target.value };
+                            setCmsConfig({ ...cmsConfig, headerNavLinks: next });
+                          }}
+                          placeholder="/page/slug or https://..."
+                          className="sm:col-span-5 px-2.5 py-1.5 rounded-lg border border-luxury-brown-200 bg-white font-mono"
+                        />
+                        <label className="sm:col-span-2 inline-flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={nav.isVisible !== false}
+                            onChange={(e) => {
+                              const next = [...(cmsConfig.headerNavLinks || [])];
+                              next[idx] = { ...nav, isVisible: e.target.checked };
+                              setCmsConfig({ ...cmsConfig, headerNavLinks: next });
+                            }}
+                          />
+                          Visible
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = (cmsConfig.headerNavLinks || []).filter((_, i) => i !== idx);
+                            setCmsConfig({ ...cmsConfig, headerNavLinks: next });
+                          }}
+                          className="sm:col-span-1 p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer justify-self-end"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    {(!cmsConfig.headerNavLinks || cmsConfig.headerNavLinks.length === 0) && (
+                      <p className="text-xs text-luxury-brown-400 italic">No custom header links added yet (core links Home, Features, Pricing, About, Contact remain active).</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {cmsSubPanel === 'seo' && (() => {
+              const seoCfg = cmsConfig.seoSettings || {};
+              const updateSeo = (patch: Partial<NonNullable<SystemWebsiteConfig['seoSettings']>>) =>
+                setCmsConfig({ ...cmsConfig, seoSettings: { ...seoCfg, ...patch } });
+              const redirectsList: SeoRedirectRule[] = Array.isArray(seoCfg.redirects) ? seoCfg.redirects : [];
+              const auditReport = runSiteSeoAudit({ systemWebsite: cmsConfig, customPages: customPagesList });
+
+              return (
+                <div className="space-y-6 text-xs">
+                  {/* GSC, GA4, Site URL & Default Meta */}
+                  <div className="p-5 rounded-2xl border border-luxury-brown-200 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-sm font-serif font-bold text-luxury-brown-950">
+                          Google Search Console, Analytics (GA4) &amp; Global SEO Defaults
+                        </h3>
+                        <p className="text-[11px] text-luxury-brown-500">
+                          Configure site verification, GA4 tracking, and default Open Graph metadata across all public routes.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 font-mono text-[11px]">
+                        <a href="/sitemap.xml" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold hover:bg-emerald-100">
+                          Open /sitemap.xml ↗
+                        </a>
+                        <a href="/robots.txt" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg bg-luxury-beige-50 border border-luxury-brown-200 text-luxury-brown-800 font-bold hover:bg-luxury-beige-100">
+                          Open /robots.txt ↗
+                        </a>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">Canonical Site URL</label>
+                        <input
+                          type="text"
+                          value={seoCfg.siteUrl || DIRECTSTAY_DOMAIN}
+                          onChange={(e) => updateSeo({ siteUrl: e.target.value })}
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">Google Search Console Verification</label>
+                        <input
+                          type="text"
+                          value={seoCfg.googleSiteVerification || ''}
+                          onChange={(e) => updateSeo({ googleSiteVerification: e.target.value })}
+                          placeholder="Paste GSC verification meta content token"
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">Google Analytics 4 ID (GA4)</label>
+                        <input
+                          type="text"
+                          value={seoCfg.googleAnalyticsId || ''}
+                          onChange={(e) => updateSeo({ googleAnalyticsId: e.target.value })}
+                          placeholder="G-XXXXXXXXXX"
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                        robots.txt Rules (Served live at /robots.txt)
+                      </label>
+                      <textarea
+                        rows={5}
+                        value={
+                          seoCfg.robotsTxt ??
+                          `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /superadmin\nDisallow: /admin\nDisallow: /hotelowner\n\nSitemap: ${seoCfg.siteUrl || DIRECTSTAY_DOMAIN}/sitemap.xml`
+                        }
+                        onChange={(e) => updateSeo({ robotsTxt: e.target.value })}
+                        className="w-full p-3 rounded-xl border border-luxury-brown-200 font-mono text-[11px] bg-luxury-beige-50/40"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 301 / 302 Redirect Manager */}
+                  <div className="p-5 rounded-2xl border border-luxury-brown-200 space-y-4">
+                    <h3 className="text-sm font-serif font-bold text-luxury-brown-950">
+                      URL Redirect Manager (301 Permanent / 302 Temporary)
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                      <input
+                        type="text"
+                        value={newRedirectFrom}
+                        onChange={(e) => setNewRedirectFrom(e.target.value)}
+                        placeholder="From path (e.g. /old-pricing)"
+                        className="sm:col-span-4 px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                      />
+                      <input
+                        type="text"
+                        value={newRedirectTo}
+                        onChange={(e) => setNewRedirectTo(e.target.value)}
+                        placeholder="To path (e.g. /pricing/)"
+                        className="sm:col-span-4 px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                      />
+                      <select
+                        value={newRedirectCode}
+                        onChange={(e) => setNewRedirectCode(Number(e.target.value) as 301 | 302)}
+                        className="sm:col-span-2 px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono font-bold bg-white"
+                      >
+                        <option value={301}>301</option>
+                        <option value={302}>302</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!newRedirectFrom.trim() || !newRedirectTo.trim()) {
+                            showToast('Enter both From Path and To Path.', 'warning');
+                            return;
+                          }
+                          const rule: SeoRedirectRule = {
+                            id: `redir-${Date.now()}`,
+                            fromPath: newRedirectFrom.trim().startsWith('/') ? newRedirectFrom.trim() : `/${newRedirectFrom.trim()}`,
+                            toPath: newRedirectTo.trim(),
+                            statusCode: newRedirectCode,
+                            isActive: true,
+                            createdAt: new Date().toISOString().split('T')[0],
+                          };
+                          updateSeo({ redirects: [rule, ...redirectsList] });
+                          setNewRedirectFrom('');
+                          setNewRedirectTo('');
+                          showToast('Redirect rule added — click "Save All Website Changes" to activate live.', 'success');
+                        }}
+                        className="sm:col-span-2 px-3 py-2 rounded-xl bg-luxury-brown-950 text-luxury-gold-400 font-bold cursor-pointer"
+                      >
+                        + Add Rule
+                      </button>
+                    </div>
+
+                    {redirectsList.length > 0 && (
+                      <div className="overflow-x-auto border border-luxury-brown-100 rounded-xl">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-luxury-beige-50 border-b border-luxury-brown-100 text-[10px] font-mono uppercase text-luxury-brown-600">
+                              <th className="py-2 px-3">From Path</th>
+                              <th className="py-2 px-3">Target Path</th>
+                              <th className="py-2 px-3">Code</th>
+                              <th className="py-2 px-3 text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-luxury-brown-100">
+                            {redirectsList.map((r) => (
+                              <tr key={r.id}>
+                                <td className="py-2 px-3 font-mono font-semibold">{r.fromPath}</td>
+                                <td className="py-2 px-3 font-mono text-emerald-700">{r.toPath}</td>
+                                <td className="py-2 px-3 font-mono font-bold">{r.statusCode}</td>
+                                <td className="py-2 px-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => updateSeo({ redirects: redirectsList.filter((x) => x.id !== r.id) })}
+                                    className="text-rose-600 hover:underline font-bold cursor-pointer"
+                                  >
+                                    Delete
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* SEO Audit & Broken-Link Checker */}
+                  <div className="p-5 rounded-2xl border border-luxury-brown-200 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-serif font-bold text-luxury-brown-950">
+                          Live SEO Audit &amp; Broken-Link Checker
+                        </h3>
+                        <p className="text-[11px] text-luxury-brown-500">
+                          Automatically inspects titles, meta descriptions, image alt text, duplicate slugs, Schema readiness, and broken internal links across all CMS pages &amp; blogs.
+                        </p>
+                      </div>
+                      <div className="px-4 py-2 rounded-2xl bg-luxury-brown-950 text-luxury-gold-400 font-mono font-bold text-sm">
+                        SEO Health Score: {auditReport.score} / 100
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {auditReport.issues.map((issue) => (
+                        <div
+                          key={issue.id}
+                          className={`p-3 rounded-xl border text-[11px] flex items-start gap-2.5 ${
+                            issue.severity === 'error'
+                              ? 'bg-rose-50 border-rose-200 text-rose-900'
+                              : issue.severity === 'warning'
+                              ? 'bg-amber-50 border-amber-200 text-amber-950'
+                              : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                          }`}
+                        >
+                          <span className="font-mono font-bold uppercase text-[9px] px-1.5 py-0.5 rounded bg-white/80 border shrink-0">
+                            {issue.severity}
+                          </span>
+                          <div>
+                            <p className="font-bold">{issue.target} ({issue.area})</p>
+                            <p className="opacity-90">{issue.message}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {cmsSubPanel === 'payments' && (() => {
+              const payCfg = cmsConfig.paymentSettings || {};
+              const updatePay = (patch: Partial<NonNullable<SystemWebsiteConfig['paymentSettings']>>) =>
+                setCmsConfig({ ...cmsConfig, paymentSettings: { ...payCfg, ...patch } });
+
+              return (
+                <div className="space-y-6 text-xs">
+                  <div className="p-5 rounded-2xl border border-luxury-brown-200 space-y-4">
+                    <div>
+                      <h3 className="text-sm font-serif font-bold text-luxury-brown-950">
+                        DirectStay UPI QR, GST Billing &amp; WhatsApp Support Configuration
+                      </h3>
+                      <p className="text-[11px] text-luxury-brown-500">
+                        Controls the live UPI QR &amp; deep link shown on Membership Renewal Checkout, 18% GST tax invoice header, and floating WhatsApp Support across website, pricing, renewal, and customer dashboards.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">DirectStay UPI ID *</label>
+                        <input
+                          type="text"
+                          value={payCfg.upiId || 'directstay@upi'}
+                          onChange={(e) => updatePay({ upiId: e.target.value })}
+                          placeholder="merchant@upi"
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">UPI Merchant / Payee Name</label>
+                        <input
+                          type="text"
+                          value={payCfg.upiPayeeName || cmsConfig.businessName || 'DirectStay Hospitality SaaS'}
+                          onChange={(e) => updatePay({ upiPayeeName: e.target.value })}
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">WhatsApp Support Number</label>
+                        <input
+                          type="text"
+                          value={cmsConfig.whatsappNumber || DEFAULT_WHATSAPP_NUMBER}
+                          onChange={(e) => setCmsConfig({ ...cmsConfig, whatsappNumber: e.target.value })}
+                          placeholder="+91 7978563771"
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">Default SaaS GST Rate (%)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="28"
+                          value={payCfg.defaultGstRate ?? 18}
+                          onChange={(e) => updatePay({ defaultGstRate: Number(e.target.value) })}
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">DirectStay Company GSTIN</label>
+                        <input
+                          type="text"
+                          value={payCfg.gstNumber || '21AABCU9603R1ZM'}
+                          onChange={(e) => updatePay({ gstNumber: e.target.value })}
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">SAC Code</label>
+                        <input
+                          type="text"
+                          value={payCfg.sacCode || '998315'}
+                          onChange={(e) => updatePay({ sacCode: e.target.value })}
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">Bank Name (NEFT/IMPS)</label>
+                        <input
+                          type="text"
+                          value={payCfg.bankName || ''}
+                          onChange={(e) => updatePay({ bankName: e.target.value })}
+                          placeholder="e.g. HDFC Bank"
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">Bank Account Number</label>
+                        <input
+                          type="text"
+                          value={payCfg.bankAccountNumber || ''}
+                          onChange={(e) => updatePay({ bankAccountNumber: e.target.value })}
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">Bank IFSC Code</label>
+                        <input
+                          type="text"
+                          value={payCfg.bankIfsc || ''}
+                          onChange={(e) => updatePay({ bankIfsc: e.target.value })}
+                          className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Quick Section Jump Pills */}
+            {cmsSubPanel === 'content' && (<>
             <div className="flex flex-wrap gap-2 bg-luxury-beige-50/70 p-3 rounded-2xl border border-luxury-brown-100 text-[11px] font-mono font-bold">
               <button type="button" onClick={() => document.getElementById('cms-identity')?.scrollIntoView({ behavior: 'smooth' })} className="px-3 py-1.5 rounded-lg bg-white border border-luxury-brown-100 text-luxury-brown-800 hover:border-luxury-gold-500 cursor-pointer">1. Identity, Navbar &amp; WhatsApp</button>
               <button type="button" onClick={() => document.getElementById('cms-hero')?.scrollIntoView({ behavior: 'smooth' })} className="px-3 py-1.5 rounded-lg bg-white border border-luxury-brown-100 text-luxury-brown-800 hover:border-luxury-gold-500 cursor-pointer">2. Hero &amp; 4 Bottom Pillars</button>
@@ -3536,6 +4325,7 @@ export default function SuperAdminHub({
                 </div>
               )}
             </div>
+            </>)}
 
             {/* Bottom Sticky Save Bar */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-luxury-brown-100">
@@ -3775,14 +4565,181 @@ export default function SuperAdminHub({
                     </div>
 
                     <div className="space-y-1">
-                      <label className="font-mono text-xs uppercase font-bold text-luxury-brown-800 block">Text Content & Description</label>
-                      <textarea
-                        rows={4}
-                        placeholder="Enter full page body text, announcements, or terms description..."
+                      <label className="font-mono text-xs uppercase font-bold text-luxury-brown-800 block">Rich-Text Page Content *</label>
+                      <RichTextEditor
                         value={pageContent}
-                        onChange={(e) => setPageContent(e.target.value)}
-                        className="w-full px-3.5 py-2.5 border border-luxury-brown-200 rounded-xl text-xs font-sans bg-white focus:outline-none focus:border-luxury-gold-500 leading-relaxed"
+                        onChange={setPageContent}
+                        placeholder="Write formatted page content with headings, lists, links, and inline images..."
+                        minHeight="180px"
                       />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="font-mono text-[11px] uppercase font-bold text-luxury-brown-800 block mb-1">Category</label>
+                        <input
+                          type="text"
+                          value={pageCategory}
+                          onChange={(e) => setPageCategory(e.target.value)}
+                          placeholder="e.g. Solutions, Legal, Offers"
+                          className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono text-[11px] uppercase font-bold text-luxury-brown-800 block mb-1">Tags (comma separated)</label>
+                        <input
+                          type="text"
+                          value={pageTagsText}
+                          onChange={(e) => setPageTagsText(e.target.value)}
+                          placeholder="hotel pms, channel manager, gst"
+                          className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono text-[11px] uppercase font-bold text-luxury-brown-800 block mb-1">Featured Image Alt Text</label>
+                        <input
+                          type="text"
+                          value={pageFeaturedImageAlt}
+                          onChange={(e) => setPageFeaturedImageAlt(e.target.value)}
+                          placeholder="SEO descriptive alt text"
+                          className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Publish Status (Draft / Scheduled / Published) & Nav Placement */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-luxury-beige-50/70 rounded-2xl border border-luxury-brown-100 text-xs">
+                      <div>
+                        <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Status</label>
+                        <select
+                          value={pageStatus}
+                          onChange={(e) => {
+                            const v = e.target.value as 'draft' | 'scheduled' | 'published';
+                            setPageStatus(v);
+                            setPagePublished(v === 'published');
+                          }}
+                          className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-xl bg-white font-semibold"
+                        >
+                          <option value="published">Published (Live)</option>
+                          <option value="draft">Draft (Hidden)</option>
+                          <option value="scheduled">Scheduled</option>
+                        </select>
+                      </div>
+                      {pageStatus === 'scheduled' && (
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Schedule Publish Date</label>
+                          <input
+                            type="datetime-local"
+                            value={pageScheduledAt}
+                            onChange={(e) => setPageScheduledAt(e.target.value)}
+                            className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-xl bg-white font-mono text-[11px]"
+                          />
+                        </div>
+                      )}
+                      <div className="flex flex-col justify-center gap-1.5">
+                        <label className="inline-flex items-center gap-2 font-semibold cursor-pointer">
+                          <input type="checkbox" checked={pageShowInHeader} onChange={(e) => setPageShowInHeader(e.target.checked)} />
+                          Show in Website Header Nav
+                        </label>
+                        <label className="inline-flex items-center gap-2 font-semibold cursor-pointer">
+                          <input type="checkbox" checked={pageShowInFooter} onChange={(e) => setPageShowInFooter(e.target.checked)} />
+                          Show in Website Footer
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Complete Per-Page SEO Settings + Google SERP Preview */}
+                    <div className="p-4 rounded-2xl border border-luxury-gold-500/30 bg-luxury-beige-50/40 space-y-3">
+                      <span className="text-[11px] font-mono uppercase font-bold text-luxury-gold-700 block">
+                        Complete SEO &amp; Open Graph Settings (Per Page)
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">SEO Title ({(pageSeo.seoTitle || pageTitle).length}/60)</label>
+                          <input
+                            type="text"
+                            value={pageSeo.seoTitle || ''}
+                            onChange={(e) => setPageSeo({ ...pageSeo, seoTitle: e.target.value })}
+                            placeholder={pageTitle || 'Custom SEO Title'}
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Focus Keyword</label>
+                          <input
+                            type="text"
+                            value={pageSeo.focusKeyword || ''}
+                            onChange={(e) => setPageSeo({ ...pageSeo, focusKeyword: e.target.value })}
+                            placeholder="e.g. hotel management software india"
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Meta Description ({(pageSeo.metaDescription || '').length}/160)</label>
+                          <textarea
+                            rows={2}
+                            value={pageSeo.metaDescription || ''}
+                            onChange={(e) => setPageSeo({ ...pageSeo, metaDescription: e.target.value })}
+                            placeholder="Compelling 130–160 character search snippet..."
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Canonical URL</label>
+                          <input
+                            type="text"
+                            value={pageSeo.canonicalUrl || ''}
+                            onChange={(e) => setPageSeo({ ...pageSeo, canonicalUrl: e.target.value })}
+                            placeholder={`${DIRECTSTAY_DOMAIN}/page/${pageSlug || 'custom-slug'}`}
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white font-mono text-[11px]"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">OG Social Image URL</label>
+                          <input
+                            type="text"
+                            value={pageSeo.ogImage || ''}
+                            onChange={(e) => setPageSeo({ ...pageSeo, ogImage: e.target.value })}
+                            placeholder="https://... (defaults to Featured Image)"
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white font-mono text-[11px]"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Robots Indexing</label>
+                          <select
+                            value={pageSeo.robotsIndex || 'index'}
+                            onChange={(e) => setPageSeo({ ...pageSeo, robotsIndex: e.target.value as 'index' | 'noindex' })}
+                            className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          >
+                            <option value="index">Index (Include in Search &amp; Sitemap)</option>
+                            <option value="noindex">Noindex (Hide from Search Engines)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Robots Link Follow</label>
+                          <select
+                            value={pageSeo.robotsFollow || 'follow'}
+                            onChange={(e) => setPageSeo({ ...pageSeo, robotsFollow: e.target.value as 'follow' | 'nofollow' })}
+                            className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          >
+                            <option value="follow">Follow Links</option>
+                            <option value="nofollow">Nofollow Links</option>
+                          </select>
+                        </div>
+                      </div>
+                      {/* Live Google SERP Preview */}
+                      <div className="bg-white rounded-xl border border-luxury-brown-100 p-3 space-y-0.5">
+                        <span className="text-[9px] font-mono uppercase text-luxury-brown-400 font-bold block">Google Search SERP Preview</span>
+                        <p className="text-[11px] text-emerald-700 font-mono truncate">
+                          {pageSeo.canonicalUrl || `${DIRECTSTAY_DOMAIN}/page/${pageSlug || 'page-slug'}`}
+                        </p>
+                        <p className="text-sm font-semibold text-blue-800 truncate">
+                          {pageSeo.seoTitle || pageTitle || 'Your Page Title | DirectStay PMS'}
+                        </p>
+                        <p className="text-[11px] text-stone-600 line-clamp-2">
+                          {pageSeo.metaDescription || pageContent.replace(/<[^>]+>/g, ' ').slice(0, 155) || 'Enter a meta description to preview how this page appears in Google search results.'}
+                        </p>
+                      </div>
                     </div>
 
                     {/* Image URL & Upload */}
@@ -5087,28 +6044,180 @@ export default function SuperAdminHub({
 
                     <div>
                       <label className="font-mono uppercase font-bold text-luxury-brown-700 block mb-1">
-                        Full Blog Article Content *
+                        Full Blog Article Content (Rich-Text Editor) *
                       </label>
-                      <textarea
-                        rows={6}
-                        required
+                      <RichTextEditor
                         value={blogContent}
-                        onChange={(e) => setBlogContent(e.target.value)}
-                        placeholder="Write the full blog article content here (use blank lines for paragraphs)..."
-                        className="w-full p-3 border border-luxury-brown-200 rounded-xl leading-relaxed"
+                        onChange={setBlogContent}
+                        placeholder="Write the full blog article with headings, lists, links, and images..."
+                        minHeight="200px"
                       />
                     </div>
 
-                    <div className="flex items-center justify-between p-3.5 rounded-xl bg-luxury-beige-50 border border-luxury-brown-100">
-                      <label className="flex items-center gap-2 cursor-pointer font-bold text-luxury-brown-950">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="font-mono uppercase font-bold text-luxury-brown-700 block mb-1">
+                          Custom URL Slug
+                        </label>
                         <input
-                          type="checkbox"
-                          checked={blogPublished}
-                          onChange={(e) => setBlogPublished(e.target.checked)}
-                          className="w-4 h-4 accent-emerald-600 rounded"
+                          type="text"
+                          value={blogSlug}
+                          onChange={(e) => setBlogSlug(e.target.value)}
+                          placeholder="e.g. best-hotel-pms-india"
+                          className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl font-mono"
                         />
-                        <span>Publish immediately on Homepage (/ #blog)</span>
-                      </label>
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase font-bold text-luxury-brown-700 block mb-1">
+                          Tags (comma separated)
+                        </label>
+                        <input
+                          type="text"
+                          value={blogTagsText}
+                          onChange={(e) => setBlogTagsText(e.target.value)}
+                          placeholder="hotel pms, ota sync, revenue"
+                          className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-mono uppercase font-bold text-luxury-brown-700 block mb-1">
+                          Featured Image Alt Text
+                        </label>
+                        <input
+                          type="text"
+                          value={blogFeaturedImageAlt}
+                          onChange={(e) => setBlogFeaturedImageAlt(e.target.value)}
+                          placeholder="Descriptive SEO alt text"
+                          className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl bg-luxury-beige-50 border border-luxury-brown-100">
+                      <div>
+                        <label className="font-mono uppercase font-bold text-luxury-brown-700 block mb-1">
+                          Publication Status
+                        </label>
+                        <select
+                          value={blogStatus}
+                          onChange={(e) => {
+                            const v = e.target.value as 'draft' | 'scheduled' | 'published';
+                            setBlogStatus(v);
+                            setBlogPublished(v === 'published');
+                          }}
+                          className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white font-semibold"
+                        >
+                          <option value="published">Published (Live on Website &amp; Sitemap)</option>
+                          <option value="draft">Draft (Hidden)</option>
+                          <option value="scheduled">Scheduled for Future Date</option>
+                        </select>
+                      </div>
+                      {blogStatus === 'scheduled' && (
+                        <div>
+                          <label className="font-mono uppercase font-bold text-luxury-brown-700 block mb-1">
+                            Schedule Publish Date &amp; Time
+                          </label>
+                          <input
+                            type="datetime-local"
+                            value={blogScheduledAt}
+                            onChange={(e) => setBlogScheduledAt(e.target.value)}
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white font-mono"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Complete Per-Blog SEO Settings + Live Google SERP Preview */}
+                    <div className="p-4 rounded-2xl border border-luxury-gold-500/30 bg-luxury-beige-50/40 space-y-3">
+                      <span className="text-[11px] font-mono uppercase font-bold text-luxury-gold-700 block">
+                        Complete Blog SEO, Open Graph &amp; Indexing Settings
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">SEO Title ({(blogSeo.seoTitle || blogTitle).length}/60)</label>
+                          <input
+                            type="text"
+                            value={blogSeo.seoTitle || ''}
+                            onChange={(e) => setBlogSeo({ ...blogSeo, seoTitle: e.target.value })}
+                            placeholder={blogTitle || 'Blog SEO Title'}
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Focus Keyword</label>
+                          <input
+                            type="text"
+                            value={blogSeo.focusKeyword || ''}
+                            onChange={(e) => setBlogSeo({ ...blogSeo, focusKeyword: e.target.value })}
+                            placeholder="e.g. hotel channel manager india"
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Meta Description ({(blogSeo.metaDescription || blogSummary).length}/160)</label>
+                          <textarea
+                            rows={2}
+                            value={blogSeo.metaDescription || ''}
+                            onChange={(e) => setBlogSeo({ ...blogSeo, metaDescription: e.target.value })}
+                            placeholder="Search snippet description..."
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Canonical URL</label>
+                          <input
+                            type="text"
+                            value={blogSeo.canonicalUrl || ''}
+                            onChange={(e) => setBlogSeo({ ...blogSeo, canonicalUrl: e.target.value })}
+                            placeholder={`${DIRECTSTAY_DOMAIN}/blog/${blogSlug || 'article-slug'}/`}
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white font-mono text-[11px]"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">OG Sharing Image URL</label>
+                          <input
+                            type="text"
+                            value={blogSeo.ogImage || ''}
+                            onChange={(e) => setBlogSeo({ ...blogSeo, ogImage: e.target.value })}
+                            placeholder="https://... (defaults to Cover Image)"
+                            className="w-full px-3 py-2 border border-luxury-brown-200 rounded-xl bg-white font-mono text-[11px]"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Robots Indexing</label>
+                          <select
+                            value={blogSeo.robotsIndex || 'index'}
+                            onChange={(e) => setBlogSeo({ ...blogSeo, robotsIndex: e.target.value as 'index' | 'noindex' })}
+                            className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          >
+                            <option value="index">Index</option>
+                            <option value="noindex">Noindex</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-700 block mb-1">Robots Follow</label>
+                          <select
+                            value={blogSeo.robotsFollow || 'follow'}
+                            onChange={(e) => setBlogSeo({ ...blogSeo, robotsFollow: e.target.value as 'follow' | 'nofollow' })}
+                            className="w-full px-2.5 py-2 border border-luxury-brown-200 rounded-xl bg-white"
+                          >
+                            <option value="follow">Follow</option>
+                            <option value="nofollow">Nofollow</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="bg-white rounded-xl border border-luxury-brown-100 p-3 space-y-0.5">
+                        <span className="text-[9px] font-mono uppercase text-luxury-brown-400 font-bold block">Google Search SERP Preview</span>
+                        <p className="text-[11px] text-emerald-700 font-mono truncate">
+                          {blogSeo.canonicalUrl || `${DIRECTSTAY_DOMAIN}/blog/${blogSlug || 'article-slug'}/`}
+                        </p>
+                        <p className="text-sm font-semibold text-blue-800 truncate">
+                          {blogSeo.seoTitle || blogTitle || 'Your Blog Title | DirectStay PMS'}
+                        </p>
+                        <p className="text-[11px] text-stone-600 line-clamp-2">
+                          {blogSeo.metaDescription || blogSummary || 'Enter a meta description to preview your Google search snippet.'}
+                        </p>
+                      </div>
                     </div>
 
                     <div className="pt-3 flex justify-end gap-3 border-t border-luxury-brown-100">
@@ -5831,6 +6940,235 @@ export default function SuperAdminHub({
                 )}
               </div>
             </div>
+
+            {/* SaaS Payments Ledger, Renewal Verification & Upgrade History */}
+            {(() => {
+              const allPayments: SubscriptionPaymentRecord[] = [];
+              const seenIds = new Set<string>();
+              hotels.forEach((h) => {
+                (h.subscriptionPayments || []).forEach((p) => {
+                  if (p && !seenIds.has(p.id)) {
+                    seenIds.add(p.id);
+                    allPayments.push(p);
+                  }
+                });
+              });
+              allPayments.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+              const pendingCount = allPayments.filter((p) => p.status === 'Pending').length;
+              const approvedCount = allPayments.filter((p) => p.status === 'Approved').length;
+              const failedCount = allPayments.filter((p) => p.status === 'Failed' || p.status === 'Rejected').length;
+              const verifiedRevenue = allPayments
+                .filter((p) => p.status === 'Approved')
+                .reduce((s, p) => s + Number(p.totalAmount || 0), 0);
+
+              const filteredPayments = allPayments.filter((p) =>
+                paymentStatusFilter === 'All' ? true : p.status === paymentStatusFilter
+              );
+
+              const expiringOrExpiredHotels = hotels
+                .map((h) => ({ hotel: h, days: computeDaysRemaining(h.subscriptionEndDate) }))
+                .filter(({ hotel: h, days }) => h.subscriptionStatus === 'Expired' || (days !== null && days <= 15))
+                .sort((a, b) => (a.days ?? 999) - (b.days ?? 999));
+
+              return (
+                <div className="space-y-6">
+                  {/* Payments & Renewal Verification Ledger */}
+                  <div className="bg-white border border-luxury-brown-100 rounded-2xl p-6 space-y-4 shadow-2xs">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-luxury-brown-100 pb-4">
+                      <div>
+                        <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-luxury-gold-700 block">
+                          Verified Billing &amp; Reconciliation Queue
+                        </span>
+                        <h3 className="text-lg font-serif font-bold text-luxury-brown-950">
+                          Subscription Payments, Renewals &amp; Upgrade History ({allPayments.length})
+                        </h3>
+                        <p className="text-xs text-luxury-brown-500">
+                          Verify UTR receipts before activating memberships. Approved payments automatically extend validity and issue 18% GST Invoices &amp; Payment Receipts.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono font-bold">
+                        <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          Verified: {approvedCount} (₹{verifiedRevenue.toLocaleString('en-IN')})
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
+                          Pending: {pendingCount}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-800 border border-rose-200">
+                          Rejected/Failed: {failedCount}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 text-[11px] font-mono font-bold">
+                      {(['All', 'Pending', 'Approved', 'Rejected', 'Failed'] as const).map((st) => (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => setPaymentStatusFilter(st)}
+                          className={`px-3 py-1 rounded-lg border cursor-pointer ${
+                            paymentStatusFilter === st
+                              ? 'bg-luxury-brown-950 text-luxury-gold-400 border-luxury-brown-950'
+                              : 'bg-white text-luxury-brown-700 border-luxury-brown-200 hover:bg-luxury-beige-50'
+                          }`}
+                        >
+                          {st}
+                        </button>
+                      ))}
+                    </div>
+
+                    {filteredPayments.length > 0 ? (
+                      <div className="overflow-x-auto border border-luxury-brown-100 rounded-xl">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-luxury-beige-50 border-b border-luxury-brown-100 text-[10px] font-mono uppercase text-luxury-brown-600">
+                              <th className="py-2.5 px-3">Date</th>
+                              <th className="py-2.5 px-3">Hotel</th>
+                              <th className="py-2.5 px-3">Package / Type</th>
+                              <th className="py-2.5 px-3">Mode &amp; UTR</th>
+                              <th className="py-2.5 px-3 text-right">Amount (Incl. GST)</th>
+                              <th className="py-2.5 px-3">Status</th>
+                              <th className="py-2.5 px-3 text-right">Verification Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-luxury-brown-100">
+                            {filteredPayments.slice(0, 20).map((pay) => (
+                              <tr key={pay.id} className="hover:bg-luxury-beige-50/40">
+                                <td className="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">{pay.createdAt}</td>
+                                <td className="py-2.5 px-3 font-bold text-luxury-brown-950">{pay.hotelName}</td>
+                                <td className="py-2.5 px-3">
+                                  <span className="font-semibold block">{pay.packageName}</span>
+                                  <span className="text-[10px] font-mono text-luxury-gold-700">
+                                    {pay.isUpgrade ? `Upgrade from ${pay.previousPackageName || 'Previous'}` : 'Renewal'}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 font-mono text-[11px]">
+                                  {pay.paymentMethod}
+                                  {pay.utrNumber ? <span className="block text-luxury-brown-600">UTR: {pay.utrNumber}</span> : null}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono font-bold text-right">
+                                  ₹{Number(pay.totalAmount || 0).toLocaleString('en-IN')}
+                                  <span className="block text-[9px] text-luxury-brown-500">
+                                    Base ₹{Number(pay.baseAmount || 0).toLocaleString('en-IN')} + {pay.gstRate || 18}% GST
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                                      pay.status === 'Approved'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : pay.status === 'Pending'
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : 'bg-rose-100 text-rose-800'
+                                    }`}
+                                  >
+                                    {pay.status}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                                  {pay.status === 'Pending' ? (
+                                    <div className="inline-flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        disabled={verifyingPaymentId === pay.id}
+                                        onClick={() => handleVerifySubscriptionPayment(pay.id, 'Approved')}
+                                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] cursor-pointer disabled:opacity-50"
+                                      >
+                                        ✓ Verify &amp; Activate
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={verifyingPaymentId === pay.id}
+                                        onClick={() => {
+                                          const reason = window.prompt('Reason for rejecting payment (optional):', 'UTR not found in bank statement') || '';
+                                          handleVerifySubscriptionPayment(pay.id, 'Rejected', reason);
+                                        }}
+                                        className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-[11px] cursor-pointer"
+                                      >
+                                        Reject
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] font-mono text-luxury-brown-500">
+                                      {pay.invoiceNumber || (pay.verifiedBy ? `By ${pay.verifiedBy}` : 'Recorded')}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="p-5 rounded-xl bg-luxury-beige-50/50 border border-luxury-brown-100 text-center text-xs text-luxury-brown-500">
+                        No subscription payment records match the selected filter yet.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Expiring & Expired Memberships Quick Reminder Desk */}
+                  <div className="bg-white border border-luxury-brown-100 rounded-2xl p-6 space-y-4 shadow-2xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-luxury-brown-100 pb-3">
+                      <div>
+                        <h3 className="text-base font-serif font-bold text-luxury-brown-950">
+                          Expiring Soon &amp; Expired Memberships ({expiringOrExpiredHotels.length})
+                        </h3>
+                        <p className="text-xs text-luxury-brown-500">
+                          Send renewal reminders via WhatsApp or jump directly to CMS, SEO &amp; WhatsApp settings.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 text-[11px] font-bold">
+                        <button type="button" onClick={() => setActiveSubTab('packages')} className="px-3 py-1.5 rounded-lg bg-luxury-beige-50 border border-luxury-brown-200 text-luxury-brown-800 hover:bg-luxury-beige-100 cursor-pointer">Packages</button>
+                        <button type="button" onClick={() => setActiveSubTab('pages')} className="px-3 py-1.5 rounded-lg bg-luxury-beige-50 border border-luxury-brown-200 text-luxury-brown-800 hover:bg-luxury-beige-100 cursor-pointer">CMS Pages</button>
+                        <button type="button" onClick={() => setActiveSubTab('blogs')} className="px-3 py-1.5 rounded-lg bg-luxury-beige-50 border border-luxury-brown-200 text-luxury-brown-800 hover:bg-luxury-beige-100 cursor-pointer">Blogs</button>
+                        <button type="button" onClick={() => { setCmsSubPanel('seo'); setActiveSubTab('website'); }} className="px-3 py-1.5 rounded-lg bg-luxury-brown-950 text-luxury-gold-400 cursor-pointer">SEO Settings</button>
+                        <button type="button" onClick={() => { setCmsSubPanel('payments'); setActiveSubTab('website'); }} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer">UPI &amp; WhatsApp Config</button>
+                      </div>
+                    </div>
+
+                    {expiringOrExpiredHotels.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                        {expiringOrExpiredHotels.map(({ hotel: h, days }) => {
+                          const waHref = buildDirectStayWhatsappUrl({
+                            phone: h.whatsappNumber || h.phoneNumber || DEFAULT_WHATSAPP_NUMBER,
+                            customMessage: `Namaste ${h.ownerName || h.name}, your DirectStay PMS membership for ${h.name} ${
+                              days !== null && days < 0
+                                ? `expired on ${h.subscriptionEndDate}`
+                                : `is expiring on ${h.subscriptionEndDate} (${days} days left)`
+                            }. Your property data is 100% safe. Renew anytime from your dashboard or reply here for UPI renewal assistance.`,
+                          });
+                          return (
+                            <div key={h.id} className="p-3.5 rounded-xl border border-luxury-brown-200 bg-luxury-beige-50/40 flex items-center justify-between gap-3">
+                              <div>
+                                <p className="font-bold text-luxury-brown-950">{h.name}</p>
+                                <p className="text-[11px] font-mono text-luxury-brown-600">
+                                  Expires: {h.subscriptionEndDate || 'N/A'} •{' '}
+                                  <strong className={days !== null && days < 0 ? 'text-rose-700' : 'text-amber-700'}>
+                                    {days === null ? 'Expired' : days < 0 ? `${Math.abs(days)}d overdue` : `${days}d left`}
+                                  </strong>
+                                </p>
+                              </div>
+                              <a
+                                href={waHref}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shrink-0"
+                              >
+                                💬 Remind on WhatsApp
+                              </a>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                        All active hotel memberships have more than 15 days remaining.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -6828,10 +8166,10 @@ export default function SuperAdminHub({
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <span className="text-[10px] font-mono text-luxury-brown-500">Quick Presets:</span>
                   {[
-                    { rooms: 15, label: '15 Rooms (Starter)' },
+                    { rooms: 10, label: '10 Rooms (OTA Starter)' },
                     { rooms: 35, label: '35 Rooms (Growth)' },
                     { rooms: 75, label: '75 Rooms (Luxury)' },
-                    { rooms: 9999, label: 'Unlimited Rooms' }
+                    { rooms: 999, label: 'Unlimited Rooms' }
                   ].map(p => (
                     <button
                       key={p.rooms}
@@ -6846,6 +8184,125 @@ export default function SuperAdminHub({
                       {p.label}
                     </button>
                   ))}
+                </div>
+
+                {/* GST, Duration, Discount & OTA Limits */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-luxury-brown-100">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-luxury-brown-800 mb-1">GST % Extra</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="28"
+                      value={pkgFormGstRate}
+                      onChange={(e) => setPkgFormGstRate(Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-luxury-brown-200 text-xs font-mono bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-luxury-brown-800 mb-1">Duration (Days)</label>
+                    <input
+                      type="number"
+                      min="7"
+                      value={pkgFormDurationDays}
+                      onChange={(e) => setPkgFormDurationDays(Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-luxury-brown-200 text-xs font-mono bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-luxury-brown-800 mb-1">Regular Price (Strike ₹)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={pkgFormRegularPriceYearly}
+                      onChange={(e) => setPkgFormRegularPriceYearly(Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-luxury-brown-200 text-xs font-mono bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-luxury-brown-800 mb-1">OTA Room Limit</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="999"
+                      value={pkgFormOtaLimit}
+                      onChange={(e) => setPkgFormOtaLimit(Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-luxury-brown-200 text-xs font-mono bg-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-luxury-brown-800 mb-1">Discount / Offer Badge</label>
+                    <input
+                      type="text"
+                      value={pkgFormDiscountLabel}
+                      onChange={(e) => setPkgFormDiscountLabel(e.target.value)}
+                      placeholder="e.g. Save 20% Annually"
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-luxury-brown-200 text-xs bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-luxury-brown-800 mb-1">Trial Days</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={pkgFormTrialDays}
+                      onChange={(e) => setPkgFormTrialDays(Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-luxury-brown-200 text-xs font-mono bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-luxury-brown-800 mb-1">Renewal Grace Days</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={pkgFormRenewalGraceDays}
+                      onChange={(e) => setPkgFormRenewalGraceDays(Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-luxury-brown-200 text-xs font-mono bg-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-luxury-brown-800 mb-1">
+                    Included Features List (One feature per line — shown on Pricing &amp; Renewal Checkout)
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={pkgFormFeaturesText}
+                    onChange={(e) => setPkgFormFeaturesText(e.target.value)}
+                    placeholder="Unlimited Rooms & Floors&#10;Front Desk & GST Billing&#10;OTA Channel Manager Sync"
+                    className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 text-xs bg-white font-sans"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-luxury-brown-800 mb-1">Renewal Rules &amp; Notes</label>
+                    <input
+                      type="text"
+                      value={pkgFormRenewalRulesText}
+                      onChange={(e) => setPkgFormRenewalRulesText(e.target.value)}
+                      placeholder="e.g. Auto-extends 365 days upon verified UPI/gateway payment"
+                      className="w-full px-3 py-1.5 rounded-xl border border-luxury-brown-200 text-xs bg-white"
+                    />
+                  </div>
+                  <div className="flex items-end gap-4 pb-1 text-xs">
+                    <label className="inline-flex items-center gap-2 font-semibold cursor-pointer">
+                      <input type="checkbox" checked={pkgFormIsActive} onChange={(e) => setPkgFormIsActive(e.target.checked)} />
+                      Active Package
+                    </label>
+                    <label className="inline-flex items-center gap-2 font-semibold cursor-pointer">
+                      <input type="checkbox" checked={pkgFormIsPopular} onChange={(e) => setPkgFormIsPopular(e.target.checked)} />
+                      Highlight Popular
+                    </label>
+                    <label className="inline-flex items-center gap-2 font-semibold cursor-pointer">
+                      <input type="checkbox" checked={pkgFormTrialEnabled} onChange={(e) => setPkgFormTrialEnabled(e.target.checked)} />
+                      Trial Enabled
+                    </label>
+                  </div>
                 </div>
               </div>
 

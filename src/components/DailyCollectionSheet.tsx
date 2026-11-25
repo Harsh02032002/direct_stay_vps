@@ -13,6 +13,7 @@ import {
   DailyClosingRecord,
   WaterBottleRecord,
   LaundryOrder,
+  FoodAdvanceBooking,
 } from '../types';
 import DirtyRoomsPanel from './DirtyRoomsPanel';
 import { showToast } from '../utils/toast';
@@ -21,6 +22,8 @@ import {
   formatDdmmyyyy,
   addDaysIst,
 } from '../utils/reportingDates';
+import { buildStayBill } from '../utils/stayBilling';
+import { normalizeBillSettings, r2 } from '../utils/billCalculator';
 import { 
   Printer, Download, Calendar, ChevronLeft, ChevronRight, 
   Search, FileSpreadsheet, DollarSign, Edit3, Check,
@@ -34,6 +37,7 @@ interface DailyCollectionSheetProps {
   invoices: Invoice[];
   expenses: Expense[];
   posOrders?: PosOrder[];
+  posAdvanceBookings?: FoodAdvanceBooking[];
   handovers?: CashHandover[];
   ownerPayments?: OwnerDirectorPayment[];
   dailyClosings?: DailyClosingRecord[];
@@ -74,6 +78,1130 @@ const isCapitalContributionPayment = (op: any): boolean => {
   return t.includes('capital') || t.includes('loan in') || t.includes('introduced') || t.includes('injection');
 };
 
+const isLaundryDescription = (raw?: string): boolean => {
+  const d = String(raw || '').toLowerCase();
+  return d.includes('laundry') || d.includes('dry clean') || /\biron(ing)?\b/.test(d);
+};
+
+export interface DailyCollectionReportInput {
+  selectedDate: string;
+  searchTerm?: string;
+  rooms?: Room[];
+  bookings?: Booking[];
+  checkins?: GuestCheckIn[];
+  invoices?: Invoice[];
+  expenses?: Expense[];
+  posOrders?: PosOrder[];
+  posAdvanceBookings?: FoodAdvanceBooking[];
+  handovers?: CashHandover[];
+  ownerPayments?: OwnerDirectorPayment[];
+  waterBottles?: WaterBottleRecord[];
+  laundryOrders?: LaundryOrder[];
+  hotelSettings?: HotelSettings;
+  todayYmdOverride?: string;
+}
+
+export function computeDailyCollectionSheet(input: DailyCollectionReportInput) {
+  const {
+    selectedDate,
+    searchTerm = '',
+    rooms = [],
+    bookings = [],
+    checkins = [],
+    invoices = [],
+    expenses = [],
+    posOrders = [],
+    posAdvanceBookings = [],
+    handovers = [],
+    ownerPayments = [],
+    waterBottles = [],
+    laundryOrders = [],
+    hotelSettings,
+    todayYmdOverride,
+  } = input;
+
+  const billSettings = normalizeBillSettings(hotelSettings as any);
+  const rowsMap = new Map<string, any>();
+  const makeRowKey = (roomNum: any, guest: any) =>
+    `${String(roomNum || '').trim()}_${String(guest || '').trim().toLowerCase()}`;
+
+  // 1. Check-ins active or settled on the selected date (including overdue active in-house guests)
+  const todayYmd = todayYmdOverride || localTodayStr();
+  checkins.forEach((c) => {
+    const inDate = toLocalYmd(c.checkInDate);
+    const outDate = toLocalYmd(c.checkOutDate);
+    const checkedOutLocal = toLocalYmd(c.checkedOutDateTime);
+    const isCurrentlyInHouse = !checkedOutLocal;
+    const hasPaymentOnDate = Array.isArray(c.payments)
+      ? c.payments.some((p: any) => toLocalYmd(p?.dateTime || p?.date) === selectedDate)
+      : false;
+
+    const isActiveOnDate =
+      inDate === selectedDate ||
+      outDate === selectedDate ||
+      checkedOutLocal === selectedDate ||
+      hasPaymentOnDate ||
+      (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate) ||
+      (!!inDate && !outDate && inDate <= selectedDate) ||
+      (isCurrentlyInHouse && !!inDate && inDate <= selectedDate && selectedDate <= todayYmd);
+
+    if (isActiveOnDate) {
+      const key = makeRowKey(c.roomNumber, c.guestName);
+      rowsMap.set(key, {
+        source: 'checkin',
+        checkin: c,
+        guestName: c.guestName,
+        roomNumber: c.roomNumber,
+        checkInDate: inDate,
+        checkOutDate: outDate,
+        roomRate: c.roomRate || 0,
+        nights: Math.max(
+          1,
+          Math.round(
+            Math.abs(new Date(outDate || selectedDate).getTime() - new Date(inDate || selectedDate).getTime()) /
+              (1000 * 60 * 60 * 24)
+          ) || 1
+        ),
+        advancePayment: Number(c.advanceAmount ?? (c as any).advancePayment ?? 0),
+        paymentMethod: c.paymentMethod || 'Cash',
+        extraCharges: c.extraCharges || [],
+        separateInvoices: [],
+      });
+    }
+  });
+
+  // 2. Invoices generated or settled on selected date (skip superseded/cancelled/credit notes; never overwrite primary stay invoice with INV-SEP)
+  invoices.forEach((inv) => {
+    if (
+      inv.isSuperseded ||
+      (inv as any).isCreditNote ||
+      inv.invoiceType === 'Credit Note' ||
+      inv.invoiceStatus === 'Superseded' ||
+      inv.invoiceStatus === 'Cancelled'
+    ) {
+      return;
+    }
+    const invDate = toLocalYmd(inv.dateCreated || (inv as any).createdAt || (inv as any).invoiceDate || '');
+    const inDate = toLocalYmd(inv.checkInDate);
+    const outDate = toLocalYmd(inv.checkOutDate);
+    const hasPayOnDate = Array.isArray(inv.paymentHistory)
+      ? inv.paymentHistory.some((p: any) => toLocalYmd(p?.date || p?.dateTime) === selectedDate)
+      : false;
+
+    const isMatch =
+      invDate === selectedDate ||
+      inDate === selectedDate ||
+      outDate === selectedDate ||
+      hasPayOnDate ||
+      (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate);
+
+    if (isMatch) {
+      const key = makeRowKey(inv.roomNumber, inv.guestName);
+      const existing = rowsMap.get(key) || {
+        source: 'invoice',
+        guestName: inv.guestName,
+        roomNumber: inv.roomNumber,
+        checkInDate: inDate,
+        checkOutDate: outDate,
+        roomRate: inv.roomCharges || 0,
+        nights: inv.nights || 1,
+        extraCharges: [],
+        separateInvoices: [],
+      };
+
+      const isSep = Boolean(inv.isSeparateInvoice || String(inv.id || '').startsWith('INV-SEP-'));
+      if (isSep) {
+        existing.separateInvoices = [...(existing.separateInvoices || []), inv];
+      } else {
+        existing.invoice = inv;
+      }
+      rowsMap.set(key, existing);
+    }
+  });
+
+  // 3. Bookings on that date if not already in checkins (attach matching booking even if checkin exists so booking payments/metadata are available)
+  bookings.forEach((b) => {
+    const inDate = toLocalYmd(b.checkInDate);
+    const outDate = toLocalYmd(b.checkOutDate);
+    const bookedOn = toLocalYmd(b.bookingDate);
+    const isActive =
+      inDate === selectedDate ||
+      outDate === selectedDate ||
+      (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate) ||
+      (!!inDate && !outDate && inDate <= selectedDate) ||
+      (bookedOn === selectedDate && Number(b.advanceAmount || 0) > 0);
+
+    if (isActive && b.status !== 'Cancelled') {
+      const key = makeRowKey(b.roomNumber, b.guestName);
+      const existing = rowsMap.get(key);
+      if (existing) {
+        existing.booking = b;
+      } else {
+        rowsMap.set(key, {
+          source: 'booking',
+          booking: b,
+          guestName: b.guestName,
+          roomNumber: b.roomNumber,
+          checkInDate: inDate,
+          checkOutDate: outDate,
+          roomRate: b.bookingAmount ? Math.round(b.bookingAmount / (b.nights || 1)) : 2000,
+          nights: b.nights || 1,
+          advancePayment: Number(b.advanceAmount ?? (b as any).advancePayment ?? 0),
+          paymentMethod: b.paymentMethod || 'Cash',
+          extraCharges: [],
+          separateInvoices: [],
+        });
+      }
+    }
+  });
+
+  // 4. POS Food Orders on selected date (excluding Cancelled/Voided/Held)
+  const ordersOnDate = posOrders.filter((o) => {
+    const st = String(o.status || '').toLowerCase();
+    const kotSt = String((o as any).kotStatus || '').toLowerCase();
+    if (st === 'cancelled' || st === 'voided' || st === 'held' || kotSt === 'cancelled' || (o as any).isHeld) {
+      return false;
+    }
+    const oDate = toLocalYmd((o as any).date || (o as any).createdAt || (o as any).orderTime || (o as any).timestamp || '');
+    return oDate === selectedDate;
+  });
+
+  const allMatchedOrderIds = new Set<string>();
+  const cleanNum = (str: any) => String(str || '').replace(/[^\d]/g, '').trim();
+
+  // Transform mapped rows into exact 19-column settlement register using centralized billing engine
+  const processed = Array.from(rowsMap.values()).map((row, idx) => {
+    const c: GuestCheckIn | undefined = row.checkin;
+    const inv: Invoice | undefined = row.invoice;
+    const b: Booking | undefined = row.booking;
+
+    const guestName = (row.guestName || 'GUEST').toUpperCase();
+    const roomNumber = row.roomNumber || 'N/A';
+    const splitRoomNums = String(roomNumber)
+      .split(',')
+      .map((rn: string) => rn.trim())
+      .filter(Boolean);
+    const rowRoomClean = cleanNum(roomNumber);
+    const cleanSplitRooms = splitRoomNums.map(cleanNum).filter(Boolean);
+
+    // Match POS orders on selectedDate belonging to this room/stay
+    const roomOrders = ordersOnDate.filter((o) => {
+      const oRoomClean = cleanNum(o.roomNumber);
+      const oGuest = String(o.guestName || '').toLowerCase().trim();
+      const rGuest = String(guestName || '').toLowerCase().trim();
+      const isRoomMatch = Boolean(
+        rowRoomClean && oRoomClean && (rowRoomClean === oRoomClean || cleanSplitRooms.includes(oRoomClean))
+      );
+      const isCheckinMatch = Boolean(
+        (c && (o.checkinId === c.id || (o as any).checkInId === c.id)) ||
+          (b && (o as any).bookingId === b.id) ||
+          (inv && (o as any).linkedInvoiceId === inv.id)
+      );
+      const isGuestMatch = Boolean(oGuest && rGuest && (oGuest.includes(rGuest) || rGuest.includes(oGuest)));
+      return isRoomMatch || isCheckinMatch || (isGuestMatch && Boolean(o.roomNumber));
+    });
+
+    const roomBilledOrders: PosOrder[] = [];
+    let counterPaidFoodPreTax = 0;
+    let counterPaidFoodTax = 0;
+    let kitchenUpi = 0;
+    let kitchenCash = 0;
+    let kitchenIcici = 0;
+    let kitchenDue = 0;
+
+    roomOrders.forEach((o) => {
+      const oId = String(o.id || (o as any)._id);
+      allMatchedOrderIds.add(oId);
+
+      const pMethod = String(o.paymentMethod || '').toLowerCase();
+      const pStatus = String(o.paymentStatus || '').toLowerCase();
+      const toRoom = (o as any).postToRoomBill === true || pMethod.includes('room');
+      const isPaidAtCounter = ((o as any).isPaid === true || pStatus === 'paid') && !toRoom && !pMethod.includes('due') && !pMethod.includes('credit');
+      const gross = r2(Number(o.grandTotal ?? (o as any).totalAmount ?? (o as any).total ?? (o as any).subtotal ?? 0));
+      if (gross <= 0) return;
+
+      if (isPaidAtCounter) {
+        const taxAmt = r2(Number(o.taxAmount ?? (o as any).gstAmount ?? 0));
+        const preTax = r2(Math.max(0, gross - taxAmt));
+        counterPaidFoodPreTax = r2(counterPaidFoodPreTax + preTax);
+        counterPaidFoodTax = r2(counterPaidFoodTax + taxAmt);
+        const orderSplits = Array.isArray((o as any).payments) ? (o as any).payments : [];
+        if (orderSplits.length > 0) {
+          orderSplits.forEach((sp: any) => {
+            const amt = r2(Number(sp?.amount || 0));
+            if (amt <= 0) return;
+            const m = String(sp?.method || '').toLowerCase();
+            if (m.includes('cash')) kitchenCash = r2(kitchenCash + amt);
+            else if (m.includes('card') || m.includes('bank') || m.includes('icici')) kitchenIcici = r2(kitchenIcici + amt);
+            else kitchenUpi = r2(kitchenUpi + amt);
+          });
+        } else if (pMethod.includes('cash')) kitchenCash = r2(kitchenCash + gross);
+        else if (pMethod.includes('card') || pMethod.includes('bank') || pMethod.includes('icici')) kitchenIcici = r2(kitchenIcici + gross);
+        else kitchenUpi = r2(kitchenUpi + gross);
+      } else {
+        roomBilledOrders.push(o);
+        kitchenDue = r2(kitchenDue + gross);
+      }
+    });
+
+    const openingBalance = r2(Number((c as any)?.openingBalance || (b as any)?.openingBalance || 0));
+
+    let nights = row.nights || 1;
+    let baseRoomTariff = 0;
+    let extraBed = 0;
+    let extraPerson = 0;
+    let earlyCheckIn = 0;
+    let lateCheckOut = 0;
+    let discount = 0;
+    let roomTariffNum = 0;
+    let gstNum = 0;
+    let gstDisplay: number | string = 0;
+    let foodAmt = 0;
+    let waterBottleAmt = 0;
+    let laundryAmt = 0;
+    let anyOthersAmt = 0;
+
+    // Respect IMMUTABLE finalized historical invoices without recalculating or mutating them.
+    // For active stays (no invoice yet or provisional/non-finalized invoice), use centralized buildStayBill().
+    const isImmutableFinalInvoice = Boolean(
+      inv && !inv.isSuperseded && (inv.isFinalInvoice === true || inv.invoiceStatus === 'Finalized')
+    );
+
+    if (isImmutableFinalInvoice && inv) {
+      nights = Number(inv.nights) || nights;
+      baseRoomTariff = r2(Number(inv.roomCharges) || 0);
+      extraBed = r2(Number(inv.extraBedCharges) || 0);
+      extraPerson = r2(Number(inv.extraPersonCharges) || 0);
+      earlyCheckIn = r2(Number(inv.earlyCheckInCharges) || 0);
+      lateCheckOut = r2(Number(inv.lateCheckOutCharges) || 0);
+      discount = r2(Number(inv.discount) || 0);
+      foodAmt = r2((Number(inv.foodCharges) || 0) + counterPaidFoodPreTax);
+      waterBottleAmt = r2(Number(inv.waterCharges) || 0);
+      laundryAmt = r2(Number(inv.laundryCharges) || 0);
+      // buildInvoiceRecord (billEngine === 'v2') stores otherCharges = legacy.otherCharges + legacy.fineCharges;
+      // avoid double-counting fineCharges on top of otherCharges (UI-BUG-04).
+      const rawOther = r2(Number(inv.otherCharges) || 0);
+      const rawFine = r2(Number(inv.fineCharges) || 0);
+      const nonOverlapOtherAndFine =
+        (inv as any).billEngine === 'v2' && rawFine > 0 && rawOther >= rawFine
+          ? rawOther
+          : r2(rawOther + rawFine);
+      let serviceMisc = r2((Number(inv.serviceCharges) || 0) + nonOverlapOtherAndFine);
+
+      // Re-classify display column if a historical invoice stored laundry under serviceCharges
+      if (laundryAmt === 0 && serviceMisc > 0 && Array.isArray((inv as any).ledgerLines)) {
+        let detectedLaundry = 0;
+        (inv as any).ledgerLines.forEach((ll: any) => {
+          if (ll?.type === 'charge' && (ll.kind === 'service' || ll.kind === 'other') && isLaundryDescription(ll.description)) {
+            detectedLaundry = r2(detectedLaundry + (Number(ll.charges) || 0));
+          }
+        });
+        if (detectedLaundry > 0 && detectedLaundry <= serviceMisc + 0.01) {
+          laundryAmt = Math.min(detectedLaundry, serviceMisc);
+          serviceMisc = r2(Math.max(0, serviceMisc - laundryAmt));
+        }
+      }
+
+      anyOthersAmt = serviceMisc;
+      const roomGross = r2(baseRoomTariff + extraBed + extraPerson + earlyCheckIn + lateCheckOut);
+      const roomDisc = Math.min(roomGross, discount);
+      const extraDisc = r2(Math.max(0, discount - roomDisc));
+      roomTariffNum = r2(roomGross - roomDisc);
+      anyOthersAmt = r2(Math.max(0, anyOthersAmt - extraDisc));
+      gstNum = r2((Number(inv.gst ?? (inv as any).tax ?? 0) || 0) + counterPaidFoodTax);
+      gstDisplay = gstNum;
+
+      // Guarantee finalized invoice reconciliation if a legacy invoice omitted granular breakdown fields
+      const expectedTotal = r2((Number(inv.finalAmount) || 0) + counterPaidFoodPreTax + counterPaidFoodTax);
+      const computedSum = r2(roomTariffNum + gstNum + foodAmt + waterBottleAmt + laundryAmt + anyOthersAmt);
+      if (expectedTotal > 0 && Math.abs(expectedTotal - computedSum) > 0.01) {
+        const delta = r2(expectedTotal - computedSum);
+        if (roomTariffNum + delta >= 0) {
+          roomTariffNum = r2(roomTariffNum + delta);
+        } else {
+          anyOthersAmt = r2(Math.max(0, anyOthersAmt + delta));
+        }
+      }
+    } else {
+      const stay = buildStayBill({
+        booking: b || null,
+        checkin: c || null,
+        posOrders: roomBilledOrders,
+        waterBottles,
+        laundryOrders,
+        rooms,
+        settings: billSettings,
+      });
+
+      nights = stay.folio.nights || nights;
+      baseRoomTariff = stay.bill.totalsByKind.room;
+      extraBed = stay.bill.totalsByKind.extra_bed;
+      extraPerson = stay.bill.totalsByKind.extra_person;
+      earlyCheckIn = stay.bill.totalsByKind.early_checkin;
+      lateCheckOut = stay.bill.totalsByKind.late_checkout;
+      discount = stay.bill.discount;
+
+      const roomGross = r2(baseRoomTariff + extraBed + extraPerson + earlyCheckIn + lateCheckOut);
+      const roomDisc = Math.min(roomGross, discount);
+      const extraDisc = r2(Math.max(0, discount - roomDisc));
+      roomTariffNum = r2(roomGross - roomDisc);
+
+      foodAmt = r2(stay.bill.totalsByKind.food + counterPaidFoodPreTax);
+      waterBottleAmt = r2(stay.bill.totalsByKind.water);
+      laundryAmt = r2(stay.bill.totalsByKind.laundry);
+      const rawOtherExtras = r2(
+        stay.bill.totalsByKind.service + stay.bill.totalsByKind.other + stay.bill.totalsByKind.fine
+      );
+      anyOthersAmt = r2(Math.max(0, rawOtherExtras - extraDisc));
+
+      gstNum = r2(stay.bill.totalTax + counterPaidFoodTax);
+      if (gstNum === 0 && !inv && !c?.gstAmount && ((b as any)?.otaName === 'MakeMyTrip' || (b as any)?.otaName === 'MMT')) {
+        gstDisplay = 'MMT';
+      } else {
+        gstDisplay = gstNum;
+      }
+    }
+
+    const totalRoom = r2(openingBalance + roomTariffNum + gstNum);
+    const totalExtra = r2(foodAmt + waterBottleAmt + laundryAmt + anyOthersAmt);
+    const grandTotal = r2(totalRoom + totalExtra);
+    const taxableSubtotal = r2(roomTariffNum + totalExtra);
+
+    // Room Payment Modes (Hybrid / Split Payment Aware across checkin.payments, invoice.paymentHistory, invoice.paymentDetails, booking.payments)
+    // UI-BUG-02: Separate SELECTED-DAY cash/UPI/card inflows (for Col 15-18 & Daily Vault) from
+    // CUMULATIVE stay receipts up through selectedDate (for Col 19 Balance Due), using actual payment date (never checkOutDate).
+    let cashPay = 0;
+    let upiPay = 0;
+    let iciciPay = 0; // Card / Bank / Online (selectedDate inflow only)
+    let cumulativeRoomPaid = 0; // Cumulative stay receipts on or before selectedDate
+
+    const fallbackPayDate = toLocalYmd(
+      c?.checkInDate || b?.bookingDate || b?.checkInDate || inv?.dateCreated || ''
+    );
+
+    const normalizeModeBucket = (modeRaw: string): 'cash' | 'upi' | 'icici' => {
+      const m = String(modeRaw || 'Cash').toLowerCase();
+      if (m.includes('cash')) return 'cash';
+      if (m.includes('upi') || m.includes('gpay') || m.includes('phonepe') || m.includes('paytm') || m.includes('qr')) return 'upi';
+      if (m.includes('card') || m.includes('bank') || m.includes('icici') || m.includes('online') || m.includes('neft') || m.includes('rtgs') || m.includes('imps')) return 'icici';
+      return 'cash';
+    };
+
+    const addPaymentRecord = (modeRaw: string, amtRaw: number, payDateRaw?: string) => {
+      const amt = r2(Number(amtRaw) || 0);
+      if (amt <= 0) return;
+      const pYmd = toLocalYmd(payDateRaw || '') || fallbackPayDate;
+      // Cumulative stay payment includes any payment made on or before selectedDate
+      if (!pYmd || pYmd <= selectedDate) {
+        cumulativeRoomPaid = r2(cumulativeRoomPaid + amt);
+      }
+      // Daily collection inflow ONLY counts payments actually received on selectedDate
+      if (pYmd && pYmd !== selectedDate) return;
+      const bucket = normalizeModeBucket(modeRaw);
+      if (bucket === 'cash') cashPay = r2(cashPay + amt);
+      else if (bucket === 'upi') upiPay = r2(upiPay + amt);
+      else iciciPay = r2(iciciPay + amt);
+    };
+
+    const structuredPayments: Array<{
+      id: string;
+      mode: string;
+      modeBucket: 'cash' | 'upi' | 'icici';
+      amount: number;
+      isAdv: boolean;
+      isCheckoutSettle: boolean;
+      source: string;
+      date: string;
+    }> = [];
+    const seenPayIds = new Set<string>();
+    const sourceTotals = new Map<string, number>();
+
+    const pushStructured = (
+      source: 'checkin' | 'invoice_hist' | 'invoice_det' | 'booking',
+      idRaw: any,
+      modeRaw: any,
+      amtRaw: any,
+      notesRaw?: any,
+      typeRaw?: any,
+      dateRaw?: any
+    ) => {
+      const amt = r2(Number(amtRaw) || 0);
+      if (amt <= 0) return;
+      const notesLower = String(notesRaw || '').toLowerCase();
+      if (notesLower.includes('marked as due')) return;
+      const idStr = String(idRaw || '').trim();
+      const typeLower = String(typeRaw || '').toLowerCase();
+      const isAdv =
+        typeLower.includes('advance') ||
+        notesLower.includes('advance') ||
+        notesLower.includes('check-in') ||
+        idStr.toLowerCase().includes('adv') ||
+        idStr.toLowerCase().includes('checkin');
+      const isCheckoutSettle =
+        idStr.toUpperCase().startsWith('PAY-CO-') ||
+        typeLower.includes('settle') ||
+        notesLower.includes('checkout') ||
+        notesLower.includes('check-out');
+      const modeBucket = normalizeModeBucket(String(modeRaw || 'Cash'));
+      const resolvedDate = toLocalYmd(String(dateRaw || '')) || fallbackPayDate;
+
+      if (idStr && seenPayIds.has(idStr)) return;
+
+      // Cross-source deduplication ONLY (never drops two distinct legitimate splits inside the SAME source!):
+      // 1. Prevent synthetic/mirrored advance sum from duplicating check-in/invoice payments.
+      const primaryTotal = (sourceTotals.get('checkin') || 0) + (sourceTotals.get('invoice_hist') || 0);
+      if (source !== 'checkin' && isAdv && primaryTotal > 0 && Math.abs(primaryTotal - amt) < 1) {
+        return;
+      }
+
+      // 2. Prevent cross-source checkout settlement double-counting when checkin.payments[] and
+      //    invoice.paymentHistory[] carry different PAY-CO-* IDs for the same stay settlement
+      //    (e.g. historical pre-fix Undo + Re-Checkout where old finalized invoice kept an older PAY-CO-* ID).
+      if (source !== 'checkin' && isCheckoutSettle) {
+        const checkinAlreadyHasSameCheckout = structuredPayments.some(
+          (sp) =>
+            sp.source === 'checkin' &&
+            sp.isCheckoutSettle &&
+            sp.modeBucket === modeBucket &&
+            sp.date === resolvedDate &&
+            Math.abs(sp.amount - amt) < 0.5
+        );
+        if (checkinAlreadyHasSameCheckout) {
+          return;
+        }
+      }
+
+      // 3. Prevent mirrored booking.payments[] entries (e.g. pay-adv-1 vs PAY-<id>-adv-1) from
+      //    double-counting an advance already present in checkin.payments[] or invoice_hist.
+      if (source === 'booking') {
+        const mirroredInPrimary = structuredPayments.some(
+          (sp) =>
+            (sp.source === 'checkin' || sp.source === 'invoice_hist') &&
+            sp.modeBucket === modeBucket &&
+            sp.date === resolvedDate &&
+            Math.abs(sp.amount - amt) < 0.5
+        );
+        if (mirroredInPrimary) {
+          return;
+        }
+      }
+
+      if (idStr) seenPayIds.add(idStr);
+      sourceTotals.set(source, r2((sourceTotals.get(source) || 0) + amt));
+      structuredPayments.push({
+        id: idStr,
+        mode: String(modeRaw || 'Cash'),
+        modeBucket,
+        amount: amt,
+        isAdv,
+        isCheckoutSettle,
+        source,
+        date: resolvedDate,
+      });
+    };
+
+    if (Array.isArray(c?.payments) && c.payments.length > 0) {
+      c.payments.forEach((p: any, i: number) =>
+        pushStructured('checkin', p.id || `cp-${i}`, p.paymentMethod || p.method, p.amount, p.notes, p.paymentType, p.date || p.dateTime)
+      );
+    }
+    if (inv && Array.isArray(inv.paymentHistory) && inv.paymentHistory.length > 0) {
+      inv.paymentHistory.forEach((p: any, i: number) =>
+        pushStructured('invoice_hist', p.id || `iph-${i}`, p.paymentMethod || p.mode || p.method, p.amount, p.notes, undefined, p.date || p.dateTime || inv.dateCreated)
+      );
+    }
+    if (inv && Array.isArray((inv as any).paymentDetails) && (inv as any).paymentDetails.length > 0) {
+      (inv as any).paymentDetails.forEach((p: any, i: number) =>
+        pushStructured('invoice_det', p.id || `ipd-${i}`, p.mode || p.method || p.paymentMethod, p.amount, p.notes, undefined, p.date || p.dateTime || inv.dateCreated)
+      );
+    }
+    if (Array.isArray((b as any)?.payments) && (b as any).payments.length > 0) {
+      (b as any).payments.forEach((p: any, i: number) =>
+        pushStructured('booking', p.id || `bp-${i}`, p.paymentMethod || p.method, p.amount, p.notes, p.paymentType, p.date || p.dateTime || b?.bookingDate)
+      );
+    }
+
+    if (structuredPayments.length > 0) {
+      structuredPayments.forEach((sp) => addPaymentRecord(sp.mode, sp.amount, sp.date));
+    } else {
+      const pMode = String(c?.paymentMethod || b?.paymentMethod || inv?.paymentMethod || 'Cash');
+      const splitMatches = Array.from(pMode.matchAll(/(Cash|UPI|Card|Bank(?:\s*Transfer)?|Online)\s*₹?\s*([\d.]+)/gi));
+      if (splitMatches.length > 0) {
+        splitMatches.forEach((m) => addPaymentRecord(m[1], Number(m[2]), fallbackPayDate));
+      } else {
+        const legacyCash = Number(c?.cashAmountPaid || 0);
+        const legacyOnline = Number(c?.onlineAmountPaid || 0);
+        if (legacyCash + legacyOnline > 0) {
+          addPaymentRecord('Cash', legacyCash, fallbackPayDate);
+          addPaymentRecord(
+            pMode.toLowerCase().includes('card') || pMode.toLowerCase().includes('bank') ? pMode : 'UPI',
+            legacyOnline,
+            fallbackPayDate
+          );
+        } else {
+          const paid = Number(
+            inv?.paidAmount ?? inv?.amountPaid ?? Number(c?.advanceAmount || 0) ?? Number(b?.advanceAmount || 0)
+          );
+          addPaymentRecord(pMode, paid, fallbackPayDate);
+        }
+      }
+    }
+
+    const payCash = r2(cashPay + kitchenCash);
+    const payUpi = r2(upiPay + kitchenUpi);
+    const payIcici = r2(iciciPay + kitchenIcici);
+    const totalPayment = r2(payCash + payUpi + payIcici);
+    const cumulativeTotalPaid = r2(cumulativeRoomPaid + kitchenCash + kitchenUpi + kitchenIcici);
+    const balanceDue = Math.max(0, r2(grandTotal - cumulativeTotalPaid));
+
+    const checkinTarget: GuestCheckIn | null =
+      c ||
+      (b
+        ? ({
+            id: b.id,
+            guestName: b.guestName,
+            mobile: b.mobile || '',
+            roomNumber: b.roomNumber || roomNumber,
+            roomType: b.roomType || 'Standard',
+            roomRate:
+              Number(b.bookedRooms?.[0]?.rate) ||
+              Math.round((Number(baseRoomTariff || roomTariffNum) || 0) / Math.max(1, Number(nights) || 1)) ||
+              2000,
+            checkInDate: b.checkInDate,
+            checkOutDate: b.checkOutDate,
+            advanceAmount: Number(b.advanceAmount) || 0,
+            paymentMethod: b.paymentMethod || 'Cash',
+            discount,
+            totalAmount: grandTotal,
+            pendingAmount: balanceDue,
+            checkedOutDateTime: inv?.dateCreated || b.checkOutDate,
+          } as GuestCheckIn)
+        : null);
+
+    return {
+      no: idx + 1,
+      guestName,
+      roomNumber,
+      nights,
+      openingBalance,
+      roomTariff: roomTariffNum,
+      gst: gstDisplay,
+      totalRoom,
+      food: foodAmt,
+      waterBottle: waterBottleAmt,
+      laundry: laundryAmt,
+      anyOthers: anyOthersAmt,
+      totalExtra,
+      grandTotal,
+      cash: payCash,
+      upi: payUpi,
+      icici: payIcici,
+      totalPayment,
+      balanceDue,
+      // Detailed components for audit transparency & tooltips
+      baseRoomTariff,
+      extraBed,
+      extraPerson,
+      earlyCheckIn,
+      lateCheckOut,
+      discount,
+      taxableSubtotal,
+      kitchenUpi,
+      kitchenCash,
+      kitchenDue,
+      totalFoodAmt: foodAmt,
+      checkinTarget,
+    };
+  });
+
+  // 5. Append any walk-in / non-room food orders on the selected date so no food sales are omitted
+  const unallocatedOrders = ordersOnDate.filter(
+    (o) => !allMatchedOrderIds.has(String(o.id || (o as any)._id))
+  );
+
+  unallocatedOrders.forEach((o) => {
+    const grossAmt = r2(Number(o.grandTotal ?? (o as any).totalAmount ?? (o as any).total ?? (o as any).subtotal ?? 0));
+    if (grossAmt <= 0) return;
+    const taxAmt = r2(Number(o.taxAmount ?? (o as any).gstAmount ?? 0));
+    const foodPreTax = r2(Math.max(0, grossAmt - taxAmt));
+
+    const pMethod = String(o.paymentMethod || '').toLowerCase();
+    const pStatus = String(o.paymentStatus || '').toLowerCase();
+    const isPaid = (o as any).isPaid === true || pStatus === 'paid';
+    let kUpi = 0;
+    let kCash = 0;
+    let kIcici = 0;
+    let kDue = 0;
+    const orderSplits = Array.isArray((o as any).payments) ? (o as any).payments : [];
+    if (!isPaid || pMethod.includes('due') || pMethod.includes('room') || pMethod.includes('credit')) {
+      kDue = grossAmt;
+    } else if (orderSplits.length > 0) {
+      orderSplits.forEach((sp: any) => {
+        const amt = r2(Number(sp?.amount || 0));
+        if (amt <= 0) return;
+        const m = String(sp?.method || '').toLowerCase();
+        if (m.includes('cash')) kCash = r2(kCash + amt);
+        else if (m.includes('card') || m.includes('bank') || m.includes('icici')) kIcici = r2(kIcici + amt);
+        else kUpi = r2(kUpi + amt);
+      });
+    } else if (pMethod.includes('cash')) {
+      kCash = grossAmt;
+    } else if (pMethod.includes('card') || pMethod.includes('bank') || pMethod.includes('icici')) {
+      kIcici = grossAmt;
+    } else {
+      kUpi = grossAmt;
+    }
+
+    processed.push({
+      no: processed.length + 1,
+      guestName: String(o.guestName || `WALK-IN FOOD (${o.orderType || 'KITCHEN'})`).toUpperCase(),
+      roomNumber: o.roomNumber ? String(o.roomNumber) : o.tableNo ? `TBL ${o.tableNo}` : 'KITCHEN',
+      nights: 0,
+      openingBalance: 0,
+      roomTariff: 0,
+      gst: taxAmt,
+      totalRoom: taxAmt,
+      food: foodPreTax,
+      waterBottle: 0,
+      laundry: 0,
+      anyOthers: 0,
+      totalExtra: foodPreTax,
+      grandTotal: r2(foodPreTax + taxAmt),
+      cash: kCash,
+      upi: kUpi,
+      icici: kIcici,
+      totalPayment: r2(kCash + kUpi + kIcici),
+      balanceDue: !isPaid ? grossAmt : 0,
+      baseRoomTariff: 0,
+      extraBed: 0,
+      extraPerson: 0,
+      earlyCheckIn: 0,
+      lateCheckOut: 0,
+      discount: 0,
+      taxableSubtotal: foodPreTax,
+      kitchenUpi: kUpi,
+      kitchenCash: kCash,
+      kitchenDue: kDue,
+      totalFoodAmt: foodPreTax,
+      checkinTarget: null,
+    });
+  });
+
+  // 5B. Append POS Advance Food Booking hybrid payments collected on selectedDate
+  (posAdvanceBookings || []).forEach((adv) => {
+    if (!adv || adv.status === 'Cancelled') return;
+    const rawSplits = Array.isArray(adv.payments) && adv.payments.length > 0
+      ? adv.payments
+      : Number(adv.advanceAmount || 0) > 0
+      ? [
+          {
+            id: `adv-leg-${adv.id}`,
+            method: adv.paymentMethod || 'Cash',
+            amount: r2(Number(adv.advanceAmount || 0)),
+            date: adv.bookingDate || adv.eventDate || '',
+          },
+        ]
+      : [];
+    const todaySplits = rawSplits.filter((p) => toLocalYmd(p.date || adv.bookingDate) === selectedDate && Number(p.amount) > 0);
+    if (todaySplits.length === 0) return;
+
+    let advCash = 0;
+    let advUpi = 0;
+    let advIcici = 0;
+    todaySplits.forEach((sp) => {
+      const amt = r2(Number(sp.amount || 0));
+      const m = String(sp.method || '').toLowerCase();
+      if (m.includes('cash')) advCash = r2(advCash + amt);
+      else if (m.includes('card') || m.includes('bank') || m.includes('icici')) advIcici = r2(advIcici + amt);
+      else advUpi = r2(advUpi + amt);
+    });
+    const collectedToday = r2(advCash + advUpi + advIcici);
+    if (collectedToday <= 0) return;
+
+    const totalAdvVal = r2(Number(adv.totalAmount || collectedToday));
+    const gstAmt = r2(Number(adv.gstAmount || 0));
+    const foodPreTax = r2(Math.max(0, totalAdvVal - gstAmt));
+    const balDue = r2(Number(adv.balanceAmount || 0));
+
+    processed.push({
+      no: processed.length + 1,
+      guestName: `${String(adv.guestOrGroupName || 'ADVANCE FOOD').toUpperCase()} (${adv.bookingNumber})`,
+      roomNumber: adv.tableNumber ? `TBL ${adv.tableNumber}` : 'ADV FOOD',
+      nights: 0,
+      openingBalance: 0,
+      roomTariff: 0,
+      gst: gstAmt,
+      totalRoom: gstAmt,
+      food: foodPreTax,
+      waterBottle: 0,
+      laundry: 0,
+      anyOthers: 0,
+      totalExtra: foodPreTax,
+      grandTotal: totalAdvVal,
+      cash: advCash,
+      upi: advUpi,
+      icici: advIcici,
+      totalPayment: collectedToday,
+      balanceDue: balDue,
+      baseRoomTariff: 0,
+      extraBed: 0,
+      extraPerson: 0,
+      earlyCheckIn: 0,
+      lateCheckOut: 0,
+      discount: 0,
+      taxableSubtotal: foodPreTax,
+      kitchenUpi: advUpi,
+      kitchenCash: advCash,
+      kitchenDue: balDue,
+      totalFoodAmt: foodPreTax,
+      checkinTarget: null,
+    });
+  });
+
+  // Re-index row numbers
+  processed.forEach((p, i) => {
+    p.no = i + 1;
+  });
+
+  const filteredRows = !searchTerm.trim()
+    ? processed
+    : processed.filter((r) => {
+        const term = searchTerm.toLowerCase();
+        return r.guestName.toLowerCase().includes(term) || String(r.roomNumber).toLowerCase().includes(term);
+      });
+
+  // Cash Expenses on selected date (only physical cash / petty cash leaves the drawer)
+  const dailyExpenses = expenses.filter((e) => {
+    const eDate = toLocalYmd(e.date || (e as any).createdAt || '');
+    if (eDate !== selectedDate) return false;
+    if (String((e as any).approvalStatus || (e as any).status || '').toLowerCase() === 'rejected') return false;
+    return isCashModeStr((e as any).paymentMethod || (e as any).paymentMode || (e as any).paymentSource);
+  });
+
+  const totalExpenseAmt = r2(dailyExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0));
+
+  // Auto-calculated Cash Taken by Owner (strictly physical Cash from CashHandovers + Cash Owner Withdrawals on selectedDate)
+  let handoverSum = 0;
+  (handovers || []).forEach((h) => {
+    if (toLocalYmd(h.date) !== selectedDate) return;
+    const st = String((h as any).status || '').toLowerCase();
+    if (st === 'cancelled' || st === 'rejected') return;
+    // Never mix UPI / Card / Bank transfers into physical cash handovers
+    const method = (h as any).paymentMethod || (h as any).paymentMode;
+    if (method && !isCashModeStr(method)) return;
+    handoverSum += Number(h.amount) || 0;
+  });
+  (ownerPayments || []).forEach((op) => {
+    if (toLocalYmd(op.date) !== selectedDate) return;
+    if (op.status === 'Cancelled') return;
+    if (isCapitalContributionPayment(op)) return;
+    if (isCashModeStr(op.paymentMethod || (op as any).paymentMode)) {
+      handoverSum += Number(op.amount) || 0;
+    }
+  });
+  const autoOwnerHandover = r2(handoverSum);
+
+  // Table Column Totals
+  let tOpeningBalance = 0;
+  let tRoomTariff = 0;
+  let tGst = 0;
+  let tTotalRoom = 0;
+  let tFood = 0;
+  let tWaterBottle = 0;
+  let tLaundry = 0;
+  let tAnyOthers = 0;
+  let tTotalExtra = 0;
+  let tGrandTotal = 0;
+  let tCash = 0;
+  let tUpi = 0;
+  let tIcici = 0;
+  let tTotalPayment = 0;
+  let tBalanceDue = 0;
+  let tTaxableSubtotal = 0;
+  let tExtraPerson = 0;
+  let tExtraBed = 0;
+  let tEarlyCheckIn = 0;
+  let tKitchenUpi = 0;
+  let tKitchenCash = 0;
+  let tKitchenDue = 0;
+  let tTotalFoodAmt = 0;
+
+  filteredRows.forEach((r) => {
+    tOpeningBalance = r2(tOpeningBalance + (Number(r.openingBalance) || 0));
+    tRoomTariff = r2(tRoomTariff + (Number(r.roomTariff) || 0));
+    if (typeof r.gst === 'number') tGst = r2(tGst + r.gst);
+    tTotalRoom = r2(tTotalRoom + (Number(r.totalRoom) || 0));
+    tFood = r2(tFood + (Number(r.food) || 0));
+    tWaterBottle = r2(tWaterBottle + (Number(r.waterBottle) || 0));
+    tLaundry = r2(tLaundry + (Number(r.laundry) || 0));
+    tAnyOthers = r2(tAnyOthers + (Number(r.anyOthers) || 0));
+    tTotalExtra = r2(tTotalExtra + (Number(r.totalExtra) || 0));
+    tGrandTotal = r2(tGrandTotal + (Number(r.grandTotal) || 0));
+    tCash = r2(tCash + (Number(r.cash) || 0));
+    tUpi = r2(tUpi + (Number(r.upi) || 0));
+    tIcici = r2(tIcici + (Number(r.icici) || 0));
+    tTotalPayment = r2(tTotalPayment + (Number(r.totalPayment) || 0));
+    tBalanceDue = r2(tBalanceDue + (Number(r.balanceDue) || 0));
+    tTaxableSubtotal = r2(tTaxableSubtotal + (Number(r.taxableSubtotal) || 0));
+    tExtraPerson = r2(tExtraPerson + (Number(r.extraPerson) || 0));
+    tExtraBed = r2(tExtraBed + (Number(r.extraBed) || 0));
+    tEarlyCheckIn = r2(tEarlyCheckIn + (Number(r.earlyCheckIn) || 0));
+    tKitchenUpi = r2(tKitchenUpi + (Number(r.kitchenUpi) || 0));
+    tKitchenCash = r2(tKitchenCash + (Number(r.kitchenCash) || 0));
+    tKitchenDue = r2(tKitchenDue + (Number(r.kitchenDue) || 0));
+    tTotalFoodAmt = r2(tTotalFoodAmt + (Number(r.totalFoodAmt || r.food) || 0));
+  });
+
+  return {
+    reportRows: filteredRows,
+    dailyExpenses,
+    totalExpenseAmt,
+    autoOwnerHandover,
+    totals: {
+      openingBalance: tOpeningBalance,
+      roomTariff: tRoomTariff,
+      gst: tGst,
+      totalRoom: tTotalRoom,
+      food: tFood,
+      waterBottle: tWaterBottle,
+      laundry: tLaundry,
+      anyOthers: tAnyOthers,
+      totalExtra: tTotalExtra,
+      grandTotal: tGrandTotal,
+      cash: tCash,
+      upi: tUpi,
+      icici: tIcici,
+      totalPayment: tTotalPayment,
+      balanceDue: tBalanceDue,
+      taxableSubtotal: tTaxableSubtotal,
+      extraPerson: tExtraPerson,
+      extraBed: tExtraBed,
+      earlyCheckIn: tEarlyCheckIn,
+      kitchenUpi: tKitchenUpi,
+      kitchenCash: tKitchenCash,
+      kitchenDue: tKitchenDue,
+      totalFoodAmt: tTotalFoodAmt,
+    },
+  };
+}
+
+/**
+ * Authoritative cross-device Opening Cash Carry-Forward (BUG-P2-08).
+ * Never depends on browser localStorage and NEVER mixes UPI/Card/Bank into physical Cash.
+ *
+ * Strategy:
+ * 1. Anchor to the latest DailyClosingRecord in DB strictly before `selectedDate` (if any),
+ *    using its `closingCashActual ?? closingCashSystem`.
+ * 2. Roll forward strictly physical Cash net delta (+ Cash Payments - Cash Expenses - Cash Handovers/Owner Cash Withdrawals)
+ *    for every transaction date strictly after the anchor closing date and strictly before `selectedDate`.
+ */
+export function computeAuthoritativeOpeningCash(params: {
+  selectedDate: string;
+  dailyClosings?: DailyClosingRecord[];
+  bookings?: Booking[];
+  checkins?: GuestCheckIn[];
+  invoices?: Invoice[];
+  posOrders?: PosOrder[];
+  expenses?: Expense[];
+  handovers?: CashHandover[];
+  ownerPayments?: OwnerDirectorPayment[];
+}): {
+  openingCash: number;
+  anchorDate: string | null;
+  anchorClosingCash: number;
+  rolledCashIn: number;
+  rolledCashOut: number;
+} {
+  const {
+    selectedDate,
+    dailyClosings = [],
+    bookings = [],
+    checkins = [],
+    invoices = [],
+    posOrders = [],
+    expenses = [],
+    handovers = [],
+    ownerPayments = [],
+  } = params;
+
+  let anchorDate: string | null = null;
+  let anchorClosingCash = 0;
+
+  // 1. Find latest DB DailyClosingRecord strictly before selectedDate
+  const priorClosings = (dailyClosings || [])
+    .filter((dc) => {
+      const d = toLocalYmd(dc?.date);
+      return Boolean(d && d < selectedDate);
+    })
+    .sort((a, b) => toLocalYmd(b.date).localeCompare(toLocalYmd(a.date)));
+
+  if (priorClosings.length > 0) {
+    const latest = priorClosings[0];
+    const val = Number(latest.closingCashActual ?? latest.closingCashSystem ?? 0);
+    if (Number.isFinite(val)) {
+      anchorDate = toLocalYmd(latest.date);
+      anchorClosingCash = r2(val);
+    }
+  }
+
+  const inRollWindow = (ymd: string): boolean => {
+    if (!ymd || ymd >= selectedDate) return false;
+    if (anchorDate && ymd <= anchorDate) return false;
+    return true;
+  };
+
+  // 2. Roll forward strictly physical Cash receipts (deduped by payment ID across checkins/bookings/invoices)
+  let rolledCashIn = 0;
+  const seenCashPayIds = new Set<string>();
+  const stayKeysWithStructured = new Set<string>();
+  const checkinCashFingerprints = new Set<string>();
+
+  const recordCashPayment = (
+    idRaw: any,
+    modeRaw: any,
+    amtRaw: any,
+    dateRaw: any,
+    stayKeyForDedup?: string,
+    sourceKind: 'checkin' | 'invoice' | 'booking' = 'checkin'
+  ) => {
+    const amt = r2(Number(amtRaw) || 0);
+    if (amt <= 0) return;
+    if (!isCashModeStr(String(modeRaw || ''))) return;
+    const ymd = toLocalYmd(String(dateRaw || ''));
+    if (!inRollWindow(ymd)) return;
+    const pid = String(idRaw || '').trim();
+    if (pid && seenCashPayIds.has(pid)) return;
+    const fp = stayKeyForDedup ? `${stayKeyForDedup}|${ymd}|${amt}` : '';
+    if (sourceKind !== 'checkin' && fp && checkinCashFingerprints.has(fp)) {
+      return;
+    }
+    if (pid) seenCashPayIds.add(pid);
+    if (sourceKind === 'checkin' && fp) checkinCashFingerprints.add(fp);
+    rolledCashIn = r2(rolledCashIn + amt);
+  };
+
+  (checkins || []).forEach((c) => {
+    const stayKey = String(c.id || `${c.roomNumber}_${c.guestName}`);
+    if (Array.isArray(c.payments) && c.payments.length > 0) {
+      stayKeysWithStructured.add(stayKey);
+      c.payments.forEach((p: any, i: number) => {
+        if (!p || String(p.notes || '').toLowerCase().includes('marked as due')) return;
+        recordCashPayment(
+          p.id || `ci-${stayKey}-${i}`,
+          p.paymentMethod || p.method || 'Cash',
+          p.amount,
+          p.date || p.dateTime || c.checkInDate,
+          stayKey,
+          'checkin'
+        );
+      });
+    } else if (Number(c.cashAmountPaid || 0) > 0) {
+      stayKeysWithStructured.add(stayKey);
+      recordCashPayment(`ci-cash-${stayKey}`, 'Cash', c.cashAmountPaid, c.checkInDate, stayKey, 'checkin');
+    } else if (Number(c.advanceAmount || 0) > 0 && isCashModeStr(c.paymentMethod)) {
+      stayKeysWithStructured.add(stayKey);
+      recordCashPayment(`ci-adv-${stayKey}`, c.paymentMethod, c.advanceAmount, c.checkInDate, stayKey, 'checkin');
+    }
+  });
+
+  (invoices || []).forEach((inv) => {
+    if (
+      !inv ||
+      inv.isSuperseded ||
+      (inv as any).isCreditNote ||
+      inv.invoiceType === 'Credit Note' ||
+      inv.invoiceStatus === 'Superseded' ||
+      inv.invoiceStatus === 'Cancelled'
+    )
+      return;
+    const invStayKey = String(inv.bookingId || inv.checkInId || `${inv.roomNumber}_${inv.guestName}`);
+    if (Array.isArray(inv.paymentHistory) && inv.paymentHistory.length > 0) {
+      inv.paymentHistory.forEach((p: any, i: number) => {
+        recordCashPayment(
+          p.id || `inv-${inv.id}-${i}`,
+          p.paymentMethod || p.mode || p.method,
+          p.amount,
+          p.date || p.dateTime || inv.dateCreated,
+          invStayKey,
+          'invoice'
+        );
+      });
+    }
+  });
+
+  (bookings || []).forEach((b) => {
+    if (!b || b.status === 'Cancelled') return;
+    const stayKey = String(b.id || `${b.roomNumber}_${b.guestName}`);
+    if (Array.isArray((b as any).payments) && (b as any).payments.length > 0) {
+      (b as any).payments.forEach((p: any, i: number) => {
+        recordCashPayment(
+          p.id || `bkg-${stayKey}-${i}`,
+          p.paymentMethod || p.method,
+          p.amount,
+          p.date || p.dateTime || b.bookingDate || b.checkInDate,
+          stayKey,
+          'booking'
+        );
+      });
+    } else if (!stayKeysWithStructured.has(stayKey) && Number(b.advanceAmount || 0) > 0 && isCashModeStr(b.paymentMethod)) {
+      recordCashPayment(`bkg-adv-${stayKey}`, b.paymentMethod, b.advanceAmount, b.bookingDate || b.checkInDate, stayKey, 'booking');
+    }
+  });
+
+  // Counter-paid Cash POS food orders (excluding room-billed & cancelled/voided/held)
+  (posOrders || []).forEach((o) => {
+    const st = String(o?.status || '').toLowerCase();
+    const kotSt = String((o as any)?.kotStatus || '').toLowerCase();
+    if (st === 'cancelled' || st === 'voided' || st === 'held' || kotSt === 'cancelled' || (o as any)?.isHeld) return;
+    const pm = String(o?.paymentMethod || '').toLowerCase();
+    const ps = String(o?.paymentStatus || '').toLowerCase();
+    const toRoom = (o as any)?.postToRoomBill === true || pm.includes('room');
+    const isPaidCounterCash = ((o as any)?.isPaid === true || ps === 'paid') && !toRoom && pm.includes('cash');
+    if (!isPaidCounterCash) return;
+    const gross = r2(Number(o.grandTotal ?? (o as any).totalAmount ?? 0));
+    recordCashPayment(`pos-${o.id}`, 'Cash', gross, (o as any).date || (o as any).createdAt);
+  });
+
+  // 3. Roll forward strictly physical Cash outflows (Cash expenses + Cash handovers + Cash owner withdrawals)
+  let rolledCashOut = 0;
+
+  (expenses || []).forEach((e) => {
+    const ymd = toLocalYmd(e?.date || (e as any)?.createdAt || '');
+    if (!inRollWindow(ymd)) return;
+    if (String((e as any).approvalStatus || (e as any).status || '').toLowerCase() === 'rejected') return;
+    if (!isCashModeStr((e as any).paymentMethod || (e as any).paymentMode || (e as any).paymentSource)) return;
+    rolledCashOut = r2(rolledCashOut + (Number(e.amount) || 0));
+  });
+
+  (handovers || []).forEach((h) => {
+    const ymd = toLocalYmd(h?.date);
+    if (!inRollWindow(ymd)) return;
+    const st = String((h as any).status || '').toLowerCase();
+    if (st === 'cancelled' || st === 'rejected') return;
+    const method = (h as any).paymentMethod || (h as any).paymentMode;
+    if (method && !isCashModeStr(method)) return;
+    rolledCashOut = r2(rolledCashOut + (Number(h.amount) || 0));
+  });
+
+  (ownerPayments || []).forEach((op) => {
+    const ymd = toLocalYmd(op?.date);
+    if (!inRollWindow(ymd)) return;
+    if (op.status === 'Cancelled' || isCapitalContributionPayment(op)) return;
+    if (!isCashModeStr(op.paymentMethod || (op as any).paymentMode)) return;
+    rolledCashOut = r2(rolledCashOut + (Number(op.amount) || 0));
+  });
+
+  const openingCash = r2(anchorClosingCash + rolledCashIn - rolledCashOut);
+
+  return {
+    openingCash,
+    anchorDate,
+    anchorClosingCash,
+    rolledCashIn,
+    rolledCashOut,
+  };
+}
+
 export default function DailyCollectionSheet({
   rooms = [],
   bookings = [],
@@ -81,6 +1209,7 @@ export default function DailyCollectionSheet({
   invoices = [],
   expenses = [],
   posOrders = [],
+  posAdvanceBookings = [],
   handovers = [],
   ownerPayments = [],
   dailyClosings = [],
@@ -107,64 +1236,43 @@ export default function DailyCollectionSheet({
   const [customNote, setCustomNote] = useState<string>('');
   const [isEditingCounter, setIsEditingCounter] = useState(false);
 
-  // Load persisted counter values or carry forward from last date's Closing Cash Balance
+  // Authoritative cross-device opening cash computed directly from DB records (BUG-P2-08)
+  const authoritativeOpeningCash = useMemo(
+    () =>
+      computeAuthoritativeOpeningCash({
+        selectedDate,
+        dailyClosings,
+        bookings,
+        checkins,
+        invoices,
+        posOrders,
+        expenses,
+        handovers,
+        ownerPayments,
+      }).openingCash,
+    [selectedDate, dailyClosings, bookings, checkins, invoices, posOrders, expenses, handovers, ownerPayments]
+  );
+
+  // Load explicit per-date manual counter override (if saved for selectedDate) or use authoritative DB carry-forward
   useEffect(() => {
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        setOpeningBalance(typeof parsed.openingBalance === 'number' ? parsed.openingBalance : 0);
+        setOpeningBalance(typeof parsed.openingBalance === 'number' ? parsed.openingBalance : authoritativeOpeningCash);
         setManualOwnerHandover(typeof parsed.ownerHandover === 'number' ? parsed.ownerHandover : null);
         setCustomNote(typeof parsed.customNote === 'string' ? parsed.customNote : '');
         return;
       }
 
-      // Reset date-specific manual overrides before checking carry-forward
+      // Reset date-specific manual overrides and apply cross-device authoritative DB carry-forward
       setManualOwnerHandover(null);
       setCustomNote('');
-
-      // 1. Check prior dates (up to 30 days back) for saved closing balance or cached closing balance
-      let carriedOpening: number | null = null;
-      for (let i = 1; i <= 30; i++) {
-        const prevYmd = addDaysIst(selectedDate, -i);
-        const prevSavedRaw = localStorage.getItem(`pms_daily_counter_${hotelScopeId}_${prevYmd}`);
-        if (prevSavedRaw) {
-          const prevParsed = JSON.parse(prevSavedRaw);
-          if (typeof prevParsed.closingBalance === 'number') {
-            carriedOpening = prevParsed.closingBalance;
-            break;
-          }
-        }
-        const prevCacheRaw = localStorage.getItem(`pms_daily_closing_cache_${hotelScopeId}_${prevYmd}`);
-        if (prevCacheRaw) {
-          const prevCache = JSON.parse(prevCacheRaw);
-          if (typeof prevCache.closingBalance === 'number') {
-            carriedOpening = prevCache.closingBalance;
-            break;
-          }
-        }
-      }
-
-      // 2. Fallback to latest DailyClosingRecord from DB strictly before selectedDate
-      if (carriedOpening === null && Array.isArray(dailyClosings) && dailyClosings.length > 0) {
-        const priorClosings = dailyClosings
-          .filter((dc) => {
-            const d = toLocalYmd(dc.date);
-            return Boolean(d && d < selectedDate);
-          })
-          .sort((a, b) => toLocalYmd(b.date).localeCompare(toLocalYmd(a.date)));
-        if (priorClosings.length > 0) {
-          const latest = priorClosings[0];
-          const val = Number(latest.closingCashActual ?? latest.closingCashSystem ?? 0);
-          if (Number.isFinite(val)) carriedOpening = val;
-        }
-      }
-
-      setOpeningBalance(carriedOpening !== null ? carriedOpening : 0);
+      setOpeningBalance(authoritativeOpeningCash);
     } catch {
-      setOpeningBalance(0);
+      setOpeningBalance(authoritativeOpeningCash);
     }
-  }, [selectedDate, storageKey, hotelScopeId, dailyClosings]);
+  }, [selectedDate, storageKey, authoritativeOpeningCash]);
 
   // Format date as DD-MM-YYYY for display
   const formattedDisplayDate = useMemo(() => {
@@ -176,628 +1284,48 @@ export default function DailyCollectionSheet({
     setSelectedDate((prev) => addDaysIst(prev, days));
   };
 
-  // Compile guest ledger records for the selected date
-  const reportRows = useMemo(() => {
-    const rowsMap = new Map<string, any>();
-
-    // 1. Check-ins active or settled on the selected date (including overdue active in-house guests)
-    const todayYmd = localTodayStr();
-    checkins.forEach((c) => {
-      const inDate = toLocalYmd(c.checkInDate);
-      const outDate = toLocalYmd(c.checkOutDate);
-      const checkedOutLocal = toLocalYmd(c.checkedOutDateTime);
-      const isCurrentlyInHouse = !checkedOutLocal;
-      const hasPaymentOnDate = Array.isArray(c.payments)
-        ? c.payments.some((p: any) => toLocalYmd(p?.dateTime || p?.date) === selectedDate)
-        : false;
-
-      const isActiveOnDate =
-        inDate === selectedDate ||
-        outDate === selectedDate ||
-        checkedOutLocal === selectedDate ||
-        hasPaymentOnDate ||
-        (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate) ||
-        (!!inDate && !outDate && inDate <= selectedDate) ||
-        (isCurrentlyInHouse && !!inDate && inDate <= selectedDate && selectedDate <= todayYmd);
-
-      if (isActiveOnDate) {
-        const key = `${c.roomNumber}_${c.guestName}`;
-        rowsMap.set(key, {
-          source: 'checkin',
-          checkin: c,
-          guestName: c.guestName,
-          roomNumber: c.roomNumber,
-          checkInDate: inDate,
-          checkOutDate: outDate,
-          roomRate: c.roomRate || 0,
-          nights: Math.max(1, Math.round(Math.abs(new Date(outDate || selectedDate).getTime() - new Date(inDate || selectedDate).getTime()) / (1000 * 60 * 60 * 24)) || 1),
-          advancePayment: Number(c.advanceAmount ?? (c as any).advancePayment ?? 0),
-          paymentMethod: c.paymentMethod || 'Cash',
-          extraCharges: c.extraCharges || [],
-          separateInvoices: []
-        });
-      }
-    });
-
-    // 2. Invoices generated or settled on selected date (skip superseded/cancelled; never overwrite primary stay invoice with INV-SEP)
-    invoices.forEach((inv) => {
-      if (inv.isSuperseded || inv.invoiceStatus === 'Superseded' || inv.invoiceStatus === 'Cancelled') {
-        return;
-      }
-      const invDate = toLocalYmd(inv.dateCreated || (inv as any).createdAt || (inv as any).invoiceDate || '');
-      const inDate = toLocalYmd(inv.checkInDate);
-      const outDate = toLocalYmd(inv.checkOutDate);
-      const hasPayOnDate = Array.isArray(inv.paymentHistory)
-        ? inv.paymentHistory.some((p: any) => toLocalYmd(p?.date || p?.dateTime) === selectedDate)
-        : false;
-
-      const isMatch =
-        invDate === selectedDate ||
-        inDate === selectedDate ||
-        outDate === selectedDate ||
-        hasPayOnDate ||
-        (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate);
-
-      if (isMatch) {
-        const key = `${inv.roomNumber}_${inv.guestName}`;
-        const existing = rowsMap.get(key) || {
-          source: 'invoice',
-          guestName: inv.guestName,
-          roomNumber: inv.roomNumber,
-          checkInDate: inDate,
-          checkOutDate: outDate,
-          roomRate: inv.roomCharges || 0,
-          nights: inv.nights || 1,
-          extraCharges: [],
-          separateInvoices: []
-        };
-
-        const isSep = Boolean(inv.isSeparateInvoice || String(inv.id || '').startsWith('INV-SEP-'));
-        if (isSep) {
-          existing.separateInvoices = [...(existing.separateInvoices || []), inv];
-        } else {
-          existing.invoice = inv;
-        }
-        rowsMap.set(key, existing);
-      }
-    });
-
-    // 3. Bookings on that date if not already in checkins (attach matching booking even if checkin exists so booking payments/metadata are available)
-    bookings.forEach((b) => {
-      const inDate = toLocalYmd(b.checkInDate);
-      const outDate = toLocalYmd(b.checkOutDate);
-      const bookedOn = toLocalYmd(b.bookingDate);
-      const isActive =
-        inDate === selectedDate ||
-        outDate === selectedDate ||
-        (!!inDate && !!outDate && inDate <= selectedDate && outDate >= selectedDate) ||
-        (!!inDate && !outDate && inDate <= selectedDate) ||
-        (bookedOn === selectedDate && Number(b.advanceAmount || 0) > 0);
-
-      if (isActive && b.status !== 'Cancelled') {
-        const key = `${b.roomNumber}_${b.guestName}`;
-        const existing = rowsMap.get(key);
-        if (existing) {
-          existing.booking = b;
-        } else {
-          rowsMap.set(key, {
-            source: 'booking',
-            booking: b,
-            guestName: b.guestName,
-            roomNumber: b.roomNumber,
-            checkInDate: inDate,
-            checkOutDate: outDate,
-            roomRate: b.bookingAmount ? Math.round(b.bookingAmount / (b.nights || 1)) : 2000,
-            nights: b.nights || 1,
-            advancePayment: Number(b.advanceAmount ?? (b as any).advancePayment ?? 0),
-            paymentMethod: b.paymentMethod || 'Cash',
-            extraCharges: [],
-            separateInvoices: []
-          });
-        }
-      }
-    });
-
-    // 4. POS Food Orders on selected date
-    const ordersOnDate = posOrders.filter((o) => {
-      const oDate = toLocalYmd((o as any).date || (o as any).createdAt || (o as any).orderTime || (o as any).timestamp || '');
-      return oDate === selectedDate;
-    });
-
-    // Track all matched POS order IDs to ensure non-room orders can also be shown
-    const allMatchedOrderIds = new Set<string>();
-
-    // Transform mapped rows into exact table items matching the audit register
-    const processed = Array.from(rowsMap.values()).map((row, idx) => {
-      const c = row.checkin;
-      const inv = row.invoice;
-      const b = row.booking;
-
-      const guestName = (row.guestName || 'GUEST').toUpperCase();
-      const roomNumber = row.roomNumber || 'N/A';
-      const nights = row.nights || 1;
-
-      // Agreed / Charged Room Tariff (Direct negotiated rate, e.g. ₹1800, matching physical register)
-      const splitRoomNums = String(roomNumber)
-        .split(',')
-        .map((rn: string) => rn.trim())
-        .filter(Boolean);
-      const bookedRoomsArr: any[] =
-        (Array.isArray(c?.bookedRooms) && c.bookedRooms.length > 0
-          ? c.bookedRooms
-          : Array.isArray(b?.bookedRooms) && b.bookedRooms.length > 0
-          ? b.bookedRooms
-          : []) as any[];
-
-      let roomTariff = 0;
-      if (inv && Number(inv.roomCharges) > 0) {
-        roomTariff = Number(inv.roomCharges);
-      } else if (bookedRoomsArr.length > 0) {
-        roomTariff = bookedRoomsArr.reduce((sum, br) => sum + Number(br.rate || 0) * nights, 0);
-      } else if (c && Number(c.roomRate) > 0) {
-        roomTariff = Number(c.roomRate) * Math.max(1, splitRoomNums.length) * nights;
-      } else {
-        roomTariff = (row.roomRate || 0) * nights;
-      }
-      if (!roomTariff || roomTariff <= 0) {
-        if (bookedRoomsArr.length > 0) {
-          roomTariff = bookedRoomsArr.reduce((sum, br) => {
-            const rmObj = rooms.find(r => r.number === String(br.roomNumber || '').trim());
-            return sum + Number(br.rate || rmObj?.rate || 0) * nights;
-          }, 0);
-        } else if (splitRoomNums.length > 0) {
-          roomTariff = splitRoomNums.reduce((sum, rn) => {
-            const rmObj = rooms.find(r => r.number === rn);
-            return sum + (rmObj ? Number(rmObj.rate || 0) * nights : 0);
-          }, 0);
-        }
-      }
-      if (!roomTariff || roomTariff <= 0) roomTariff = (row.roomRate || 2000) * nights;
-
-      // GST on stay
-      let gstAmount: number | string = 0;
-      if (inv) {
-        gstAmount = inv.tax ?? inv.gst ?? 0;
-      } else if (c && c.gstAmount !== undefined) {
-        gstAmount = Number(c.gstAmount) || 0;
-      } else if (b?.otaName === 'MakeMyTrip' || b?.otaName === 'MMT') {
-        gstAmount = 'MMT';
-      } else {
-        const settingsRate = hotelSettings?.isGstEnabled === false ? 0 : Number(hotelSettings?.defaultGstRate ?? 0);
-        gstAmount = b && b.gstAmount !== undefined ? Number(b.gstAmount) : Math.round((roomTariff * settingsRate) / 100);
-      }
-
-      // Room Payment Modes (Hybrid / Split Payment Aware across checkin.payments, invoice.paymentHistory, invoice.paymentDetails, booking.payments)
-      let cashPay = 0;
-      let upiPay = 0;
-      let iciciPay = 0; // Card / Bank / Online
-
-      const addByMode = (modeRaw: string, amtRaw: number) => {
-        const amt = Number(amtRaw) || 0;
-        if (amt <= 0) return;
-        const m = String(modeRaw || 'Cash').toLowerCase();
-        if (m.includes('cash')) cashPay += amt;
-        else if (m.includes('upi') || m.includes('gpay') || m.includes('phonepe') || m.includes('paytm') || m.includes('qr')) upiPay += amt;
-        else if (m.includes('card') || m.includes('bank') || m.includes('icici') || m.includes('online') || m.includes('neft') || m.includes('rtgs') || m.includes('imps')) iciciPay += amt;
-        else cashPay += amt;
-      };
-
-      const structuredPayments: Array<{ id: string; mode: string; amount: number; isAdv: boolean }> = [];
-      const seenPayIds = new Set<string>();
-      let seenAdvanceTotal = 0;
-
-      const pushStructured = (idRaw: any, modeRaw: any, amtRaw: any, notesRaw?: any, typeRaw?: any) => {
-        const amt = Number(amtRaw) || 0;
-        if (amt <= 0) return;
-        const idStr = String(idRaw || '');
-        const isAdv =
-          String(typeRaw || '').toLowerCase().includes('advance') ||
-          String(notesRaw || '').toLowerCase().includes('advance') ||
-          String(notesRaw || '').toLowerCase().includes('check-in') ||
-          idStr.toLowerCase().includes('adv') ||
-          idStr.toLowerCase().includes('checkin');
-        if (idStr && seenPayIds.has(idStr)) return;
-        // Collapse duplicate advance records across booking/checkin/invoice (e.g. pay-adv-X, adv-X, PAY-X-adv)
-        if (isAdv && seenAdvanceTotal > 0 && Math.abs(seenAdvanceTotal - amt) < 1) {
-          return;
-        }
-        if (idStr) seenPayIds.add(idStr);
-        if (isAdv) seenAdvanceTotal += amt;
-        structuredPayments.push({ id: idStr, mode: String(modeRaw || 'Cash'), amount: amt, isAdv });
-      };
-
-      if (Array.isArray(c?.payments) && c.payments.length > 0) {
-        c.payments.forEach((p: any, i: number) =>
-          pushStructured(p.id || `cp-${i}`, p.paymentMethod || p.method, p.amount, p.notes, p.paymentType)
-        );
-      }
-      if (inv && Array.isArray(inv.paymentHistory) && inv.paymentHistory.length > 0) {
-        inv.paymentHistory.forEach((p: any, i: number) =>
-          pushStructured(p.id || `iph-${i}`, p.paymentMethod || p.mode || p.method, p.amount, p.notes)
-        );
-      }
-      if (inv && Array.isArray((inv as any).paymentDetails) && (inv as any).paymentDetails.length > 0) {
-        (inv as any).paymentDetails.forEach((p: any, i: number) =>
-          pushStructured(p.id || `ipd-${i}`, p.mode || p.method || p.paymentMethod, p.amount, p.notes)
-        );
-      }
-      if (Array.isArray((b as any)?.payments) && (b as any).payments.length > 0) {
-        (b as any).payments.forEach((p: any, i: number) =>
-          pushStructured(p.id || `bp-${i}`, p.paymentMethod || p.method, p.amount, p.notes, p.paymentType)
-        );
-      }
-
-      if (structuredPayments.length > 0) {
-        structuredPayments.forEach(sp => addByMode(sp.mode, sp.amount));
-      } else {
-        const pMode = String(c?.paymentMethod || b?.paymentMethod || inv?.paymentMethod || 'Cash');
-        // Handle summary strings like "Cash ₹4000 + UPI ₹345" if ever encountered without structured array
-        const splitMatches = Array.from(pMode.matchAll(/(Cash|UPI|Card|Bank(?:\s*Transfer)?|Online)\s*₹?\s*([\d.]+)/gi));
-        if (splitMatches.length > 0) {
-          splitMatches.forEach(m => addByMode(m[1], Number(m[2])));
-        } else {
-          const paid = Number(
-            inv?.paidAmount ??
-              inv?.amountPaid ??
-              ((Number(c?.advanceAmount || 0) + Number(c?.cashAmountPaid || 0) + Number(c?.onlineAmountPaid || 0)) ||
-                Number(b?.advanceAmount || 0))
-          );
-          addByMode(pMode, paid);
-        }
-      }
-
-      // Balance
-      const totalPaidRoom = cashPay + upiPay + iciciPay;
-      const totalStayPayable =
-        inv && Number(inv.finalAmount) > 0
-          ? Number(inv.finalAmount)
-          : c && Number(c.totalAmount) > 0
-          ? Number(c.totalAmount)
-          : roomTariff + (typeof gstAmount === 'number' ? gstAmount : 0);
-      let balance = Math.max(0, Math.round((totalStayPayable - totalPaidRoom) * 100) / 100);
-      if (inv && typeof inv.pendingAmount === 'number') {
-        balance = inv.pendingAmount;
-      } else if (c && typeof c.pendingAmount === 'number') {
-        balance = c.pendingAmount;
-      }
-
-      // Room Amenities & Extra Charges
-      let waterBottle = 0;
-      let extraPerson = 0;
-      let laundry = 0;
-      let extraBed = 0;
-      let otherMiscExtras = 0;
-
-      const isFoodCategory = (cat: string) =>
-        cat.includes('food') ||
-        cat.includes('kitchen') ||
-        cat.includes('restaurant') ||
-        cat.includes('thali') ||
-        cat.includes('breakfast') ||
-        cat.includes('lunch') ||
-        cat.includes('dinner') ||
-        cat.includes('room service');
-
-      const seenExtraIds = new Set<string>();
-      const extras = (c?.extraCharges || []).concat(inv?.extraCharges || []);
-      extras.forEach((ec: any) => {
-        const ecId = String(ec?.id || '');
-        if (ecId && seenExtraIds.has(ecId)) return;
-        if (ecId) seenExtraIds.add(ecId);
-        const cat = String(ec.category || ec.description || '').toLowerCase();
-        const amt = Number(ec.amount) || 0;
-        if (amt <= 0 || isFoodCategory(cat)) return;
-        if (cat.includes('water') || cat.includes('bottle')) waterBottle += amt;
-        else if (cat.includes('person') || cat.includes('occupant') || cat === 'ep') extraPerson += amt;
-        else if (cat.includes('laundry') || cat.includes('wash') || cat.includes('iron') || cat.includes('dry clean')) laundry += amt;
-        else if (cat.includes('bed') || cat.includes('mattress')) extraBed += amt;
-        else otherMiscExtras += amt;
-      });
-
-      // Also include chargeable WaterBottleRecord logs for this room on selectedDate if not already counted in extraCharges
-      if (waterBottle === 0 && Array.isArray(waterBottles) && waterBottles.length > 0) {
-        const roomWaterLogs = waterBottles.filter((wb) => {
-          if (toLocalYmd(wb.date || wb.dateTime) !== selectedDate) return false;
-          const wbRoom = String(wb.roomNumber || '').replace(/[^\d]/g, '').trim();
-          const rowRoomDigits = String(roomNumber || '').replace(/[^\d]/g, '').trim();
-          const splitDigits = splitRoomNums.map((rn) => rn.replace(/[^\d]/g, '').trim()).filter(Boolean);
-          const roomOk = Boolean(wbRoom && (wbRoom === rowRoomDigits || splitDigits.includes(wbRoom)));
-          const chargeable = wb.isChargeable === true || String(wb.type || '').toLowerCase() === 'chargeable';
-          return roomOk && chargeable;
-        });
-        roomWaterLogs.forEach((wb) => {
-          const amt = Number(wb.totalAmount ?? wb.chargeAmount ?? (Number(wb.quantity || 0) * Number(wb.unitPrice || 0)));
-          if (amt > 0) waterBottle += amt;
-        });
-      }
-
-      // Also include Guest LaundryOrder records for this room/checkin on selectedDate if not already counted in extraCharges
-      if (laundry === 0 && Array.isArray(laundryOrders) && laundryOrders.length > 0) {
-        const roomLaundry = laundryOrders.filter((lo) => {
-          if (lo.orderType !== 'Guest Laundry' || lo.paymentStatus === 'Complimentary') return false;
-          if (toLocalYmd(lo.date) !== selectedDate) return false;
-          if (lo.folioChargeId && seenExtraIds.has(lo.folioChargeId)) return false;
-          const loRoom = String(lo.roomNumber || '').replace(/[^\d]/g, '').trim();
-          const rowRoomDigits = String(roomNumber || '').replace(/[^\d]/g, '').trim();
-          const splitDigits = splitRoomNums.map((rn) => rn.replace(/[^\d]/g, '').trim()).filter(Boolean);
-          const checkinMatch = Boolean(c && (lo.checkInId === c.id || lo.checkinId === c.id));
-          return checkinMatch || Boolean(loRoom && (loRoom === rowRoomDigits || splitDigits.includes(loRoom)));
-        });
-        roomLaundry.forEach((lo) => {
-          const amt = Number(lo.totalAmount) || 0;
-          if (amt > 0) laundry += amt;
-        });
-      }
-
-      if (inv) {
-        if (inv.waterCharges) waterBottle = Math.max(waterBottle, inv.waterCharges);
-        if (inv.extraBedCharges) extraBed = Math.max(extraBed, inv.extraBedCharges);
-      }
-
-      // Kitchen / Food Amounts breakdown (UPI, CASH, DUE, TOTAL FOOD AMT)
-      let kitchenUpi = 0;
-      let kitchenCash = 0;
-      let kitchenDue = 0;
-
-      const cleanNum = (str: any) => String(str || '').replace(/[^\d]/g, '').trim();
-      const rowRoomClean = cleanNum(roomNumber);
-      const cleanSplitRooms = splitRoomNums.map(cleanNum).filter(Boolean);
-
-      // Find POS orders matching this room, stay or guest
-      const roomOrders = ordersOnDate.filter((o) => {
-        const oRoomClean = cleanNum(o.roomNumber);
-        const oGuest = String(o.guestName || '').toLowerCase().trim();
-        const rGuest = String(guestName || '').toLowerCase().trim();
-        const isRoomMatch =
-          Boolean(rowRoomClean && oRoomClean && (rowRoomClean === oRoomClean || cleanSplitRooms.includes(oRoomClean)));
-        const isCheckinMatch =
-          Boolean((c && (o.checkinId === c.id || (o as any).checkInId === c.id)) ||
-          (b && (o as any).bookingId === b.id) ||
-          (inv && (o as any).linkedInvoiceId === inv.id));
-        const isGuestMatch = Boolean(oGuest && rGuest && (oGuest.includes(rGuest) || rGuest.includes(oGuest)));
-
-        return isRoomMatch || isCheckinMatch || (isGuestMatch && Boolean(o.roomNumber));
-      });
-
-      roomOrders.forEach((o) => {
-        const oId = String(o.id || (o as any)._id);
-        allMatchedOrderIds.add(oId);
-
-        const pMethod = String(o.paymentMethod || '').toLowerCase();
-        const pStatus = String(o.paymentStatus || '').toLowerCase();
-        const isPaid = (o as any).isPaid === true || pStatus === 'paid';
-        const amt = Number(o.grandTotal ?? (o as any).totalAmount ?? (o as any).total ?? (o as any).subtotal ?? 0);
-        if (amt <= 0) return;
-
-        if (!isPaid || pMethod.includes('due') || pMethod.includes('room') || pMethod.includes('credit')) {
-          kitchenDue += amt;
-        } else if (pMethod.includes('cash')) {
-          kitchenCash += amt;
-        } else {
-          kitchenUpi += amt;
-        }
-      });
-
-      // Also check extraCharges (Guest Folio) for food charges not already counted via POS orders
-      const extrasList = (c?.extraCharges || []).concat(inv?.extraCharges || []);
-      extrasList.forEach((ec: any) => {
-        const cat = String(ec.category || ec.description || '').toLowerCase();
-        const isFood =
-          cat.includes('food') ||
-          cat.includes('kitchen') ||
-          cat.includes('restaurant') ||
-          cat.includes('thali') ||
-          cat.includes('breakfast') ||
-          cat.includes('lunch') ||
-          cat.includes('dinner') ||
-          cat.includes('room service');
-        if (!isFood) return;
-
-        const ecId = String(ec.id || '');
-        const ecSrc = String(ec.sourceId || '');
-        if (ecSrc && allMatchedOrderIds.has(ecSrc)) return;
-        if (ecId && allMatchedOrderIds.has(ecId)) return;
-        if (Array.from(allMatchedOrderIds).some((oid) => ecId.includes(oid))) return;
-
-        const amt = Number(ec.amount) || 0;
-        if (amt <= 0) return;
-
-        if (balance > 0) {
-          kitchenDue += amt;
-        } else if (cashPay > 0 && upiPay === 0) {
-          kitchenCash += amt;
-        } else {
-          kitchenUpi += amt;
-        }
-      });
-
-      // If food charges on invoice exist and no separate POS orders or folio charges found
-      if (roomOrders.length === 0 && kitchenUpi === 0 && kitchenCash === 0 && kitchenDue === 0 && inv && Number(inv.foodCharges) > 0) {
-        const f = Number(inv.foodCharges);
-        if (inv.isPaid) {
-          const invMethod = String(inv.paymentMethod || '').toLowerCase();
-          if (invMethod.includes('cash')) kitchenCash = f;
-          else kitchenUpi = f;
-        } else {
-          kitchenDue = f;
-        }
-      }
-
-      const totalFoodAmt = kitchenUpi + kitchenCash + kitchenDue;
-
-      const checkinTarget: GuestCheckIn | null =
-        c ||
-        (b
-          ? ({
-              id: b.id,
-              guestName: b.guestName,
-              mobile: b.mobile || '',
-              roomNumber: b.roomNumber || roomNumber,
-              roomType: b.roomType || 'Standard',
-              roomRate:
-                Number(b.bookedRooms?.[0]?.rate) ||
-                Math.round((Number(roomTariff) || 0) / Math.max(1, Number(nights) || 1)) ||
-                2000,
-              checkInDate: b.checkInDate,
-              checkOutDate: b.checkOutDate,
-              advanceAmount: Number(b.advanceAmount) || 0,
-              paymentMethod: b.paymentMethod || 'Cash',
-              discount: Number((b as any).discount || inv?.discount || 0),
-              totalAmount: totalStayPayable,
-              pendingAmount: balance,
-              checkedOutDateTime: inv?.dateCreated || b.checkOutDate,
-            } as GuestCheckIn)
-          : null);
-
-      const openingBalance = Number((c as any)?.openingBalance || (b as any)?.openingBalance || 0);
-      const roomTariffNum = Number(roomTariff) || 0;
-      const gstNum = typeof gstAmount === 'number' ? gstAmount : 0;
-      const totalRoom = openingBalance + roomTariffNum + gstNum;
-
-      const foodAmt = totalFoodAmt;
-      const waterBottleAmt = waterBottle;
-      const laundryAmt = laundry;
-      const anyOthersAmt = extraPerson + extraBed + otherMiscExtras;
-      const totalExtra = foodAmt + waterBottleAmt + laundryAmt + anyOthersAmt;
-
-      const grandTotal = totalRoom + totalExtra;
-
-      const payCash = cashPay + kitchenCash;
-      const payUpi = upiPay + kitchenUpi;
-      const payIcici = iciciPay;
-      const totalPayment = payCash + payUpi + payIcici;
-
-      const balanceDue = Math.max(0, Math.round((grandTotal - totalPayment) * 100) / 100);
-
-      return {
-        no: idx + 1,
-        guestName,
-        roomNumber,
-        nights,
-        openingBalance,
-        roomTariff: roomTariffNum,
-        gst: gstAmount,
-        totalRoom,
-        food: foodAmt,
-        waterBottle: waterBottleAmt,
-        laundry: laundryAmt,
-        anyOthers: anyOthersAmt,
-        totalExtra,
-        grandTotal,
-        cash: payCash,
-        upi: payUpi,
-        icici: payIcici,
-        totalPayment,
-        balanceDue,
-        // Detailed components
-        extraPerson,
-        extraBed,
-        kitchenUpi,
-        kitchenCash,
-        kitchenDue,
-        totalFoodAmt,
-        checkinTarget
-      };
-    });
-
-    // 5. Append any walk-in / non-room food orders on the selected date so no food sales are omitted
-    const unallocatedOrders = ordersOnDate.filter(
-      (o) => !allMatchedOrderIds.has(String(o.id || (o as any)._id))
-    );
-
-    unallocatedOrders.forEach((o) => {
-      const amt = Number(o.grandTotal ?? (o as any).totalAmount ?? (o as any).total ?? (o as any).subtotal ?? 0);
-      if (amt <= 0) return;
-      const pMethod = String(o.paymentMethod || '').toLowerCase();
-      const pStatus = String(o.paymentStatus || '').toLowerCase();
-      const isPaid = (o as any).isPaid === true || pStatus === 'paid';
-      let kUpi = 0;
-      let kCash = 0;
-      let kDue = 0;
-      if (!isPaid || pMethod.includes('due') || pMethod.includes('room') || pMethod.includes('credit')) {
-        kDue = amt;
-      } else if (pMethod.includes('cash')) {
-        kCash = amt;
-      } else {
-        kUpi = amt;
-      }
-
-      processed.push({
-        no: processed.length + 1,
-        guestName: String(o.guestName || `WALK-IN FOOD (${o.orderType || 'KITCHEN'})`).toUpperCase(),
-        roomNumber: o.roomNumber ? String(o.roomNumber) : (o.tableNo ? `TBL ${o.tableNo}` : 'KITCHEN'),
-        nights: 0,
-        openingBalance: 0,
-        roomTariff: 0,
-        gst: Number(o.taxAmount || 0),
-        totalRoom: Number(o.taxAmount || 0),
-        food: amt,
-        waterBottle: 0,
-        laundry: 0,
-        anyOthers: 0,
-        totalExtra: amt,
-        grandTotal: amt + Number(o.taxAmount || 0),
-        cash: kCash,
-        upi: kUpi,
-        icici: 0,
-        totalPayment: kCash + kUpi,
-        balanceDue: !isPaid ? amt : 0,
-        extraPerson: 0,
-        extraBed: 0,
-        kitchenUpi: kUpi,
-        kitchenCash: kCash,
-        kitchenDue: kDue,
-        totalFoodAmt: amt,
-        checkinTarget: null,
-      });
-    });
-
-    // Re-index row numbers
-    processed.forEach((p, i) => {
-      p.no = i + 1;
-    });
-
-    if (!searchTerm.trim()) return processed;
-    const term = searchTerm.toLowerCase();
-    return processed.filter(
-      (r) =>
-        r.guestName.toLowerCase().includes(term) ||
-        String(r.roomNumber).toLowerCase().includes(term)
-    );
-  }, [checkins, invoices, bookings, posOrders, waterBottles, laundryOrders, selectedDate, searchTerm, hotelSettings]);
-
-  // Cash Expenses on selected date (only physical cash / petty cash leaves the drawer)
-  const dailyExpenses = useMemo(() => {
-    return expenses.filter((e) => {
-      const eDate = toLocalYmd(e.date || (e as any).createdAt || '');
-      if (eDate !== selectedDate) return false;
-      if (String((e as any).approvalStatus || (e as any).status || '').toLowerCase() === 'rejected') return false;
-      return isCashModeStr((e as any).paymentMethod || (e as any).paymentMode || (e as any).paymentSource);
-    });
-  }, [expenses, selectedDate]);
-
-  const totalExpenseAmt = useMemo(() => {
-    return dailyExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-  }, [dailyExpenses]);
-
-  // Auto-calculated Cash Taken by Owner (from CashHandovers + Cash Owner Withdrawals on selectedDate)
-  const autoOwnerHandover = useMemo(() => {
-    let sum = 0;
-    (handovers || []).forEach((h) => {
-      if (toLocalYmd(h.date) === selectedDate) {
-        sum += Number(h.amount) || 0;
-      }
-    });
-    (ownerPayments || []).forEach((op) => {
-      if (toLocalYmd(op.date) !== selectedDate) return;
-      if (op.status === 'Cancelled') return;
-      if (isCapitalContributionPayment(op)) return;
-      if (isCashModeStr(op.paymentMethod || (op as any).paymentMode)) {
-        sum += Number(op.amount) || 0;
-      }
-    });
-    return Math.round(sum * 100) / 100;
-  }, [handovers, ownerPayments, selectedDate]);
+  // Compile guest ledger records, column totals, cash expenses & handovers via centralized engine
+  const {
+    reportRows,
+    dailyExpenses,
+    totalExpenseAmt,
+    autoOwnerHandover,
+    totals,
+  } = useMemo(
+    () =>
+      computeDailyCollectionSheet({
+        selectedDate,
+        searchTerm,
+        rooms,
+        bookings,
+        checkins,
+        invoices,
+        expenses,
+        posOrders,
+        posAdvanceBookings,
+        handovers,
+        ownerPayments,
+        waterBottles,
+        laundryOrders,
+        hotelSettings,
+      }),
+    [
+      selectedDate,
+      searchTerm,
+      rooms,
+      bookings,
+      checkins,
+      invoices,
+      expenses,
+      posOrders,
+      posAdvanceBookings,
+      handovers,
+      ownerPayments,
+      waterBottles,
+      laundryOrders,
+      hotelSettings,
+    ]
+  );
 
   const ownerHandover = manualOwnerHandover !== null ? manualOwnerHandover : autoOwnerHandover;
 
@@ -810,81 +1338,6 @@ export default function DailyCollectionSheet({
   }, [dailyExpenses]);
 
   const activeExpenseNote = customNote || defaultExpenseNote;
-
-  // Table Column Totals
-  const totals = useMemo(() => {
-    let openingBalance = 0;
-    let roomTariff = 0;
-    let gstNum = 0;
-    let totalRoom = 0;
-    let food = 0;
-    let waterBottle = 0;
-    let laundry = 0;
-    let anyOthers = 0;
-    let totalExtra = 0;
-    let grandTotal = 0;
-    let cash = 0;
-    let upi = 0;
-    let icici = 0;
-    let totalPayment = 0;
-    let balanceDue = 0;
-
-    let extraPerson = 0;
-    let extraBed = 0;
-    let kitchenUpi = 0;
-    let kitchenCash = 0;
-    let kitchenDue = 0;
-    let totalFoodAmt = 0;
-
-    reportRows.forEach((r) => {
-      openingBalance += Number(r.openingBalance) || 0;
-      roomTariff += Number(r.roomTariff) || 0;
-      if (typeof r.gst === 'number') gstNum += r.gst;
-      totalRoom += Number(r.totalRoom) || 0;
-      food += Number(r.food) || 0;
-      waterBottle += Number(r.waterBottle) || 0;
-      laundry += Number(r.laundry) || 0;
-      anyOthers += Number(r.anyOthers) || 0;
-      totalExtra += Number(r.totalExtra) || 0;
-      grandTotal += Number(r.grandTotal) || 0;
-      cash += Number(r.cash) || 0;
-      upi += Number(r.upi) || 0;
-      icici += Number(r.icici) || 0;
-      totalPayment += Number(r.totalPayment) || 0;
-      balanceDue += Number(r.balanceDue) || 0;
-
-      extraPerson += Number(r.extraPerson) || 0;
-      extraBed += Number(r.extraBed) || 0;
-      kitchenUpi += Number(r.kitchenUpi) || 0;
-      kitchenCash += Number(r.kitchenCash) || 0;
-      kitchenDue += Number(r.kitchenDue) || 0;
-      totalFoodAmt += Number(r.totalFoodAmt || r.food) || 0;
-    });
-
-    return {
-      openingBalance,
-      roomTariff,
-      gst: gstNum,
-      totalRoom,
-      food,
-      waterBottle,
-      laundry,
-      anyOthers,
-      totalExtra,
-      grandTotal,
-      cash,
-      upi,
-      icici,
-      totalPayment,
-      balanceDue,
-      extraPerson,
-      extraBed,
-      kitchenUpi,
-      kitchenCash,
-      kitchenDue,
-      totalFoodAmt
-    };
-  }, [reportRows]);
 
   // Cash Counter Calculations matching the exact Excel format formula:
   // CASH COLLECTION TODAY = Total Cash Payment Column (Col 15)
@@ -1633,7 +2086,21 @@ export default function DailyCollectionSheet({
                     <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono text-slate-500">
                       {r.openingBalance > 0 ? `₹${r.openingBalance.toLocaleString('en-IN')}` : '—'}
                     </td>
-                    <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono font-bold text-[#1F2937]">
+                    <td
+                      className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono font-bold text-[#1F2937]"
+                      title={
+                        [
+                          r.baseRoomTariff > 0 ? `Room: ₹${r.baseRoomTariff.toLocaleString('en-IN')}` : '',
+                          r.extraBed > 0 ? `Extra Bed: ₹${r.extraBed.toLocaleString('en-IN')}` : '',
+                          r.extraPerson > 0 ? `Extra Person: ₹${r.extraPerson.toLocaleString('en-IN')}` : '',
+                          r.earlyCheckIn > 0 ? `Early Check-In: ₹${r.earlyCheckIn.toLocaleString('en-IN')}` : '',
+                          r.lateCheckOut > 0 ? `Late Check-Out: ₹${r.lateCheckOut.toLocaleString('en-IN')}` : '',
+                          r.discount > 0 ? `Discount: -₹${r.discount.toLocaleString('en-IN')}` : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' + ') || undefined
+                      }
+                    >
                       {r.roomTariff > 0 ? `₹${r.roomTariff.toLocaleString('en-IN')}` : '—'}
                     </td>
                     <td className="py-2.5 px-2 border-r border-[#EFE8D8] text-right font-mono">

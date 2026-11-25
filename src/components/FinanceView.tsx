@@ -577,7 +577,14 @@ export default function FinanceView({
   // --- Filtered Datasets According to Date Filter (Default: Today Only) ---
   const filteredInvoices = useMemo(() => {
     return invoices.filter(inv => {
-      if (inv.isSuperseded || inv.invoiceStatus === 'Superseded') return false;
+      if (
+        inv.isSuperseded ||
+        (inv as any).isCreditNote ||
+        inv.invoiceType === 'Credit Note' ||
+        inv.invoiceStatus === 'Superseded' ||
+        inv.invoiceStatus === 'Cancelled'
+      )
+        return false;
       return isRecordInDateRange(inv.dateCreated || (inv as any).createdAt || (inv as any).invoiceDate);
     });
   }, [invoices, computedRangeStart, computedRangeEnd, dateFilterPreset]);

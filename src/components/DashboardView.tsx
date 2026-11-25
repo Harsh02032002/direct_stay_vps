@@ -169,9 +169,17 @@ export default function DashboardView({
 
   const totalWaterBottlesConsumed = waterBottles.reduce((sum, wb) => sum + wb.quantity, 0);
 
-  // Active (non-superseded) invoices for revenue accounting
+  // Active (non-superseded, non-credit-note) invoices for revenue accounting
   const activeInvoices = useMemo(
-    () => (invoices || []).filter(inv => !inv.isSuperseded && inv.invoiceStatus !== 'Superseded'),
+    () =>
+      (invoices || []).filter(
+        inv =>
+          !inv.isSuperseded &&
+          !(inv as any).isCreditNote &&
+          inv.invoiceType !== 'Credit Note' &&
+          inv.invoiceStatus !== 'Superseded' &&
+          inv.invoiceStatus !== 'Cancelled'
+      ),
     [invoices]
   );
 

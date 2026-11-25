@@ -6,7 +6,7 @@ import {
   MapPin, Globe, CheckCircle, RefreshCw, BarChart3, Users, Landmark,
   Quote, Menu, X, Calendar, BedDouble, Receipt, FileSpreadsheet, BookOpen
 } from 'lucide-react';
-import { Hotel as HotelType, Room, Staff, HotelPolicy, AuditLog, SystemWebsiteConfig, CustomPage } from '../types';
+import { Hotel as HotelType, Room, Staff, HotelPolicy, AuditLog, SystemWebsiteConfig, CustomPage, SaaSPackage } from '../types';
 import { INITIAL_SYSTEM_WEBSITE, INITIAL_CUSTOM_PAGES, getPmsData } from '../utils/dummyData';
 import { sha256 } from '../utils/crypto';
 import { showToast } from '../utils/toast';
@@ -17,14 +17,18 @@ import {
   HotelierGuideArticle,
   applySeoHeadTags,
   trackSeoConversionEvent,
-  detectLeadSource
+  detectLeadSource,
+  isCmsItemPublished,
 } from '../utils/seoManager';
+import { buildDirectStayWhatsappUrl, DEFAULT_WHATSAPP_NUMBER } from './WhatsAppSupportWidget';
+import { sanitizeCmsHtml } from './RichTextEditor';
 
 interface FrontWebsiteProps {
   onOnboardComplete: (newHotel: HotelType, generatedRooms: Room[]) => Promise<{ success: boolean; error?: string }> | void;
   onNavigateToLogin: () => void;
   systemWebsite?: SystemWebsiteConfig;
   customPages?: CustomPage[];
+  packages?: SaaSPackage[];
   activeSeoPage?: PublicSeoPageKey;
   activeBlogSlug?: string | null;
   onNavigateSeoPage?: (pageKey: PublicSeoPageKey, blogSlug?: string) => void;
@@ -64,6 +68,7 @@ export default function FrontWebsite({
   onNavigateToLogin,
   systemWebsite = INITIAL_SYSTEM_WEBSITE,
   customPages = [],
+  packages = [],
   activeSeoPage = 'home',
   onNavigateSeoPage
 }: FrontWebsiteProps) {
@@ -139,7 +144,7 @@ export default function FrontWebsite({
   const contactFormSubmitted = contactSubmitted;
 
   const effectiveCustomPages = customPages && customPages.length > 0 ? customPages : INITIAL_CUSTOM_PAGES;
-  const publishedCustomPages = effectiveCustomPages.filter((p) => p.published);
+  const publishedCustomPages = effectiveCustomPages.filter((p) => isCmsItemPublished(p));
 
   const navigateSeo = (pageKey: PublicSeoPageKey, sectionId?: string) => {
     setMobileMenuOpen(false);
@@ -200,10 +205,12 @@ export default function FrontWebsite({
     }
     applySeoHeadTags(activeSeoPage, {
       businessName: systemWebsite?.businessName || 'DirectStay',
-      supportPhone: systemWebsite?.supportPhone || '+91-7978563771',
+      supportPhone: systemWebsite?.supportPhone || DEFAULT_WHATSAPP_NUMBER,
       supportEmail: systemWebsite?.supportEmail || 'contact@directstay.online',
       contactAddress: systemWebsite?.contactAddress || 'Puri & Bhubaneswar, Odisha, India',
-      logoUrl: systemWebsite?.logoUrl || ''
+      logoUrl: systemWebsite?.logoUrl || '',
+      seoSettings: systemWebsite?.seoSettings,
+      customPage: activeCustomPage || undefined,
     });
     if (activeSeoPage === 'home') {
       trackSeoConversionEvent('landing_page_view', {
@@ -216,7 +223,7 @@ export default function FrontWebsite({
         dedupeKey: 'pricing_visit'
       });
     }
-  }, [activeSeoPage, systemWebsite]);
+  }, [activeSeoPage, systemWebsite, activeCustomPage]);
 
   // Onboarding states
   const [ownerFullName, setOwnerFullName] = useState('');
@@ -300,20 +307,46 @@ export default function FrontWebsite({
     Array.isArray(systemWebsite.featureCards) && systemWebsite.featureCards.length > 0
       ? systemWebsite.featureCards
       : INITIAL_SYSTEM_WEBSITE.featureCards || [];
-  const hasLegacyPricingCards =
-    Array.isArray(systemWebsite.pricingCards) &&
-    systemWebsite.pricingCards.some(
-      (c) =>
-        String(c?.priceText || '').includes('7,999') ||
-        String(c?.priceText || '').includes('14,000') ||
-        String(c?.title || '').includes('6 Month') ||
-        String(c?.gstText || '').includes('18% GST')
-    );
+  const activeDynamicPackages = Array.isArray(packages)
+    ? [...packages]
+        .filter((p) => p && p.isActive !== false)
+        .sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99))
+    : [];
+
+  const dynamicPackagePricingCards = activeDynamicPackages.map((pkg, i) => {
+    const base = Number(pkg.priceYearly || pkg.priceMonthly || 0);
+    const gst = Number(pkg.gstRate ?? 18);
+    const total = base + Math.round(base * (gst / 100));
+    return {
+      id: pkg.id || `dyn-pkg-${i}`,
+      planKey: (pkg.billingCycle === 'Monthly' ? 'Monthly' : 'Yearly') as 'Trial' | 'Monthly' | 'HalfYearly' | 'Yearly',
+      title: pkg.name,
+      description: pkg.tagline || pkg.description || pkg.roomTierLabel || 'DirectStay Hospitality Plan',
+      priceText: `₹${base.toLocaleString('en-IN')}`,
+      periodText: pkg.billingCycle === 'Monthly' ? '/ Month' : '/ Year',
+      gstText: `+ ${gst}% GST (Total ₹${total.toLocaleString('en-IN')})`,
+      features:
+        Array.isArray(pkg.features) && pkg.features.length > 0
+          ? pkg.features
+          : [
+              pkg.roomTierLabel || (pkg.maxRooms >= 999 ? 'Unlimited Rooms' : `Up to ${pkg.maxRooms} Rooms`),
+              pkg.otaLimitLabel || (pkg.modules?.ota ? 'OTA Channel Manager Sync' : 'Full PMS Operations'),
+              'GST Billing, POS & Daily Collection Reports',
+            ],
+      buttonText: pkg.buttonText || `Choose ${pkg.name}`,
+      badgeText: pkg.badge || pkg.discountLabel,
+      isHighlighted: Boolean(pkg.isPopular),
+      isPopular: Boolean(pkg.isPopular),
+    };
+  });
+
   const pricingCards =
-    Array.isArray(systemWebsite.pricingCards) &&
-    systemWebsite.pricingCards.length > 0 &&
-    !hasLegacyPricingCards
+    systemWebsite.useDynamicPackagesOnPricing && dynamicPackagePricingCards.length > 0
+      ? dynamicPackagePricingCards
+      : Array.isArray(systemWebsite.pricingCards) && systemWebsite.pricingCards.length > 0
       ? systemWebsite.pricingCards
+      : dynamicPackagePricingCards.length > 0
+      ? dynamicPackagePricingCards
       : INITIAL_SYSTEM_WEBSITE.pricingCards || [];
   const visionPillars =
     Array.isArray(systemWebsite.visionPillars) && systemWebsite.visionPillars.length > 0
@@ -827,6 +860,41 @@ export default function FrontWebsite({
             >
               Contact
             </a>
+            {(Array.isArray(systemWebsite.headerNavLinks) ? systemWebsite.headerNavLinks : [])
+              .filter((item) => item && item.isVisible !== false && item.label && item.href)
+              .slice(0, 4)
+              .map((item) => (
+                <a
+                  key={item.id}
+                  href={item.href}
+                  target={item.isExternal ? '_blank' : undefined}
+                  rel={item.isExternal ? 'noopener noreferrer' : undefined}
+                  onClick={(e) => {
+                    if (!item.isExternal && item.href.startsWith('/page/')) {
+                      e.preventDefault();
+                      const slug = item.href.replace(/^\/page\//, '').replace(/\/+$/, '');
+                      const found = publishedCustomPages.find((p) => p.slug === slug);
+                      if (found) setActiveCustomPage(found);
+                    }
+                  }}
+                  className="hover:text-[#E5C687] transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  {item.label}
+                </a>
+              ))}
+            {publishedCustomPages
+              .filter((p) => p.showInHeader)
+              .slice(0, 3)
+              .map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setActiveCustomPage(p)}
+                  className="hover:text-[#E5C687] transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  {p.title}
+                </button>
+              ))}
           </nav>
 
           {/* EXTREME RIGHT: Sign In Button ONLY */}
@@ -1714,6 +1782,26 @@ export default function FrontWebsite({
                   >
                     {plan.planKey === 'Trial' ? 'Start 7-Day Free Trial' : plan.buttonText || 'Select Package'}
                   </button>
+                  {systemWebsite.hasWhatsapp !== false && (
+                    <a
+                      href={buildDirectStayWhatsappUrl({
+                        phone: systemWebsite.whatsappNumber || systemWebsite.supportPhone || DEFAULT_WHATSAPP_NUMBER,
+                        context: 'pricing',
+                        packageName: `${plan.title} (${plan.priceText} ${plan.periodText})`,
+                      })}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() =>
+                        trackSeoConversionEvent('whatsapp_click', {
+                          leadSource: 'WhatsApp',
+                          pagePath: '/pricing/',
+                        })
+                      }
+                      className="mt-2 w-full py-2 px-3 rounded-xl border border-emerald-500/35 bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 text-[11px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all"
+                    >
+                      <span>💬 Ask on WhatsApp ({systemWebsite.whatsappNumber || DEFAULT_WHATSAPP_NUMBER})</span>
+                    </a>
+                  )}
                 </div>
               );
             })}
@@ -1829,6 +1917,91 @@ export default function FrontWebsite({
                 </div>
               ))}
             </div>
+
+            {/* Published & Live-Scheduled CMS Blog Posts */}
+            {Array.isArray(systemWebsite.blogs) &&
+              systemWebsite.blogs.filter((b) => b && isCmsItemPublished(b)).length > 0 && (
+                <div className="pt-8 mt-6 border-t border-[#C9A65B]/15 space-y-4">
+                  <div>
+                    <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#D4AF6A] block">
+                      {systemWebsite.blogHeading || 'Latest DirectStay Blog Posts'}
+                    </span>
+                    <h3 className="text-lg sm:text-xl font-serif font-semibold text-[#FAF6F0] mt-1">
+                      {systemWebsite.blogSubtitle || 'Hospitality Insights, OTA Strategies & PMS Updates'}
+                    </h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {systemWebsite.blogs
+                      .filter((b) => b && isCmsItemPublished(b))
+                      .map((blog) => (
+                        <article
+                          key={blog.id}
+                          className="rounded-2xl bg-[#150E0A] border border-[#C9A65B]/25 hover:border-[#DFBD78]/50 overflow-hidden flex flex-col justify-between transition-all"
+                        >
+                          <div>
+                            {blog.imageUrl && (
+                              <img
+                                src={blog.imageUrl}
+                                alt={blog.featuredImageAlt || blog.seo?.imageAlt || blog.title}
+                                className="w-full h-40 object-cover border-b border-[#C9A65B]/15"
+                              />
+                            )}
+                            <div className="p-4 space-y-2">
+                              <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-[#E5C687]">
+                                <span className="uppercase">{blog.category || 'Hospitality'}</span>
+                                <span className="text-[#B7A691]">{blog.publishedAt}</span>
+                              </div>
+                              <h4 className="text-sm sm:text-base font-serif font-bold text-[#FAF6F0] leading-snug">
+                                {blog.title}
+                              </h4>
+                              <p className="text-xs text-[#C4B5A2] leading-relaxed line-clamp-3">
+                                {blog.summary}
+                              </p>
+                              {Array.isArray(blog.tags) && blog.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 pt-1">
+                                  {blog.tags.slice(0, 4).map((t, ti) => (
+                                    <span
+                                      key={ti}
+                                      className="px-2 py-0.5 rounded-full bg-[#C9A65B]/10 border border-[#C9A65B]/25 text-[10px] font-mono text-[#E5C687]"
+                                    >
+                                      #{t}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="px-4 py-3 border-t border-[#C9A65B]/15 flex items-center justify-between">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setActiveCustomPage({
+                                  id: blog.id,
+                                  title: blog.title,
+                                  slug: blog.slug || blog.id,
+                                  content: blog.content,
+                                  imageUrl: blog.imageUrl,
+                                  featuredImageAlt: blog.featuredImageAlt || blog.seo?.imageAlt,
+                                  tags: blog.tags,
+                                  category: blog.category,
+                                  published: true,
+                                  seo: blog.seo,
+                                })
+                              }
+                              className="text-xs font-mono font-semibold text-[#E5C687] hover:text-[#FAF6F0] inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <span>Read Article</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                            <span className="text-[10px] font-mono text-[#9E8D78]">
+                              {blog.readTime || '4 min read'}
+                            </span>
+                          </div>
+                        </article>
+                      ))}
+                  </div>
+                </div>
+              )}
           </div>
         </div>
       </section>
@@ -3485,16 +3658,29 @@ export default function FrontWebsite({
               </button>
             </div>
             <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
-              {activeCustomPage.imageUrl && (
+              {(activeCustomPage.featuredImageUrl || activeCustomPage.imageUrl) && (
                 <img
-                  src={activeCustomPage.imageUrl}
-                  alt={activeCustomPage.title}
+                  src={activeCustomPage.featuredImageUrl || activeCustomPage.imageUrl}
+                  alt={activeCustomPage.featuredImageAlt || activeCustomPage.seo?.imageAlt || activeCustomPage.title}
                   className="w-full h-56 object-cover rounded-2xl border border-luxury-gold-500/20"
                 />
               )}
-              <div className="text-sm text-[#e2d5c5]/85 leading-relaxed whitespace-pre-line font-sans">
-                {activeCustomPage.content}
-              </div>
+              {Array.isArray(activeCustomPage.tags) && activeCustomPage.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {activeCustomPage.tags.map((t, i) => (
+                    <span
+                      key={i}
+                      className="px-2.5 py-0.5 rounded-full bg-luxury-gold-500/15 border border-luxury-gold-500/30 text-luxury-gold-300 text-[10px] font-mono"
+                    >
+                      #{t}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div
+                className="text-sm text-[#e2d5c5]/85 leading-relaxed font-sans space-y-3 prose prose-invert max-w-none"
+                dangerouslySetInnerHTML={{ __html: sanitizeCmsHtml(activeCustomPage.content || '') }}
+              />
               {activeCustomPage.linkUrl && (
                 <div className="pt-2">
                   <a

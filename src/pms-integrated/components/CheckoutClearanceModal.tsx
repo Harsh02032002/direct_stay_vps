@@ -47,6 +47,16 @@ interface CheckoutClearanceModalProps {
     paymentsToRecord: Array<{ amount: number; method: PaymentMethod; referenceNo: string; notes: string }>;
     refundAmount: number;
   }) => void;
+  onRegisterLostFound?: (item: {
+    itemName: string;
+    category: string;
+    description?: string;
+    roomNumber: string;
+    bookingId: string;
+    guestName: string;
+    guestMobile?: string;
+    storageLocation?: string;
+  }) => void;
 }
 
 function serviceToChargeKind(serviceType?: string, desc?: string): BillChargeKind {
@@ -75,6 +85,7 @@ export default function CheckoutClearanceModal({
   onClose,
   onPreviewInvoice,
   onCompleteFinalCheckout,
+  onRegisterLostFound,
 }: CheckoutClearanceModalProps) {
   if (!booking) return null;
 
@@ -94,6 +105,31 @@ export default function CheckoutClearanceModal({
   const [coRoomInspected, setCoRoomInspected] = useState(true);
   const [coMinibarVerified, setCoMinibarVerified] = useState(true);
   const [coLinenVerified, setCoLinenVerified] = useState(true);
+
+  // Lost & Found quick registration during Checkout
+  const [showCheckoutLf, setShowCheckoutLf] = useState(false);
+  const [coLfItemName, setCoLfItemName] = useState('');
+  const [coLfCategory, setCoLfCategory] = useState('Electronics');
+  const [coLfStorage, setCoLfStorage] = useState('Front Desk Safe');
+  const [coLfNotes, setCoLfNotes] = useState('');
+  const [coLfLoggedItems, setCoLfLoggedItems] = useState<Array<{ itemName: string; category: string }>>([]);
+
+  const handleLogCheckoutFoundItem = () => {
+    if (!coLfItemName.trim()) return;
+    onRegisterLostFound?.({
+      itemName: coLfItemName.trim(),
+      category: coLfCategory,
+      description: coLfNotes.trim(),
+      roomNumber: safeRoomNumbers[0] || roomDisplay,
+      bookingId: booking.id,
+      guestName,
+      guestMobile,
+      storageLocation: coLfStorage.trim() || 'Front Desk Safe',
+    });
+    setCoLfLoggedItems((prev) => [...prev, { itemName: coLfItemName.trim(), category: coLfCategory }]);
+    setCoLfItemName('');
+    setCoLfNotes('');
+  };
 
   // Existing folio services (read-only) vs ONLY newly added checkout charges (fixes C1 double-charging!)
   const existingServices: OtherServiceItem[] = useMemo(
@@ -523,8 +559,88 @@ export default function CheckoutClearanceModal({
                 >
                   ⚠️ Add Damage Fine
                 </button>
+                {onRegisterLostFound && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCheckoutLf((v) => !v)}
+                    className={`px-3 py-1.5 rounded-lg font-mono text-[11px] font-bold border cursor-pointer transition-all ${
+                      showCheckoutLf || coLfLoggedItems.length > 0
+                        ? 'bg-amber-600 text-white border-amber-700 shadow-xs'
+                        : 'bg-white text-amber-800 border-amber-300 hover:bg-amber-50'
+                    }`}
+                  >
+                    🧳 Found Item in Room {coLfLoggedItems.length > 0 ? `(${coLfLoggedItems.length})` : ''}
+                  </button>
+                )}
               </div>
             </div>
+
+            {onRegisterLostFound && showCheckoutLf && (
+              <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-300 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-amber-950">
+                    Register Item Found in Room {roomDisplay} → Central Lost &amp; Found Register
+                  </span>
+                  <span className="text-[10px] font-mono text-amber-800">Guest: {guestName}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  <input
+                    type="text"
+                    value={coLfItemName}
+                    onChange={(e) => setCoLfItemName(e.target.value)}
+                    placeholder="Item found (e.g. Phone Charger, Watch)"
+                    className="sm:col-span-4 px-2.5 py-1.5 rounded-lg border border-amber-200 bg-white text-xs"
+                  />
+                  <select
+                    value={coLfCategory}
+                    onChange={(e) => setCoLfCategory(e.target.value)}
+                    className="sm:col-span-3 px-2.5 py-1.5 rounded-lg border border-amber-200 bg-white text-xs font-semibold"
+                  >
+                    <option value="Electronics">Electronics</option>
+                    <option value="Documents/Wallet">Documents/Wallet</option>
+                    <option value="Jewelry">Jewelry</option>
+                    <option value="Clothing">Clothing</option>
+                    <option value="Bags & Luggage">Bags &amp; Luggage</option>
+                    <option value="Keys & Cards">Keys &amp; Cards</option>
+                    <option value="Others">Others</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={coLfStorage}
+                    onChange={(e) => setCoLfStorage(e.target.value)}
+                    placeholder="Storage (e.g. Front Desk Safe)"
+                    className="sm:col-span-3 px-2.5 py-1.5 rounded-lg border border-amber-200 bg-white text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleLogCheckoutFoundItem}
+                    disabled={!coLfItemName.trim()}
+                    className="sm:col-span-2 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-amber-400 font-bold text-xs cursor-pointer"
+                  >
+                    + Log Item
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={coLfNotes}
+                  onChange={(e) => setCoLfNotes(e.target.value)}
+                  placeholder="Optional notes (location in room, color, condition...)"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-amber-200 bg-white text-xs"
+                />
+                {coLfLoggedItems.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {coLfLoggedItems.map((it, i) => (
+                      <span
+                        key={i}
+                        className="px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-900 text-[10.5px] font-bold"
+                      >
+                        ✓ Logged: {it.itemName} ({it.category})
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Quick Presets */}
             <div className="space-y-1.5">

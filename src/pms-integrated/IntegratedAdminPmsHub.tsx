@@ -87,17 +87,19 @@ import {
   r2,
 } from '../utils/billCalculator';
 import {
-  allocateGrcNumber,
   allocateInvoiceNumber,
   buildInvoiceRecord,
   buildStayBill,
   isActiveInvoice,
   reconcileScopedStayInvoice,
+  requestAtomicGrcNumber,
+  resolveConsistentInvoiceTotals,
   resolveInvoiceScope,
   toGrcPrintData,
 } from '../utils/stayBilling';
 import { renderGrcHtml } from '../utils/printTemplates';
 import { openPrintWindow } from '../utils/printDocument';
+import { showToast } from '../utils/toast';
 
 import type {
   Room,
@@ -119,6 +121,7 @@ import type {
   CashBankAccount,
   FinanceVoucher,
   OwnerDirectorPayment,
+  CashHandover,
   StaffReimbursement,
   DailyClosingRecord,
   LaundryOrder,
@@ -127,6 +130,9 @@ import type {
   TravelAgent,
   AgentCommissionPayment,
   FoodAdvanceBooking,
+  PosCategory,
+  PosTableRecord,
+  RolePermission,
 } from '../types';
 
 interface IntegratedAdminPmsHubProps {
@@ -185,6 +191,7 @@ interface IntegratedAdminPmsHubProps {
   appCashBankAccounts?: CashBankAccount[];
   appVouchers?: FinanceVoucher[];
   appOwnerPayments?: OwnerDirectorPayment[];
+  appHandovers?: CashHandover[];
   appReimbursements?: StaffReimbursement[];
   appDailyClosings?: DailyClosingRecord[];
   appLaundryOrders?: LaundryOrder[];
@@ -193,6 +200,9 @@ interface IntegratedAdminPmsHubProps {
   appTravelAgents?: TravelAgent[];
   appAgentCommissionPayments?: AgentCommissionPayment[];
   appPosAdvanceBookings?: FoodAdvanceBooking[];
+  appPosCategories?: PosCategory[];
+  appPosTables?: PosTableRecord[];
+  appRolePermissions?: RolePermission[];
 
   onUpdateRooms?: (updated: Room[]) => void;
   onUpdateBookings?: (updated: Booking[]) => void;
@@ -220,6 +230,72 @@ interface IntegratedAdminPmsHubProps {
   onUpdateTravelAgents?: (updated: TravelAgent[]) => void;
   onUpdateAgentCommissionPayments?: (updated: AgentCommissionPayment[]) => void;
   onUpdatePosAdvanceBookings?: (updated: FoodAdvanceBooking[]) => void;
+  onUpdatePosCategories?: (updated: PosCategory[]) => void;
+  onUpdatePosTables?: (updated: PosTableRecord[]) => void;
+}
+
+export function classifyExtraChargeServiceType(ec: {
+  category?: string;
+  sourceType?: string;
+  description?: string;
+  serviceType?: string;
+}): OtherServiceItem['serviceType'] {
+  const cat = String(ec.category || '').toLowerCase();
+  const st = String(ec.sourceType || '').toLowerCase();
+  const sv = String(ec.serviceType || '').toLowerCase();
+  const desc = String(ec.description || '').toLowerCase();
+  if (
+    st === 'pos_order' ||
+    cat === 'food' ||
+    cat.includes('food') ||
+    cat.includes('restaurant') ||
+    cat.includes('kitchen') ||
+    sv === 'pos_food' ||
+    desc.startsWith('food bill')
+  ) {
+    return 'POS_FOOD';
+  }
+  if (st === 'water_bottle' || cat.includes('water') || desc.includes('water bottle')) {
+    return 'WATER BOTTLE';
+  }
+  if (
+    st === 'laundry' ||
+    cat.includes('laundry') ||
+    sv.includes('laundry') ||
+    desc.includes('laundry') ||
+    desc.includes('dry clean') ||
+    /\biron(ing)?\b/.test(desc)
+  ) {
+    return 'LAUNDRY';
+  }
+  if (
+    cat === 'damage' ||
+    sv.includes('damage') ||
+    sv.includes('fine') ||
+    desc.includes('fine') ||
+    desc.includes('damage')
+  ) {
+    return 'DAMAGE / FINE';
+  }
+  return 'SPA / OTHER';
+}
+
+/**
+ * Pure runtime guard: returns the active finalized primary invoice for a booking if one exists.
+ * Used to prevent unauthorized post-finalization mutations (BUG-P2-07).
+ */
+export function findActiveFinalizedInvoiceForBooking(
+  bookingId: string,
+  invoicesList: Array<Partial<Invoice & InvoiceRecord>>
+): (Partial<Invoice & InvoiceRecord>) | undefined {
+  return (invoicesList || []).find(
+    (inv) =>
+      inv &&
+      !inv.isSuperseded &&
+      !inv.isSeparateInvoice &&
+      (inv.bookingId === bookingId || (inv as any).checkInId === bookingId || inv.bookingNo === bookingId) &&
+      ((inv as any).isFinalInvoice === true || inv.invoiceStatus === 'Finalized')
+  );
 }
 
 // Mappers from App.tsx MongoDB types -> IntegratedAdminPmsHub types
@@ -354,7 +430,7 @@ function normalizeDocType(raw?: string): GuestPerson['documentType'] {
   return 'Aadhaar Card';
 }
 
-function mapAppBookingToRecord(
+export function mapAppBookingToRecord(
   b: Booking,
   checkins: GuestCheckIn[],
   rooms: Room[],
@@ -434,12 +510,11 @@ function mapAppBookingToRecord(
     orderNumber: `ORD-${idx + 1}`,
     roomNumber: roomNums[0] || '',
     roomName: `Room ${roomNums[0] || ''}`,
-    serviceType:
-      ec.category === 'Laundry'
-        ? 'LAUNDRY'
-        : ec.category === 'Damage'
-        ? 'DAMAGE / FINE'
-        : 'ROOM SERVICE',
+    serviceType: classifyExtraChargeServiceType({
+      category: ec.category,
+      sourceType: (ec as any).sourceType,
+      description: ec.description,
+    }),
     description: ec.description || ec.category || 'Room Charge',
     itemsSummary: ec.description || 'Service',
     quantity: 1,
@@ -462,15 +537,51 @@ function mapAppBookingToRecord(
     return s.slice(0, 10) || fallback;
   };
 
-  const paymentsList: PaymentRecordItem[] = Array.isArray(anyB.payments)
+  const rawBookingPayments: PaymentRecordItem[] = Array.isArray(anyB.payments)
     ? [...anyB.payments]
     : [];
-  const seenPaymentIds = new Set(paymentsList.map((p) => String(p?.id || '')).filter(Boolean));
-  const hasAdvanceEntry = paymentsList.some(
-    (p) =>
-      String(p?.id || '').toLowerCase().includes('adv') ||
-      String(p?.notes || '').toLowerCase().includes('advance')
+  const genuineNonSyntheticSum = r2(
+    rawBookingPayments
+      .filter((p) => p && !String(p.id || '').startsWith('pay-adv-') && Number(p.amount) > 0)
+      .reduce((s, p) => s + Number(p.amount || 0), 0)
   );
+  // Drop stale synthetic pay-adv-* wrapper if genuine split/check-in payments already cover it (UI-BUG-03 Part A)
+  const paymentsList: PaymentRecordItem[] = rawBookingPayments.filter((p) => {
+    if (!p) return false;
+    const isSynthAdv = String(p.id || '') === `pay-adv-${b.id}`;
+    if (isSynthAdv && genuineNonSyntheticSum > 0 && genuineNonSyntheticSum >= Number(p.amount || 0) - 0.01) {
+      return false;
+    }
+    return true;
+  });
+
+  const seenPaymentIds = new Set(paymentsList.map((p) => String(p?.id || '')).filter(Boolean));
+  const linkedCheckinPosPays = (linkedCheckin?.payments || []).filter(
+    (p) => p && Number(p.amount) > 0 && !String(p.notes || '').toLowerCase().includes('marked as due')
+  );
+  const existingPosSum = r2(
+    paymentsList.reduce((s, p) => s + (Number(p?.amount) > 0 ? Number(p.amount) : 0), 0)
+  );
+  const linkedPosSum = r2(linkedCheckinPosPays.reduce((s, p) => s + Number(p.amount || 0), 0));
+
+  const hasAdvanceEntry =
+    paymentsList.some((p) => {
+      const pid = String(p?.id || '').toLowerCase();
+      const notes = String(p?.notes || '').toLowerCase();
+      const ptype = String((p as any)?.paymentType || '').toLowerCase();
+      return (
+        pid.includes('adv') ||
+        pid.includes('checkin') ||
+        notes.includes('advance') ||
+        notes.includes('check-in') ||
+        notes.includes('hybrid') ||
+        ptype.includes('advance') ||
+        ptype.includes('partial')
+      );
+    }) ||
+    (Number(b.advanceAmount) > 0 &&
+      (existingPosSum >= Number(b.advanceAmount) - 0.01 ||
+        linkedPosSum >= Number(b.advanceAmount) - 0.01));
 
   if (!hasAdvanceEntry && Number(b.advanceAmount) > 0) {
     const advId = `pay-adv-${b.id}`;
@@ -501,16 +612,28 @@ function mapAppBookingToRecord(
       notes: b.cancellationReason ? `Refund: ${b.cancellationReason}` : 'Cancellation Refund',
     });
   }
-  (linkedCheckin?.payments || []).forEach((p, idx) => {
+  linkedCheckinPosPays.forEach((p, idx) => {
     const anyP = p as any;
     const pid = String(p.id || `pay-${b.id}-${idx}`);
     if (seenPaymentIds.has(pid)) return;
-    if (p.paymentType === 'Advance Deposit' && (hasAdvanceEntry || Number(b.advanceAmount) > 0)) return;
-    const isCheckInDeskPay = (
+    if (
+      p.paymentType === 'Advance Deposit' &&
+      paymentsList.some((bp) => String(bp.id || '') === `pay-adv-${b.id}`)
+    ) {
+      return;
+    }
+    const pMethodNorm = String(anyP.method || p.paymentMethod || 'UPI').toLowerCase();
+    const isCheckInDeskPay =
       String(p.id || '').includes('-checkin') ||
-      String(p.notes || '').toLowerCase().includes('check-in')
-    );
-    if (isCheckInDeskPay && paymentsList.some((bp) => Math.abs(bp.amount - p.amount) < 0.01)) {
+      String(p.notes || '').toLowerCase().includes('check-in');
+    if (
+      isCheckInDeskPay &&
+      paymentsList.some(
+        (bp) =>
+          Math.abs(bp.amount - p.amount) < 0.01 &&
+          String(bp.paymentMethod || '').toLowerCase() === pMethodNorm
+      )
+    ) {
       return;
     }
     seenPaymentIds.add(pid);
@@ -520,7 +643,7 @@ function mapAppBookingToRecord(
       amount: r2(p.amount || 0),
       paymentMethod: anyP.method || p.paymentMethod || 'UPI',
       transactionId: anyP.reference || anyP.transactionId || anyP.transactionReference || `TXN-${idx + 1}`,
-      date: toLocalYmd(p.dateTime, b.checkOutDate || b.checkInDate),
+      date: toLocalYmd(anyP.date || p.dateTime, b.checkInDate),
       time: '12:00 PM',
       recordedBy: anyP.recordedBy || anyP.collectedBy || 'Front Desk',
       notes: p.notes || p.paymentType,
@@ -693,12 +816,23 @@ function mapAppBookingToRecord(
     cancellationReason: b.cancellationReason,
     guests: mappedGuests,
     payments: paymentsList,
-    otherServices: Array.isArray(anyB.otherServices) && anyB.otherServices.length > 0 ? anyB.otherServices : extraServices,
+    otherServices:
+      Array.isArray(anyB.otherServices) && anyB.otherServices.length > 0
+        ? anyB.otherServices.map((sv: any) => ({
+            ...sv,
+            serviceType: classifyExtraChargeServiceType({
+              category: sv.category,
+              sourceType: sv.sourceType,
+              serviceType: sv.serviceType,
+              description: sv.description || sv.itemsSummary,
+            }),
+          }))
+        : extraServices,
     remarks: b.notes || anyB.remarks,
   };
 }
 
-function mapStandaloneCheckinToRecord(
+export function mapStandaloneCheckinToRecord(
   c: GuestCheckIn,
   rooms: Room[],
   settings?: BillSettings
@@ -737,12 +871,11 @@ function mapStandaloneCheckinToRecord(
     orderNumber: `ORD-${idx + 1}`,
     roomNumber: c.roomNumber || '',
     roomName: `Room ${c.roomNumber || ''}`,
-    serviceType:
-      ec.category === 'Laundry'
-        ? 'LAUNDRY'
-        : ec.category === 'Damage'
-        ? 'DAMAGE / FINE'
-        : 'ROOM SERVICE',
+    serviceType: classifyExtraChargeServiceType({
+      category: ec.category,
+      sourceType: (ec as any).sourceType,
+      description: ec.description,
+    }),
     description: ec.description || ec.category || 'Room Charge',
     itemsSummary: ec.description || 'Service',
     quantity: 1,
@@ -1052,6 +1185,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   appCashBankAccounts = [],
   appVouchers = [],
   appOwnerPayments = [],
+  appHandovers = [],
   appReimbursements = [],
   appDailyClosings = [],
   appLaundryOrders = [],
@@ -1060,6 +1194,9 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   appTravelAgents = [],
   appAgentCommissionPayments = [],
   appPosAdvanceBookings = [],
+  appPosCategories = [],
+  appPosTables = [],
+  appRolePermissions = [],
   onUpdateRooms,
   onUpdateBookings,
   onUpdateCheckins,
@@ -1086,6 +1223,8 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   onUpdateTravelAgents,
   onUpdateAgentCommissionPayments,
   onUpdatePosAdvanceBookings,
+  onUpdatePosCategories,
+  onUpdatePosTables,
 }) => {
   const [hubTaxSettings] = useHotelTaxSettings();
   const billSettings = React.useMemo(
@@ -1479,7 +1618,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         .map((cl, idx) => {
           const serviceType: OtherServiceItem['serviceType'] =
             cl.kind === 'food'
-              ? 'ROOM SERVICE'
+              ? 'POS_FOOD'
               : cl.kind === 'laundry'
               ? 'LAUNDRY'
               : cl.kind === 'water'
@@ -1582,25 +1721,14 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       return Array.from(mergedMap.values());
     });
 
-    // Map saved invoices — NEVER recompute already-issued invoices! Preserve saved finalAmount, pendingAmount, gst, cgst, sgst, nights, roomNumbers, and ALL charge buckets (fixes C4!)
+    // Map saved invoices — NEVER recompute already-issued invoices! Reconcile authoritative taxRows/totalAmount/balance consistently at read-time without mutating DB records.
     const mappedInvoices: InvoiceRecord[] = appInvoices.map((inv) => {
       const anyInv = inv as any;
-      const isInvNoGst = Boolean(
-        anyInv.isWithoutGst === true ||
-          (anyInv.gstRate !== undefined && Number(anyInv.gstRate) <= 0 && Number(inv.gst || 0) <= 0) ||
-          (anyInv.gstRate === undefined && Number(inv.gst || 0) <= 0)
-      );
-      const totalTax = isInvNoGst ? 0 : r2(inv.gst ?? anyInv.taxAmount ?? 0);
-      const cgst = isInvNoGst
-        ? 0
-        : inv.cgst !== undefined
-        ? r2(inv.cgst)
-        : r2(totalTax / 2);
-      const sgst = isInvNoGst
-        ? 0
-        : inv.sgst !== undefined
-        ? r2(inv.sgst)
-        : r2(totalTax - cgst);
+      const resolvedTotals = resolveConsistentInvoiceTotals(inv, billSettings.roomGstRate);
+      const isInvNoGst = resolvedTotals.isNoGst;
+      const totalTax = resolvedTotals.totalTax;
+      const cgst = resolvedTotals.cgst;
+      const sgst = resolvedTotals.sgst;
 
       const extraBedCharges = r2(inv.extraBedCharges || 0);
       const extraPersonCharges = r2(inv.extraPersonCharges || 0);
@@ -1629,21 +1757,10 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           (Number(inv.extraChargesTotal) || 0)
       );
 
-      const savedGrandTotal = r2(inv.finalAmount ?? inv.totalAmount ?? 0);
-      const savedPaid =
-        anyInv.paidAmount !== undefined
-          ? r2(anyInv.paidAmount)
-          : anyInv.advancePaid !== undefined
-          ? r2(anyInv.advancePaid)
-          : inv.isPaid
-          ? savedGrandTotal
-          : 0;
-      const savedPending =
-        anyInv.pendingAmount !== undefined
-          ? r2(anyInv.pendingAmount)
-          : inv.isPaid
-          ? 0
-          : Math.max(0, r2(savedGrandTotal - savedPaid));
+      const isCreditNoteInv = resolvedTotals.isCreditNote;
+      const savedGrandTotal = resolvedTotals.grandTotal;
+      const savedPaid = resolvedTotals.receipts;
+      const savedPending = resolvedTotals.balance;
 
       const savedRoomNums: string[] =
         Array.isArray(anyInv.roomNumbers) && anyInv.roomNumbers.length > 0
@@ -1668,24 +1785,21 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
             )
           : 1;
 
-      const paymentStatus: InvoiceRecord['paymentStatus'] =
-        anyInv.paymentStatus === 'Paid' || (savedPending <= 0 && savedGrandTotal > 0) || inv.isPaid
-          ? 'Paid'
-          : anyInv.paymentStatus === 'Partially Paid' || savedPaid > 0
-          ? 'Partially Paid'
-          : 'Unpaid';
+      const paymentStatus: InvoiceRecord['paymentStatus'] = resolvedTotals.paymentStatus;
 
       return {
         id: inv.id,
         invoiceNumber: inv.invoiceNumber || inv.id,
         bookingId: inv.bookingId,
         bookingNo: anyInv.bookingNo || inv.bookingId,
-        gstRate: isInvNoGst ? 0 : Number(anyInv.gstRate) || billSettings.roomGstRate,
+        gstRate: isInvNoGst ? 0 : resolvedTotals.headlineGstRate,
         isWithoutGst: isInvNoGst,
         isSeparateInvoice: anyInv.isSeparateInvoice,
         parentInvoiceId: anyInv.parentInvoiceId,
         invoiceStatus: anyInv.invoiceStatus,
-        isSuperseded: Boolean(anyInv.isSuperseded || anyInv.invoiceStatus === 'Superseded'),
+        invoiceType: anyInv.invoiceType,
+        isCreditNote: isCreditNoteInv,
+        isSuperseded: resolvedTotals.isSuperseded,
         supersededByInvoiceId: anyInv.supersededByInvoiceId,
         supersededByInvoiceNumber: anyInv.supersededByInvoiceNumber,
         supersededAt: anyInv.supersededAt,
@@ -1711,16 +1825,16 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         lateCheckOutCharges,
         fineCharges,
         otherCharges: rawOtherCharges,
-        subtotal: anyInv.subtotal !== undefined ? r2(anyInv.subtotal) : undefined,
-        discount: r2(inv.discount || 0),
-        taxableAmount: inv.taxableAmount !== undefined ? r2(inv.taxableAmount) : undefined,
+        subtotal: anyInv.subtotal !== undefined ? resolvedTotals.subtotal : undefined,
+        discount: resolvedTotals.discount,
+        taxableAmount: inv.taxableAmount !== undefined || Array.isArray(anyInv.taxRows) ? resolvedTotals.taxableAmount : undefined,
         cgst,
         sgst,
         totalTax,
         grandTotal: savedGrandTotal,
         amountPaid: savedPaid,
         balanceDue: savedPending,
-        refundDue: anyInv.refundDue !== undefined ? r2(anyInv.refundDue) : undefined,
+        refundDue: resolvedTotals.refundDue > 0 ? resolvedTotals.refundDue : (anyInv.refundDue !== undefined ? r2(anyInv.refundDue) : undefined),
         paymentStatus,
         paymentMethod: (anyInv.paymentMethod as any) || 'UPI',
         createdAt: inv.dateCreated || inv.date || inv.checkOutDate,
@@ -1791,22 +1905,54 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       }))
     );
 
-    // Map Lost & Found
+    // Map Lost & Found (preserving full Lost + Found + Matching + Audit schema)
     setLostFound(
       appLostAndFoundItems.map((lf) => ({
         id: lf.id,
+        hotelId: lf.hotelId,
+        recordType: lf.recordType || (String(lf.status || '').startsWith('Lost') ? 'lost' : 'found'),
         itemName: lf.itemName,
-        category: lf.category || 'Personal Item',
+        category: lf.category || 'Others',
+        description: lf.description,
         roomNumber: lf.roomNumber || lf.locationFound || 'Lobby',
+        bookingId: lf.bookingId,
+        checkInId: lf.checkInId,
+        source: lf.source,
+        locationFound: lf.locationFound,
         foundBy: lf.foundByStaff || (lf as any).foundBy || 'Staff',
-        dateFound: lf.dateFound || (lf as any).foundDate || '',
+        dateFound: lf.dateFound || (lf as any).foundDate || lf.dateReported || '',
+        storageLocation: lf.storageLocation,
+        guestName: lf.guestName,
+        guestMobile: lf.guestMobile,
+        guestEmail: lf.guestEmail,
+        dateReported: lf.dateReported,
+        lastSeenLocation: lf.lastSeenLocation,
+        reportedByStaff: lf.reportedByStaff,
+        matchedItemId: lf.matchedItemId,
+        matchedItemName: lf.matchedItemName,
+        matchedBy: lf.matchedBy,
+        matchedAt: lf.matchedAt,
+        matchNotes: lf.matchNotes,
         status:
           lf.status === 'Claimed' || (lf.status as any) === 'Returned'
             ? 'Returned to Guest'
             : lf.status === 'Disposed'
-            ? 'Disposed'
-            : 'Registered',
-        claimedBy: lf.claimedByGuest || (lf as any).claimedByGuestName,
+            ? 'Closed'
+            : lf.status === 'Registered'
+            ? (lf.recordType === 'lost' ? 'Lost – Reported' : 'Found – Registered')
+            : (lf.status as any) || 'Found – Registered',
+        claimedBy: lf.claimedByGuest || (lf as any).claimedBy || (lf as any).claimedByGuestName,
+        claimGuestMobile: lf.claimGuestMobile,
+        claimIdProof: lf.claimIdProof,
+        claimDate: lf.claimDate,
+        returnedBy: lf.returnedBy,
+        returnNotes: lf.returnNotes,
+        closedAt: lf.closedAt,
+        closedBy: lf.closedBy,
+        closedReason: lf.closedReason,
+        createdAt: lf.createdAt,
+        updatedAt: lf.updatedAt,
+        auditHistory: lf.auditHistory,
       }))
     );
 
@@ -2303,6 +2449,70 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         );
         if (!matchedBkg) return c;
         const pri = matchedBkg.guests?.[0];
+
+        // Merge any newly added payments from matchedBkg without duplicating existing payment IDs (BUG-P2-04)
+        const existingPayments = Array.isArray(c.payments) ? [...c.payments] : [];
+        const existingPayIds = new Set(existingPayments.map((p: any) => String(p?.id || '')).filter(Boolean));
+        const existingPaySigs = new Set(
+          existingPayments.map((p: any) => `${String(p?.paymentMethod || '').toLowerCase()}|${r2(p?.amount || 0)}|${String(p?.date || p?.dateTime || '').slice(0, 10)}`)
+        );
+        const syncedPayments = [...existingPayments];
+        (Array.isArray(matchedBkg.payments) ? matchedBkg.payments : []).forEach((mp) => {
+          const mpId = String(mp?.id || '').trim();
+          const mpAmt = r2(mp?.amount || 0);
+          if (mpAmt === 0) return;
+          if (mpId && existingPayIds.has(mpId)) return;
+          const sig = `${String(mp?.paymentMethod || '').toLowerCase()}|${mpAmt}|${String(mp?.date || '').slice(0, 10)}`;
+          if (existingPaySigs.has(sig) && mpId.startsWith('pay-adv-')) return;
+          if (mpId) existingPayIds.add(mpId);
+          existingPaySigs.add(sig);
+          syncedPayments.push({
+            id: mpId || `PAY-SYNC-${Date.now()}`,
+            amount: mpAmt,
+            paymentMethod: (mp.paymentMethod as any) || 'Cash',
+            paymentType: (matchedBkg.isCheckedOut ? 'Final Settlement' : 'Partial Payment') as any,
+            dateTime: mp.date ? `${mp.date}T12:00:00` : new Date().toISOString(),
+            date: String(mp.date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+            notes: mp.notes || (matchedBkg.isCheckedOut ? 'Checkout Settlement' : 'Payment Recorded'),
+          } as any);
+        });
+
+        // Merge any newly added checkout/folio extra services without duplicating existing extraCharges (BUG-P2-04)
+        const existingExtras = Array.isArray(c.extraCharges) ? [...c.extraCharges] : [];
+        const existingExtraKeys = new Set(
+          existingExtras
+            .flatMap((ec: any) => [String(ec?.id || ''), String(ec?.sourceId || '')])
+            .filter(Boolean)
+        );
+        const syncedExtras = [...existingExtras];
+        (Array.isArray(matchedBkg.otherServices) ? matchedBkg.otherServices : []).forEach((sv) => {
+          const svId = String(sv?.id || '').trim();
+          const svOrd = String(sv?.orderNumber || '').trim();
+          const svAmt = r2(sv?.amount || 0);
+          if (svAmt <= 0) return;
+          if (svId && (existingExtraKeys.has(svId) || svId.startsWith('EC-WB-') || svId.startsWith('EC-POS-') || svId.startsWith('EC-LND-'))) return;
+          if (svOrd && existingExtraKeys.has(svOrd)) return;
+          const stUpper = String(sv.serviceType || '').toUpperCase();
+          const cat: any =
+            stUpper === 'LAUNDRY'
+              ? 'Laundry'
+              : stUpper.includes('WATER')
+              ? 'Water Bottle'
+              : stUpper.includes('DAMAGE') || stUpper.includes('FINE')
+              ? 'Damage'
+              : stUpper === 'POS_FOOD' || stUpper === 'ROOM SERVICE'
+              ? 'Food'
+              : 'Other';
+          if (svId) existingExtraKeys.add(svId);
+          syncedExtras.push({
+            id: svId || `ec-sync-${Date.now()}`,
+            category: cat,
+            description: sv.description || sv.itemsSummary || sv.serviceType || 'Extra Service',
+            amount: svAmt,
+            dateTime: sv.dateTime || new Date().toISOString(),
+          });
+        });
+
         return {
           ...c,
           status: matchedBkg.isCheckedOut ? ('Checked Out' as const) : c.status,
@@ -2315,6 +2525,12 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           gstRate: matchedBkg.gstInvoice && matchedBkg.taxRate > 0 ? matchedBkg.taxRate : 0,
           gstAmount: matchedBkg.gstInvoice && matchedBkg.taxRate > 0 ? matchedBkg.taxAmount : 0,
           isWithoutGst: !matchedBkg.gstInvoice || matchedBkg.taxRate <= 0,
+          discount: r2(matchedBkg.discountAmount || 0),
+          discountAmount: r2(matchedBkg.discountAmount || 0),
+          totalAmount: r2(matchedBkg.totalPayable || c.totalAmount || 0),
+          pendingAmount: r2(matchedBkg.dueAmount ?? c.pendingAmount ?? 0),
+          payments: syncedPayments,
+          extraCharges: syncedExtras,
         };
       });
       onUpdateCheckins(updatedCheckins);
@@ -2678,7 +2894,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         invoiceScope: scope,
         dateCreated: todayStr,
         invoiceStatus: 'Finalized',
-        extra: { bookingNo: targetBkg.bookingNo },
+        extra: { bookingNo: targetBkg.bookingNo, isFinalInvoice: true },
       }) as Invoice;
 
       const updatedAppInvoices = appInvoices.map((inv) =>
@@ -3041,6 +3257,8 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       refundDue: bill.refundDue,
       paymentStatus: bill.paymentStatus,
       paymentMethod: effectivePayMethod,
+      invoiceStatus: 'Finalized',
+      isSuperseded: false,
       createdAt: existingPrimaryInv?.createdAt || todayStr,
       ledgerLines: bill.lines,
       taxRows: bill.taxRows,
@@ -3055,6 +3273,16 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     );
 
     if (onUpdateInvoices) {
+      const checkoutPaymentHistory = (updatedBooking.payments || [])
+        .filter((p) => p && Number(p.amount) > 0)
+        .map((p) => ({
+          id: p.id,
+          amount: r2(p.amount),
+          paymentMethod: String(p.paymentMethod || 'Cash') as any,
+          date: String(p.date || todayStr).slice(0, 10),
+          notes: p.notes,
+        }));
+
       const newAppInvoice = buildInvoiceRecord({
         id: resolvedInvId,
         invoiceNumber: resolvedInvNumber,
@@ -3077,11 +3305,23 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           updatedOtherServicesTotal > 0 ? 'Booking + Other Services' : 'Only Booking',
         dateCreated: existingPrimaryInv?.createdAt || todayStr,
         invoiceStatus: 'Finalized',
-        extra: { bookingNo: updatedBooking.bookingNo },
+        extra: {
+          bookingNo: updatedBooking.bookingNo,
+          isFinalInvoice: true,
+          ...(checkoutPaymentHistory.length > 0 ? { paymentHistory: checkoutPaymentHistory } : {}),
+        },
       }) as Invoice;
 
+      // Preserve existing superseded/separate invoice history; replace only the provisional primary invoice if present
       const filteredPrev = appInvoices.filter(
-        (inv) => inv.id !== resolvedInvId && !(inv.bookingId === updatedBooking.id && !(inv as any).isSeparateInvoice)
+        (inv) =>
+          inv.id !== resolvedInvId &&
+          !(
+            inv.bookingId === updatedBooking.id &&
+            !(inv as any).isSeparateInvoice &&
+            !(inv as any).isSuperseded &&
+            inv.invoiceStatus !== 'Superseded'
+          )
       );
       onUpdateInvoices([newAppInvoice, ...filteredPrev]);
     }
@@ -3509,7 +3749,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     );
   };
 
-  // 7. Record Payment
+  // 7. Record Payment (with Finalized Invoice Immutability Guard — BUG-P2-07)
   const handleSavePayment = (
     bookingId: string,
     amount: number,
@@ -3518,6 +3758,24 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     dateStr: string,
     completeCheckout?: boolean
   ) => {
+    const finalizedInv =
+      findActiveFinalizedInvoiceForBooking(bookingId, appInvoices as any) ||
+      findActiveFinalizedInvoiceForBooking(bookingId, invoices as any);
+    if (finalizedInv) {
+      showToast(
+        `Invoice ${finalizedInv.invoiceNumber || finalizedInv.id} is Finalized and immutable. Post-finalization payment edits require an authorized adjustment / credit-note workflow.`,
+        'warning'
+      );
+      logAudit(
+        'Payments',
+        'Finalized Invoice Payment Blocked',
+        `Blocked unauthorized payment modification of ₹${Number(amount || 0).toLocaleString('en-IN')} (${method}) on booking ${bookingId} because Invoice ${finalizedInv.invoiceNumber || finalizedInv.id} is already Finalized.`,
+        'warning'
+      );
+      setPaymentBooking(null);
+      return;
+    }
+
     const nextBookings = bookings.map((b) => {
       if (b.id !== bookingId) return b;
       const newPaid = b.amountPaid + amount;
@@ -4227,7 +4485,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   };
 
   // Print Guest Registration Card (HOTEL RAJ RESIDENCY Exact PDF Replica)
-  const handlePrintGrc = (targetBkg: BookingRecord) => {
+  const handlePrintGrc = async (targetBkg: BookingRecord) => {
     const rawAppBkg = appBookings.find((ab) => ab.id === targetBkg.id);
     const linkedCheckin = appCheckins.find(
       (c) =>
@@ -4235,18 +4493,23 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         (c as any).bookingId === targetBkg.id ||
         c.id === targetBkg.bookingNo
     );
-    const existingGrcs = [
-      ...bookings.map((b) => b.grcNumber),
-      ...appBookings.map((ab) => (ab as any).grcNumber),
-      ...appCheckins.map((c) => c.grcNumber),
-    ];
-    const regNo =
+    const persistedRegNo = String(
       targetBkg.grcNumber ||
-      (rawAppBkg as any)?.grcNumber ||
-      linkedCheckin?.grcNumber ||
-      allocateGrcNumber(existingGrcs, billSettings);
+        (rawAppBkg as any)?.grcNumber ||
+        linkedCheckin?.grcNumber ||
+        ''
+    ).trim();
+    const regNo =
+      persistedRegNo ||
+      (await requestAtomicGrcNumber({
+        existingGrc: persistedRegNo,
+        checkinId: linkedCheckin?.id || targetBkg.id,
+        bookingId: targetBkg.id,
+        settings: billSettings,
+      })) ||
+      'PENDING (Assigned at Check-In)';
 
-    if (!targetBkg.grcNumber) {
+    if (!persistedRegNo && regNo) {
       const nextBookings = bookings.map((b) =>
         b.id === targetBkg.id ? { ...b, grcNumber: regNo } : b
       );
@@ -4680,6 +4943,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           currentRole={currentRole}
           loggedInUser={loggedInUser}
           autoMarkDirtyOnCheckout={hotelSettings?.autoMarkDirtyOnCheckout !== false}
+          allowBackDatedCheckIn={Boolean(hotelSettings?.allowBackDatedCheckIn)}
           setActiveTab={setActiveTab}
           setFrontDeskSubTab={setFrontDeskSubTab}
           onUpdateBookings={(b) => onUpdateBookings && onUpdateBookings(b)}
@@ -4845,22 +5109,102 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
               syncBookingsToDb(nextBookings);
             }
           }}
+          loggedInUser={loggedInUser}
           onAddLostFound={(item) => {
             const newId = `LF-${Date.now()}`;
-            setLostFound((prev) => [{ id: newId, ...item }, ...prev]);
+            const fullRecord = { id: newId, ...item };
+            setLostFound((prev) => [fullRecord, ...prev]);
             if (onUpdateLostAndFoundItems) {
               const dbLf: LostAndFoundItem = {
                 id: newId,
                 hotelId: selectedHotelId,
+                recordType: item.recordType || 'found',
                 itemName: item.itemName,
                 category: (item.category as any) || 'Others',
+                description: item.description,
                 roomNumber: item.roomNumber,
-                locationFound: `Room ${item.roomNumber}`,
-                foundByStaff: item.foundBy,
+                bookingId: item.bookingId,
+                checkInId: item.checkInId,
+                source: item.source || 'Register',
+                locationFound: item.locationFound || `Room ${item.roomNumber}`,
+                foundByStaff: item.foundBy || loggedInUser || 'Staff',
                 dateFound: item.dateFound,
-                status: 'Registered',
+                storageLocation: item.storageLocation,
+                guestName: item.guestName,
+                guestMobile: item.guestMobile,
+                guestEmail: item.guestEmail,
+                dateReported: item.dateReported,
+                lastSeenLocation: item.lastSeenLocation,
+                reportedByStaff: item.reportedByStaff,
+                status: item.status || (item.recordType === 'lost' ? 'Lost – Reported' : 'Found – Registered'),
+                createdAt: item.createdAt || new Date().toISOString(),
+                updatedAt: item.updatedAt || new Date().toISOString(),
+                auditHistory: item.auditHistory,
               };
               onUpdateLostAndFoundItems([dbLf, ...appLostAndFoundItems]);
+            }
+            logAudit('Lost & Found', item.recordType === 'lost' ? 'Lost Item Reported' : 'Found Item Registered', `${item.itemName} (${item.category}, Room ${item.roomNumber || 'N/A'})`, 'info');
+          }}
+          onUpdateLostFound={(id, patch) => {
+            setLostFound((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+            if (onUpdateLostAndFoundItems) {
+              const nextDb = appLostAndFoundItems.map((lf) =>
+                lf.id === id
+                  ? {
+                      ...lf,
+                      ...patch,
+                      claimedByGuest: patch.claimedBy ?? lf.claimedByGuest,
+                      foundByStaff: patch.foundBy ?? lf.foundByStaff,
+                    }
+                  : lf
+              );
+              onUpdateLostAndFoundItems(nextDb);
+            }
+          }}
+          onUpdateAllLostFound={(nextAll) => {
+            setLostFound(nextAll);
+            if (onUpdateLostAndFoundItems) {
+              const nextDb: LostAndFoundItem[] = nextAll.map((it) => ({
+                id: it.id,
+                hotelId: it.hotelId || selectedHotelId,
+                recordType: it.recordType || 'found',
+                itemName: it.itemName,
+                category: it.category || 'Others',
+                description: it.description,
+                roomNumber: it.roomNumber,
+                bookingId: it.bookingId,
+                checkInId: it.checkInId,
+                source: it.source,
+                locationFound: it.locationFound || `Room ${it.roomNumber}`,
+                foundByStaff: it.foundBy || 'Staff',
+                dateFound: it.dateFound,
+                storageLocation: it.storageLocation,
+                guestName: it.guestName,
+                guestMobile: it.guestMobile,
+                guestEmail: it.guestEmail,
+                dateReported: it.dateReported,
+                lastSeenLocation: it.lastSeenLocation,
+                reportedByStaff: it.reportedByStaff,
+                matchedItemId: it.matchedItemId,
+                matchedItemName: it.matchedItemName,
+                matchedBy: it.matchedBy,
+                matchedAt: it.matchedAt,
+                matchNotes: it.matchNotes,
+                status: it.status,
+                claimedByGuest: it.claimedBy,
+                claimGuestMobile: it.claimGuestMobile,
+                claimIdProof: it.claimIdProof,
+                claimDate: it.claimDate,
+                returnedBy: it.returnedBy,
+                returnNotes: it.returnNotes,
+                closedAt: it.closedAt,
+                closedBy: it.closedBy,
+                closedReason: it.closedReason,
+                createdAt: it.createdAt,
+                updatedAt: it.updatedAt,
+                auditHistory: it.auditHistory,
+              }));
+              onUpdateLostAndFoundItems(nextDb);
             }
           }}
         />
@@ -4883,6 +5227,10 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           onRecordStockMovement={recordWarehouseStockMovement}
           posAdvanceBookings={appPosAdvanceBookings}
           onUpdatePosAdvanceBookings={onUpdatePosAdvanceBookings}
+          posCategories={appPosCategories}
+          onUpdatePosCategories={onUpdatePosCategories}
+          posTables={appPosTables}
+          onUpdatePosTables={onUpdatePosTables}
           currentRole={currentRole}
           onAddAuditLog={onAddAuditLog}
           onSettlePosOrders={handleSettlePosOrders}
@@ -5683,11 +6031,13 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
               [...(appOwnerPayments || []), ...(ownerPayments || [])].map((op: any) => [String(op.id || Math.random()), op])
             ).values()
           )}
+          appHandovers={appHandovers}
           appDailyClosings={appDailyClosings}
           appWaterBottles={appWaterBottles}
           appLaundryOrders={appLaundryOrders}
           appPosOrders={appPosOrders}
           appPosItems={appPosItems}
+          appPosAdvanceBookings={appPosAdvanceBookings}
           appRooms={appRooms}
           appStaff={appStaff}
           hotelSettings={{
@@ -5886,6 +6236,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         preselectedRoom={preselectedRoom}
         initialBookingMode={quickAddMode}
         billSettings={billSettings}
+        allowBackDatedCheckIn={Boolean(hotelSettings?.allowBackDatedCheckIn)}
         onProceedBooking={(step1) => {
           setQuickAddOpen(false);
           try {
@@ -5932,17 +6283,34 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         }
         onEditBooking={(b) => {
           setSelectedBookingForDrawer(null);
-          setDraftBookingSeed({
-            checkInDate: b.checkInDate,
-            checkOutDate: b.checkOutDate,
-            isOpenStay: b.isOpenStay,
-            numGuests: b.numGuests,
-            withGst: b.gstInvoice && b.taxRate > 0,
-            gstRate: b.gstInvoice && b.taxRate > 0 ? b.taxRate : 0,
-            editingBooking: b,
-          });
-          setActiveTab('frontDesk');
-          setFrontDeskSubTab('reservations');
+          const isInHouseOrCheckedOut = Boolean(
+            b.isCheckedIn ||
+              b.isCheckedOut ||
+              b.status === 'Checked In' ||
+              b.status === 'Checked Out'
+          );
+          if (isInHouseOrCheckedOut) {
+            // Route checked-in / in-house guests directly to In-House Guests & auto-open Edit Guest modal (UI-BUG-03 Part B)
+            try {
+              sessionStorage.setItem('pms_open_edit_guest_id', String(b.id));
+            } catch {
+              // ignore storage errors
+            }
+            setActiveTab('frontDesk');
+            setFrontDeskSubTab('inhouse');
+          } else {
+            setDraftBookingSeed({
+              checkInDate: b.checkInDate,
+              checkOutDate: b.checkOutDate,
+              isOpenStay: b.isOpenStay,
+              numGuests: b.numGuests,
+              withGst: b.gstInvoice && b.taxRate > 0,
+              gstRate: b.gstInvoice && b.taxRate > 0 ? b.taxRate : 0,
+              editingBooking: b,
+            });
+            setActiveTab('frontDesk');
+            setFrontDeskSubTab('reservations');
+          }
         }}
         onOpenAddPosOrder={(b) => setRoomOrderBooking(b)}
         onExtendStay={handleExtendStay}
@@ -5965,7 +6333,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         loggedInUser={loggedInUser}
         hasExistingInvoice={Boolean(findPrimaryInvoiceForBooking(checkInBooking))}
         billSettings={billSettings}
-        allowBackDatedCheckIn={hotelSettings?.allowBackDatedCheckIn ?? true}
+        allowBackDatedCheckIn={Boolean(hotelSettings?.allowBackDatedCheckIn)}
         onClose={() => setCheckInBooking(null)}
         onLogOverride={(details) =>
           logAudit('Front Desk', 'Authorised Room Check-In Override', details, 'warning')
@@ -5997,6 +6365,54 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         rooms={appRooms}
         onClose={() => setCheckoutClearanceBooking(null)}
         onCompleteFinalCheckout={handleCompleteCheckoutClearance}
+        onRegisterLostFound={(item) => {
+          const newId = `LF-${Date.now()}`;
+          const nowIso = new Date().toISOString();
+          const todayIso = nowIso.slice(0, 10);
+          const dbLf: LostAndFoundItem = {
+            id: newId,
+            hotelId: selectedHotelId,
+            recordType: 'found',
+            itemName: item.itemName,
+            category: item.category || 'Others',
+            description: item.description,
+            roomNumber: item.roomNumber,
+            bookingId: item.bookingId,
+            source: 'Checkout',
+            locationFound: `Room ${item.roomNumber} (During Checkout)`,
+            foundByStaff: loggedInUser || 'Front Desk',
+            dateFound: todayIso,
+            storageLocation: item.storageLocation || 'Front Desk Safe',
+            guestName: item.guestName,
+            guestMobile: item.guestMobile,
+            status: 'Found – Registered',
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            auditHistory: [
+              {
+                id: `AUD-${Date.now()}`,
+                action: 'Found Item Registered at Checkout',
+                toStatus: 'Found – Registered',
+                performedBy: loggedInUser || 'Front Desk',
+                dateTime: nowIso,
+                notes: `Found in Room ${item.roomNumber} during checkout of ${item.guestName}`,
+              },
+            ],
+          };
+          setLostFound((prev) => [
+            {
+              ...dbLf,
+              roomNumber: item.roomNumber,
+              foundBy: dbLf.foundByStaff,
+              status: 'Found – Registered',
+            },
+            ...prev,
+          ]);
+          if (onUpdateLostAndFoundItems) {
+            onUpdateLostAndFoundItems([dbLf, ...appLostAndFoundItems]);
+          }
+          logAudit('Lost & Found', 'Checkout Found Item Logged', `Logged "${item.itemName}" found in Room ${item.roomNumber} during checkout.`, 'info');
+        }}
         onPreviewInvoice={(b) =>
           setInvoiceModalState({
             booking: b,

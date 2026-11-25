@@ -18,7 +18,7 @@ import {
 } from './utils/supabaseClient';
 import { showToast, dismissToast, subscribeToasts, ToastItem } from './utils/toast';
 import { deduplicateInvoicesByBooking, normalizeInvoiceConditions } from './utils/invoiceConditions';
-import { Room, Booking, GuestCheckIn, Invoice, Expense, CashHandover, HotelPolicy, UserRole, WaterBottleRecord, Staff, AuditLog, RoomVerification, HotelSettings, Hotel, SystemWebsiteConfig, Testimonial, RolePermission, SaaSPackage, CustomPage, InventoryProduct, InventoryCategory, InventorySupplier, InventoryPurchase, InventoryStockMovement, PosItem, PosOrder, PosCategory, PettyCashTransaction, CashBankAccount, FinanceVoucher, Vendor, OwnerDirectorPayment, StaffReimbursement, DailyClosingRecord, LaundryItemMaster, LaundryOrder, LostAndFoundItem, HousekeepingCleaningLog, AppNotification, NotificationEventType, DeletedItemRecord, TravelAgent, AgentCommissionPayment, FoodAdvanceBooking } from './types';
+import { Room, Booking, GuestCheckIn, Invoice, Expense, CashHandover, HotelPolicy, UserRole, WaterBottleRecord, Staff, AuditLog, RoomVerification, HotelSettings, Hotel, SystemWebsiteConfig, Testimonial, RolePermission, SaaSPackage, CustomPage, InventoryProduct, InventoryCategory, InventorySupplier, InventoryPurchase, InventoryStockMovement, PosItem, PosOrder, PosCategory, PosTableRecord, PettyCashTransaction, CashBankAccount, FinanceVoucher, Vendor, OwnerDirectorPayment, StaffReimbursement, DailyClosingRecord, LaundryItemMaster, LaundryOrder, LostAndFoundItem, HousekeepingCleaningLog, AppNotification, NotificationEventType, DeletedItemRecord, TravelAgent, AgentCommissionPayment, FoodAdvanceBooking, StaffLeaveRequest } from './types';
 import Sidebar from './components/Sidebar';
 import DashboardView from './components/DashboardView';
 import TodayBookingsView from './components/TodayBookingsView';
@@ -63,11 +63,13 @@ import FrontWebsite from './components/FrontWebsite';
 import FrontWebsitePrototype from './components/FrontWebsitePrototype';
 import HotelPublicBookingPage from './components/HotelPublicBookingPage';
 import DigitalMenuView from './components/DigitalMenuView';
+import WhatsAppSupportWidget, { DEFAULT_WHATSAPP_NUMBER, buildDirectStayWhatsappUrl } from './components/WhatsAppSupportWidget';
 import {
   PublicSeoPageKey,
   PUBLIC_SEO_PAGES,
   resolvePublicSeoPageFromPath,
-  trackSeoConversionEvent
+  trackSeoConversionEvent,
+  findMatchingSeoRedirect,
 } from './utils/seoManager';
 import { Sparkles, Calendar, Shield, RefreshCw, Cloud, Database, CheckCircle2, ChevronRight, AlertTriangle, ArrowLeft, Home, Bell, CheckCheck, Clock, ExternalLink, XCircle, Info, X } from 'lucide-react';
 
@@ -467,6 +469,8 @@ export default function App() {
   const [rawAgentCommissionPayments, setRawAgentCommissionPayments] = useState<AgentCommissionPayment[]>(() => (Array.isArray(bootSnap?.agentCommissionPayments) ? bootSnap.agentCommissionPayments : []));
   const [rawPosAdvanceBookings, setRawPosAdvanceBookings] = useState<FoodAdvanceBooking[]>(() => (Array.isArray(bootSnap?.posAdvanceBookings) ? bootSnap.posAdvanceBookings : []));
   const [rawPosCategories, setRawPosCategories] = useState<PosCategory[]>(() => (Array.isArray(bootSnap?.posCategories) ? bootSnap.posCategories : []));
+  const [rawPosTables, setRawPosTables] = useState<PosTableRecord[]>(() => (Array.isArray(bootSnap?.posTables) ? bootSnap.posTables : []));
+  const [rawLeaveRequests, setRawLeaveRequests] = useState<StaffLeaveRequest[]>(() => (Array.isArray(bootSnap?.leaveRequests) ? bootSnap.leaveRequests : []));
 
   // Derive initial route tab/subtabs synchronously so deep-links & page reloads never flash or redirect to /admin
   const initialRouteInfo = React.useMemo(() => {
@@ -893,6 +897,8 @@ export default function App() {
     if (Array.isArray(data.agentCommissionPayments)) setRawAgentCommissionPayments(data.agentCommissionPayments);
     if (Array.isArray(data.posAdvanceBookings)) setRawPosAdvanceBookings(data.posAdvanceBookings);
     if (Array.isArray(data.posCategories)) setRawPosCategories(data.posCategories);
+    if (Array.isArray(data.posTables)) setRawPosTables(data.posTables);
+    if (Array.isArray(data.leaveRequests)) setRawLeaveRequests(data.leaveRequests);
   };
 
   const handleClearCacheAndSync = async () => {
@@ -1720,6 +1726,23 @@ export default function App() {
     return () => window.removeEventListener('pms-session-expired', onExpired);
   }, []);
 
+  // Honor SuperAdmin-configured 301/302 SEO Redirects on client-side navigation
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const match = findMatchingSeoRedirect(
+      window.location.pathname,
+      systemWebsite?.seoSettings?.redirects
+    );
+    if (match && match.toPath && match.toPath !== window.location.pathname) {
+      if (/^https?:\/\//i.test(match.toPath)) {
+        window.location.replace(match.toPath);
+      } else {
+        window.history.replaceState({}, '', match.toPath);
+        syncStateFromLocation(match.toPath, isAuthenticated, currentRole);
+      }
+    }
+  }, [systemWebsite?.seoSettings?.redirects]);
+
   const handleLoginSuccess = (role: UserRole, username: string, hotelId?: string, issuedToken?: string) => {
     prevRoleRef.current = role;
     setCurrentRole(role);
@@ -2153,6 +2176,12 @@ export default function App() {
   const posCategories = rawPosCategories.filter(
     c => c.hotelId === effectiveTenantHotelId || (!c.hotelId && effectiveTenantHotelId === hotels[0]?.id)
   );
+  const posTables = rawPosTables.filter(
+    t => t.hotelId === effectiveTenantHotelId || (!t.hotelId && effectiveTenantHotelId === hotels[0]?.id)
+  );
+  const leaveRequests = rawLeaveRequests.filter(
+    lr => lr.hotelId === effectiveTenantHotelId || (!lr.hotelId && effectiveTenantHotelId === hotels[0]?.id)
+  );
 
   const activeHotel = hotels.find(h => h.id === selectedHotelId) || hotels[0];
   const hotelSettings: HotelSettings = activeHotel ? {
@@ -2166,10 +2195,10 @@ export default function App() {
     website: activeHotel.website,
     checkInTime: activeHotel.checkInTime || '12:00 PM',
     checkOutTime: activeHotel.checkOutTime || '11:00 AM',
-    earlyCheckInEnabled: activeHotel.earlyCheckInEnabled ?? true,
+    earlyCheckInEnabled: activeHotel.earlyCheckInEnabled ?? false,
     earlyCheckInType: activeHotel.earlyCheckInType || 'hourly',
-    earlyCheckInHourlyRate: activeHotel.earlyCheckInHourlyRate !== undefined ? Number(activeHotel.earlyCheckInHourlyRate) : 150,
-    earlyCheckInFixedRate: activeHotel.earlyCheckInFixedRate !== undefined ? Number(activeHotel.earlyCheckInFixedRate) : 500,
+    earlyCheckInHourlyRate: activeHotel.earlyCheckInHourlyRate !== undefined ? Number(activeHotel.earlyCheckInHourlyRate) : 0,
+    earlyCheckInFixedRate: activeHotel.earlyCheckInFixedRate !== undefined ? Number(activeHotel.earlyCheckInFixedRate) : 0,
     timeZone: activeHotel.timeZone || 'Asia/Kolkata',
     dateFormat: activeHotel.dateFormat || 'DD/MM/YYYY',
     businessDate: activeHotel.businessDate || new Date().toISOString().split('T')[0],
@@ -2185,8 +2214,9 @@ export default function App() {
     grcPrefix: activeHotel.grcPrefix || 'GRC',
     nextGrcSequence: activeHotel.nextGrcSequence || 1,
     autoMarkDirtyOnCheckout: activeHotel.autoMarkDirtyOnCheckout ?? true,
-    allowBackDatedCheckIn: activeHotel.allowBackDatedCheckIn ?? true,
+    allowBackDatedCheckIn: activeHotel.allowBackDatedCheckIn ?? false,
     allowBackDatedFoodBill: activeHotel.allowBackDatedFoodBill ?? true,
+    customFloors: Array.isArray(activeHotel.customFloors) ? activeHotel.customFloors : undefined,
     grcTerms: Array.isArray(activeHotel.grcTerms) ? activeHotel.grcTerms : undefined,
     placeOfSupply: activeHotel.placeOfSupply || '',
     panNumber: activeHotel.panNumber || '',
@@ -2942,10 +2972,10 @@ export default function App() {
           website: updated.website ?? h.website,
           checkInTime: updated.checkInTime ?? h.checkInTime,
           checkOutTime: updated.checkOutTime ?? h.checkOutTime,
-          earlyCheckInEnabled: updated.earlyCheckInEnabled !== undefined ? updated.earlyCheckInEnabled : (h.earlyCheckInEnabled ?? true),
+          earlyCheckInEnabled: updated.earlyCheckInEnabled !== undefined ? updated.earlyCheckInEnabled : (h.earlyCheckInEnabled ?? false),
           earlyCheckInType: updated.earlyCheckInType || h.earlyCheckInType || 'hourly',
-          earlyCheckInHourlyRate: updated.earlyCheckInHourlyRate !== undefined ? Number(updated.earlyCheckInHourlyRate) : (h.earlyCheckInHourlyRate ?? 150),
-          earlyCheckInFixedRate: updated.earlyCheckInFixedRate !== undefined ? Number(updated.earlyCheckInFixedRate) : (h.earlyCheckInFixedRate ?? 500),
+          earlyCheckInHourlyRate: updated.earlyCheckInHourlyRate !== undefined ? Number(updated.earlyCheckInHourlyRate) : (h.earlyCheckInHourlyRate ?? 0),
+          earlyCheckInFixedRate: updated.earlyCheckInFixedRate !== undefined ? Number(updated.earlyCheckInFixedRate) : (h.earlyCheckInFixedRate ?? 0),
           timeZone: updated.timeZone ?? h.timeZone,
           dateFormat: updated.dateFormat ?? h.dateFormat,
           businessDate: updated.businessDate ?? h.businessDate,
@@ -2980,6 +3010,9 @@ export default function App() {
             updated.allowBackDatedCheckIn !== undefined
               ? Boolean(updated.allowBackDatedCheckIn)
               : (h.allowBackDatedCheckIn ?? false),
+          customFloors: Array.isArray(updated.customFloors)
+            ? updated.customFloors
+            : h.customFloors,
           grcTerms: Array.isArray(updated.grcTerms) ? updated.grcTerms : h.grcTerms,
           placeOfSupply: updated.placeOfSupply !== undefined ? updated.placeOfSupply : h.placeOfSupply,
           panNumber: updated.panNumber !== undefined ? updated.panNumber : h.panNumber,
@@ -3239,6 +3272,26 @@ export default function App() {
     savePmsData({ posCategories: merged });
   };
 
+  const handleUpdatePosTables = (updated: PosTableRecord[]) => {
+    const targetHotel = effectiveTenantHotelId || selectedHotelId || hotels[0]?.id || 'hotel-1';
+    const merged = [
+      ...rawPosTables.filter(t => (t.hotelId || 'hotel-1') !== targetHotel),
+      ...updated.map(t => ({ ...t, hotelId: t.hotelId || targetHotel }))
+    ];
+    setRawPosTables(merged);
+    savePmsData({ posTables: merged });
+  };
+
+  const handleUpdateLeaveRequests = (updated: StaffLeaveRequest[]) => {
+    const targetHotel = effectiveTenantHotelId || selectedHotelId || hotels[0]?.id || 'hotel-1';
+    const merged = [
+      ...rawLeaveRequests.filter(lr => (lr.hotelId || 'hotel-1') !== targetHotel),
+      ...updated.map(lr => ({ ...lr, hotelId: lr.hotelId || targetHotel }))
+    ];
+    setRawLeaveRequests(merged);
+    savePmsData({ leaveRequests: merged });
+  };
+
   // Nav tab router
   const renderTabContent = () => {
     const activeHotelObj = hotels.find(h => h.id === selectedHotelId) || hotels[0];
@@ -3281,6 +3334,7 @@ export default function App() {
           staff={staff}
           ownerPayments={ownerPayments}
           auditLogs={auditLogs}
+          systemWebsite={systemWebsite}
           onUpdateHotel={handleUpdateSingleHotel}
           onUpdateExpenses={handleUpdateExpenses}
           onUpdateOwnerPayments={handleUpdateOwnerPayments}
@@ -3363,6 +3417,7 @@ export default function App() {
           appCashBankAccounts={cashBankAccounts}
           appVouchers={vouchers}
           appOwnerPayments={ownerPayments}
+          appHandovers={handovers}
           appReimbursements={reimbursements}
           appDailyClosings={dailyClosings}
           appLaundryOrders={laundryOrders}
@@ -3371,6 +3426,9 @@ export default function App() {
           appTravelAgents={travelAgents}
           appAgentCommissionPayments={agentCommissionPayments}
           appPosAdvanceBookings={posAdvanceBookings}
+          appPosCategories={posCategories}
+          appPosTables={posTables}
+          appRolePermissions={rawRolePermissions.filter(rp => !rp.hotelId || rp.hotelId === effectiveTenantHotelId)}
           onUpdateRooms={handleUpdateRooms}
           onUpdateBookings={handleUpdateBookings}
           onUpdateCheckins={handleUpdateCheckins}
@@ -3397,6 +3455,8 @@ export default function App() {
           onUpdateTravelAgents={handleUpdateTravelAgents}
           onUpdateAgentCommissionPayments={handleUpdateAgentCommissionPayments}
           onUpdatePosAdvanceBookings={handleUpdatePosAdvanceBookings}
+          onUpdatePosCategories={handleUpdatePosCategories}
+          onUpdatePosTables={handleUpdatePosTables}
         />
       );
     }
@@ -3549,6 +3609,8 @@ export default function App() {
             agentCommissionPayments={agentCommissionPayments}
             onUpdateTravelAgents={handleUpdateTravelAgents}
             onUpdateAgentCommissionPayments={handleUpdateAgentCommissionPayments}
+            lostAndFoundItems={lostAndFoundItems}
+            onUpdateLostAndFoundItems={handleUpdateLostAndFoundItems}
           />
         );
       case 'dashboard':
@@ -3655,6 +3717,7 @@ export default function App() {
             onUpdateBookings={handleUpdateBookings}
             onUpdateRooms={handleUpdateRooms}
             onAddAuditLog={handleAddAuditLogDirectly}
+            allowBackDatedCheckIn={Boolean(hotelSettings?.allowBackDatedCheckIn)}
           />
         );
       case 'bookings':
@@ -3794,12 +3857,16 @@ export default function App() {
           <StaffManagementView
             staff={staff}
             currentRole={currentRole}
+            loggedInUser={loggedInUser}
+            hotelId={effectiveTenantHotelId}
             hotelName={hotelSettings.name}
-            rolePermissions={rawRolePermissions.filter(rp => rp.hotelId === selectedHotelId)}
+            rolePermissions={rawRolePermissions.filter(rp => !rp.hotelId || rp.hotelId === effectiveTenantHotelId)}
+            leaveRequests={leaveRequests}
             activeSubTab={staffSubTab}
             onSelectSubTab={setStaffSubTab}
             onUpdateStaff={handleUpdateStaff}
             onUpdateRolePermissions={handleUpdateRolePermissions}
+            onUpdateLeaveRequests={handleUpdateLeaveRequests}
             onUpdateAuditLogs={handleAddAuditLogDirectly}
             checkins={checkins}
             bookings={bookings}
@@ -4232,6 +4299,8 @@ export default function App() {
             currentRole={currentRole}
             loggedInUser={loggedInUser}
             hotels={hotels}
+            packages={packages}
+            systemWebsite={systemWebsite}
             selectedHotelId={selectedHotelId}
             onSelectHotel={setSelectedHotelId}
             rawStaff={rawStaff}
@@ -4761,6 +4830,8 @@ export default function App() {
           portalMode={portalLoginMode}
           onSwitchPortal={handleSwitchPortalLogin}
           onAddAuditLog={handleAddAuditLogDirectly}
+          packages={packages}
+          systemWebsite={systemWebsite}
           activeSessionInfo={isAuthenticated ? { username: loggedInUser, role: currentRole } : null}
           onReturnToActiveSession={
             isAuthenticated
@@ -4881,6 +4952,7 @@ export default function App() {
               }} 
               systemWebsite={systemWebsite}
               customPages={customPages}
+              packages={packages}
               activeSeoPage={publicSeoPage}
               activeBlogSlug={selectedBlogSlug}
               onNavigateSeoPage={(pageKey, blogSlug) => {
@@ -4911,6 +4983,8 @@ export default function App() {
           portalMode="general"
           onSwitchPortal={handleSwitchPortalLogin}
           onAddAuditLog={handleAddAuditLogDirectly}
+          packages={packages}
+          systemWebsite={systemWebsite}
           onOnboardHotel={() => {
             setPortalLoginMode(null);
             setUnauthView('front-website');
@@ -5126,6 +5200,7 @@ export default function App() {
         unreadNotificationsCount={unreadRoleNotificationCount}
         onOpenPublicWebsite={handleOpenPublicWebsitePreview}
         staff={staff}
+        rolePermissions={rawRolePermissions.filter(rp => !rp.hotelId || rp.hotelId === effectiveTenantHotelId)}
       />
 
       {/* Workspace Panel */}
@@ -5238,14 +5313,19 @@ export default function App() {
               <a href={`tel:${systemWebsite.supportPhone}`} className="hover:text-luxury-brown-900 transition-colors flex items-center gap-1">
                 <span>📞 {systemWebsite.supportPhone}</span>
               </a>
-              {systemWebsite.hasWhatsapp && (
+              {systemWebsite.hasWhatsapp !== false && (
                 <a 
-                  href={`https://wa.me/91${systemWebsite.supportPhone}`} 
+                  href={buildDirectStayWhatsappUrl({
+                    phone: systemWebsite.whatsappNumber || systemWebsite.supportPhone || DEFAULT_WHATSAPP_NUMBER,
+                    context: 'dashboard',
+                    hotelName: activeHotel?.name,
+                    packageName: activeHotel?.subscriptionPlan,
+                  })} 
                   target="_blank" 
                   rel="noopener noreferrer" 
                   className="hover:text-emerald-700 font-bold transition-colors flex items-center gap-1 text-emerald-600"
                 >
-                  <span>💬 WhatsApp Chat</span>
+                  <span>💬 WhatsApp Chat ({systemWebsite.whatsappNumber || DEFAULT_WHATSAPP_NUMBER})</span>
                 </a>
               )}
             </div>
@@ -5254,6 +5334,17 @@ export default function App() {
             </div>
           </div>
         </main>
+
+        {/* Customer Dashboard Floating WhatsApp Support (+91 7978563771) */}
+        {currentRole !== 'SuperAdmin' && systemWebsite.hasWhatsapp !== false && (
+          <WhatsAppSupportWidget
+            variant="floating"
+            phone={systemWebsite.whatsappNumber || systemWebsite.supportPhone || DEFAULT_WHATSAPP_NUMBER}
+            context="dashboard"
+            hotelName={activeHotel?.name}
+            packageName={activeHotel?.subscriptionPlan}
+          />
+        )}
 
         {/* Standardized Global Luxury Toast Stack */}
         {renderGlobalToastOverlay()}

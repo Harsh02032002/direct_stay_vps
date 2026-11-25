@@ -30,6 +30,7 @@ import {
 } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { showToast } from '../../utils/toast';
+import LostAndFoundWorkspace from '../components/LostAndFoundWorkspace';
 
 export type HkStage = 'Dirty' | 'In Progress' | 'Inspection' | 'Clean';
 export type HkPriority = 'Low' | 'Normal' | 'High' | 'Urgent';
@@ -76,6 +77,9 @@ interface HousekeepingModuleProps {
   onAddTask: (task: Omit<HousekeepingTask, 'id'>) => void;
   onAddLaundryOrder: (order: Omit<LaundryOrderRecord, 'id'>) => void;
   onAddLostFound?: (item: Omit<LostFoundRecord, 'id'>) => void;
+  onUpdateLostFound?: (id: string, patch: Partial<LostFoundRecord>) => void;
+  onUpdateAllLostFound?: (items: LostFoundRecord[]) => void;
+  loggedInUser?: string;
 }
 
 const SUB_TABS = [
@@ -122,6 +126,9 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
   onAddTask,
   onAddLaundryOrder,
   onAddLostFound,
+  onUpdateLostFound,
+  onUpdateAllLostFound,
+  loggedInUser,
 }) => {
   const sortedStaff = useMemo(() => {
     return [...staff].sort((a, b) => {
@@ -248,7 +255,7 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
 
   const filteredLostFound = useMemo(() => {
     return localLostFound.filter((lf) =>
-      matchesDateRange((lf as any).foundDate || (lf as any).createdAt || (lf as any).date || todayStr)
+      matchesDateRange(lf.dateFound || lf.dateReported || (lf as any).foundDate || lf.createdAt || todayStr)
     );
   }, [localLostFound, datePreset, fromDate, toDate, todayStr]);
 
@@ -1905,150 +1912,34 @@ export const HousekeepingModule: React.FC<HousekeepingModuleProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* SUB-TAB 4: LOST & FOUND REGISTER (100% Preserved)                     */}
+      {/* SUB-TAB 4: COMPLETE LOST & FOUND MODULE (Lost + Found + Matching)     */}
       {/* ===================================================================== */}
       {normalizedSub === 'lost_found' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <form
-            onSubmit={handleCreateLostFound}
-            className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-4 h-fit"
-          >
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <PackageSearch className="w-4 h-4 text-amber-600" />
-              + Register Found Guest Item
-            </h3>
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block font-bold text-slate-600 mb-1">Item Description *</label>
-                <input
-                  type="text"
-                  required
-                  value={lfItemName}
-                  onChange={(e) => setLfItemName(e.target.value)}
-                  placeholder="e.g., Apple iPhone Charger, Gold Ring"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200"
-                />
-              </div>
-              <div>
-                <label className="block font-bold text-slate-600 mb-1">Category</label>
-                <select
-                  value={lfCategory}
-                  onChange={(e) => setLfCategory(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold"
-                >
-                  <option value="Electronics">Electronics</option>
-                  <option value="Jewelry / Watch">Jewelry / Watch</option>
-                  <option value="Documents / Wallet">Documents / Wallet</option>
-                  <option value="Clothing / Bag">Clothing / Bag</option>
-                  <option value="Other Personal Item">Other Personal Item</option>
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold text-slate-600 mb-1">Room / Area Found</label>
-                  <input
-                    type="text"
-                    value={lfRoom}
-                    onChange={(e) => setLfRoom(e.target.value)}
-                    placeholder="e.g., 102 or Lobby"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-600 mb-1">Found By Staff</label>
-                  {sortedStaff.length > 0 ? (
-                    <select
-                      value={lfFoundBy}
-                      onChange={(e) => setLfFoundBy(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold"
-                    >
-                      <option value="">-- Select Staff --</option>
-                      {sortedStaff.map((s) => (
-                        <option key={s.id} value={s.name}>
-                          {s.name} ({s.role})
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={lfFoundBy}
-                      onChange={(e) => setLfFoundBy(e.target.value)}
-                      placeholder="Staff Name"
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200"
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
-            <button
-              type="submit"
-              className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold text-xs cursor-pointer"
-            >
-              + Log Lost &amp; Found Item
-            </button>
-          </form>
-
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-100">
-              <h3 className="text-sm font-bold text-slate-900">Lost &amp; Found Guest Property Register</h3>
-            </div>
-            <div className="overflow-x-auto w-full">
-              <table className="w-full min-w-[640px] text-left text-xs">
-                <thead>
-                  <tr className="bg-slate-50 text-[11px] font-bold uppercase text-slate-500 border-b border-slate-200">
-                    <th className="py-3 px-4">Item Found</th>
-                    <th className="py-3 px-4">Category</th>
-                    <th className="py-3 px-4">Room #</th>
-                    <th className="py-3 px-4">Found By</th>
-                    <th className="py-3 px-4">Date</th>
-                    <th className="py-3 px-4 text-right">Status / Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredLostFound.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-10 text-center text-slate-400">
-                        No lost &amp; found items found for the selected date range.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredLostFound.map((lf) => (
-                      <tr key={lf.id}>
-                        <td className="py-3 px-4 font-bold text-slate-900">{lf.itemName}</td>
-                        <td className="py-3 px-4 whitespace-nowrap">{lf.category}</td>
-                        <td className="py-3 px-4 font-bold whitespace-nowrap">Room {lf.roomNumber}</td>
-                        <td className="py-3 px-4 whitespace-nowrap">{lf.foundBy}</td>
-                        <td className="py-3 px-4 text-slate-500 whitespace-nowrap">{lf.dateFound}</td>
-                        <td className="py-3 px-4 text-right whitespace-nowrap">
-                          {lf.status === 'Returned to Guest' ? (
-                            <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
-                              Returned to Guest
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setLocalLostFound((prev) =>
-                                  prev.map((it) =>
-                                    it.id === lf.id ? { ...it, status: 'Returned to Guest' } : it
-                                  )
-                                )
-                              }
-                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] cursor-pointer"
-                            >
-                              Mark Returned
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <LostAndFoundWorkspace
+          items={localLostFound}
+          rooms={rooms}
+          staff={sortedStaff}
+          loggedInUser={loggedInUser || 'Front Desk'}
+          onAddItem={(item) => {
+            if (onAddLostFound) {
+              onAddLostFound(item);
+            } else {
+              setLocalLostFound((prev) => [{ id: `LF-${Date.now()}`, ...item }, ...prev]);
+            }
+          }}
+          onUpdateItem={(id, patch) => {
+            setLocalLostFound((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+            if (onUpdateLostFound) {
+              onUpdateLostFound(id, patch);
+            }
+          }}
+          onUpdateAllItems={(nextAll) => {
+            setLocalLostFound(nextAll);
+            if (onUpdateAllLostFound) {
+              onUpdateAllLostFound(nextAll);
+            }
+          }}
+        />
       )}
 
       {/* ===================================================================== */}

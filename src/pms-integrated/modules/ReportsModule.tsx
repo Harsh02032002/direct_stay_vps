@@ -58,11 +58,13 @@ interface ReportsModuleProps {
   appInvoices?: any[];
   appExpenses?: any[];
   appOwnerPayments?: any[];
+  appHandovers?: any[];
   appDailyClosings?: any[];
   appWaterBottles?: any[];
   appLaundryOrders?: any[];
   appPosOrders?: PosOrder[];
   appPosItems?: PosItem[];
+  appPosAdvanceBookings?: any[];
   appRooms?: Room[];
   appStaff?: any[];
   hotelSettings?: any;
@@ -155,11 +157,13 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
   appInvoices = [],
   appExpenses = [],
   appOwnerPayments = [],
+  appHandovers = [],
   appDailyClosings = [],
   appWaterBottles = [],
   appLaundryOrders = [],
   appPosOrders = [],
   appPosItems = [],
+  appPosAdvanceBookings = [],
   appRooms = [],
   appStaff = [],
   hotelSettings,
@@ -417,13 +421,13 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
       (isDateInRange(b.bookedOn, fromDate, toDate) || isDateInRange(b.checkInDate, fromDate, toDate))
   );
 
-  // 10. Outstanding Payments / Pending Dues in range
+  // 10. Outstanding Payments / Pending Dues (always include ALL active in-house & unsettled bookings with balance > 0)
   const pendingDuesBookings = bookings.filter(
     (b) =>
       b.dueAmount > 0 &&
       b.status !== 'Cancelled' &&
       b.status !== 'No-Show' &&
-      isBookingInStayRange(b, fromDate, toDate)
+      (b.isCheckedIn || b.status === 'Checked In' || activeDatePreset === 'allTime' || isBookingInStayRange(b, fromDate, toDate))
   );
 
   // 11. Water Logs filtered by date
@@ -959,7 +963,8 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
           invoices={(appInvoices && appInvoices.length > 0 ? appInvoices : invoices) as any}
           expenses={(appExpenses || []) as any}
           posOrders={(appPosOrders || []) as any}
-          handovers={[]}
+          posAdvanceBookings={(appPosAdvanceBookings || []) as any}
+          handovers={(appHandovers || []) as any}
           ownerPayments={(appOwnerPayments || []) as any}
           dailyClosings={(appDailyClosings || []) as any}
           waterBottles={(appWaterBottles || []) as any}

@@ -591,6 +591,46 @@ export function applySeoHeadTags(
     supportEmail?: string;
     contactAddress?: string;
     logoUrl?: string;
+    seoSettings?: {
+      siteUrl?: string;
+      defaultTitle?: string;
+      defaultDescription?: string;
+      defaultOgImage?: string;
+      googleSiteVerification?: string;
+      googleAnalyticsId?: string;
+      pageSeoOverrides?: Record<
+        string,
+        {
+          seoTitle?: string;
+          metaDescription?: string;
+          canonicalUrl?: string;
+          focusKeyword?: string;
+          ogTitle?: string;
+          ogDescription?: string;
+          ogImage?: string;
+          robotsIndex?: 'index' | 'noindex';
+          robotsFollow?: 'follow' | 'nofollow';
+        }
+      >;
+    };
+    customPage?: {
+      title: string;
+      slug: string;
+      content?: string;
+      imageUrl?: string;
+      featuredImageUrl?: string;
+      seo?: {
+        seoTitle?: string;
+        metaDescription?: string;
+        canonicalUrl?: string;
+        focusKeyword?: string;
+        ogTitle?: string;
+        ogDescription?: string;
+        ogImage?: string;
+        robotsIndex?: 'index' | 'noindex';
+        robotsFollow?: 'follow' | 'nofollow';
+      };
+    };
     blogPost?: {
       title: string;
       slug: string;
@@ -599,43 +639,116 @@ export function applySeoHeadTags(
       publishedAt?: string;
       imageUrl?: string;
       category?: string;
+      tags?: string[];
+      seo?: {
+        seoTitle?: string;
+        metaDescription?: string;
+        canonicalUrl?: string;
+        focusKeyword?: string;
+        ogTitle?: string;
+        ogDescription?: string;
+        ogImage?: string;
+        robotsIndex?: 'index' | 'noindex';
+        robotsFollow?: 'follow' | 'nofollow';
+      };
     };
   }
 ) {
   if (typeof document === 'undefined') return;
   const page = PUBLIC_SEO_PAGES[pageKey] || PUBLIC_SEO_PAGES.home;
-  const allKeywords = [page.primaryKeyword, ...page.secondaryKeywords].join(', ');
-  const ogImage = (pageKey === 'blog-article' && options?.blogPost?.imageUrl) ? options.blogPost.imageUrl : `${DIRECTSTAY_DOMAIN}/hero-resort.jpg`;
-  const pageTitle = (pageKey === 'blog-article' && options?.blogPost) ? `${options.blogPost.title} | DirectStay PMS` : page.title;
-  const pageDesc = (pageKey === 'blog-article' && options?.blogPost?.summary) ? options.blogPost.summary : page.description;
-  const canonicalUrl = (pageKey === 'blog-article' && options?.blogPost) ? `${DIRECTSTAY_DOMAIN}/blog/${options.blogPost.slug}/` : page.canonicalUrl;
+  const siteUrl = String(options?.seoSettings?.siteUrl || DIRECTSTAY_DOMAIN).replace(/\/+$/, '');
+  const override = options?.seoSettings?.pageSeoOverrides?.[pageKey];
+  const itemSeo = options?.customPage?.seo || (pageKey === 'blog-article' ? options?.blogPost?.seo : undefined);
+
+  const allKeywords = [
+    itemSeo?.focusKeyword || override?.focusKeyword || page.primaryKeyword,
+    ...(options?.blogPost?.tags || []),
+    ...page.secondaryKeywords,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  const defaultOg = options?.seoSettings?.defaultOgImage || `${siteUrl}/hero-resort.jpg`;
+  const ogImage =
+    itemSeo?.ogImage ||
+    override?.ogImage ||
+    options?.customPage?.featuredImageUrl ||
+    options?.customPage?.imageUrl ||
+    (pageKey === 'blog-article' && options?.blogPost?.imageUrl ? options.blogPost.imageUrl : defaultOg);
+
+  const pageTitle =
+    itemSeo?.seoTitle ||
+    override?.seoTitle ||
+    (options?.customPage
+      ? `${options.customPage.title} | ${options.businessName || 'DirectStay PMS'}`
+      : pageKey === 'blog-article' && options?.blogPost
+      ? `${options.blogPost.title} | ${options.businessName || 'DirectStay PMS'}`
+      : page.title);
+
+  const pageDesc =
+    itemSeo?.metaDescription ||
+    override?.metaDescription ||
+    (options?.customPage?.content
+      ? options.customPage.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160)
+      : pageKey === 'blog-article' && options?.blogPost?.summary
+      ? options.blogPost.summary
+      : page.description);
+
+  const canonicalUrl =
+    itemSeo?.canonicalUrl ||
+    override?.canonicalUrl ||
+    (options?.customPage
+      ? `${siteUrl}/page/${String(options.customPage.slug || '').replace(/^\/+|\/+$/g, '')}`
+      : pageKey === 'blog-article' && options?.blogPost
+      ? `${siteUrl}/blog/${options.blogPost.slug}/`
+      : page.canonicalUrl);
+
+  const robotsIndex = itemSeo?.robotsIndex || override?.robotsIndex || 'index';
+  const robotsFollow = itemSeo?.robotsFollow || override?.robotsFollow || 'follow';
+  const robotsContent =
+    robotsIndex === 'noindex'
+      ? `${robotsIndex}, ${robotsFollow}`
+      : `${robotsIndex}, ${robotsFollow}, max-image-preview:large, max-snippet:-1, max-video-preview:-1`;
 
   document.title = pageTitle;
   upsertMetaTag('name', 'description', pageDesc);
   upsertMetaTag('name', 'keywords', allKeywords);
-  upsertMetaTag(
-    'name',
-    'robots',
-    'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'
-  );
+  upsertMetaTag('name', 'robots', robotsContent);
   upsertLinkTag('canonical', canonicalUrl);
 
   // Open Graph metadata
   upsertMetaTag('property', 'og:type', pageKey === 'blog-article' ? 'article' : 'website');
-  upsertMetaTag('property', 'og:site_name', 'DirectStay PMS');
-  upsertMetaTag('property', 'og:title', pageTitle);
-  upsertMetaTag('property', 'og:description', pageDesc);
+  upsertMetaTag('property', 'og:site_name', options?.businessName || 'DirectStay PMS');
+  upsertMetaTag('property', 'og:title', itemSeo?.ogTitle || override?.ogTitle || pageTitle);
+  upsertMetaTag('property', 'og:description', itemSeo?.ogDescription || override?.ogDescription || pageDesc);
   upsertMetaTag('property', 'og:url', canonicalUrl);
   upsertMetaTag('property', 'og:image', ogImage);
   upsertMetaTag('property', 'og:locale', 'en_IN');
 
   // Twitter Card metadata
   upsertMetaTag('name', 'twitter:card', 'summary_large_image');
-  upsertMetaTag('name', 'twitter:title', pageTitle);
-  upsertMetaTag('name', 'twitter:description', pageDesc);
+  upsertMetaTag('name', 'twitter:title', itemSeo?.ogTitle || override?.ogTitle || pageTitle);
+  upsertMetaTag('name', 'twitter:description', itemSeo?.ogDescription || override?.ogDescription || pageDesc);
   upsertMetaTag('name', 'twitter:image', ogImage);
 
-  // Structured Data JSON-LD
+  // Google Search Console verification & GA4 Analytics
+  if (options?.seoSettings?.googleSiteVerification?.trim()) {
+    upsertMetaTag('name', 'google-site-verification', options.seoSettings.googleSiteVerification.trim());
+  }
+  const gaId = options?.seoSettings?.googleAnalyticsId?.trim();
+  if (gaId && /^(G|GT|AW|UA)-[A-Z0-9-]+$/i.test(gaId) && !document.getElementById('directstay-ga4-loader')) {
+    const gaScript = document.createElement('script');
+    gaScript.id = 'directstay-ga4-loader';
+    gaScript.async = true;
+    gaScript.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(gaId)}`;
+    document.head.appendChild(gaScript);
+    const gaInline = document.createElement('script');
+    gaInline.id = 'directstay-ga4-init';
+    gaInline.textContent = `window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${gaId}');`;
+    document.head.appendChild(gaInline);
+  }
+
+  // Structured Data JSON-LD (SoftwareApplication, Organization, FAQ, Article, Breadcrumbs)
   const jsonLdObj = buildStructuredDataJsonLd(pageKey, options);
   let scriptEl = document.getElementById('directstay-jsonld') as HTMLScriptElement | null;
   if (!scriptEl) {
@@ -941,3 +1054,265 @@ export const SEO_HOTELIER_GUIDES: HotelierGuideArticle[] = [
     ],
   },
 ];
+
+export function isCmsItemPublished(item: {
+  published?: boolean;
+  status?: 'draft' | 'scheduled' | 'published';
+  scheduledAt?: string;
+}): boolean {
+  const status = item?.status || (item?.published ? 'published' : 'draft');
+  if (status === 'published') return true;
+  if (status === 'scheduled' && item?.scheduledAt) {
+    const ts = new Date(item.scheduledAt).getTime();
+    return !Number.isNaN(ts) && ts <= Date.now();
+  }
+  return false;
+}
+
+export function findMatchingSeoRedirect(
+  pathname: string,
+  redirects?: Array<{ fromPath: string; toPath: string; statusCode?: 301 | 302; isActive?: boolean }>
+): { toPath: string; statusCode: 301 | 302 } | null {
+  if (!Array.isArray(redirects) || redirects.length === 0) return null;
+  const norm = String(pathname || '/').trim().toLowerCase().replace(/\/+$/, '') || '/';
+  const match = redirects.find((r) => {
+    if (!r || r.isActive === false || !r.fromPath || !r.toPath) return false;
+    const fromNorm = String(r.fromPath).trim().toLowerCase().replace(/\/+$/, '') || '/';
+    return fromNorm === norm;
+  });
+  if (!match) return null;
+  return {
+    toPath: String(match.toPath).trim(),
+    statusCode: match.statusCode === 302 ? 302 : 301,
+  };
+}
+
+export interface SeoAuditIssue {
+  id: string;
+  severity: 'error' | 'warning' | 'pass';
+  area: 'Meta & Title' | 'Slug & Links' | 'Images & Alt' | 'Indexing & Analytics';
+  target: string;
+  message: string;
+}
+
+export function runSiteSeoAudit(params: {
+  systemWebsite?: any;
+  customPages?: any[];
+}): { score: number; issues: SeoAuditIssue[]; brokenLinks: Array<{ source: string; href: string }> } {
+  const issues: SeoAuditIssue[] = [];
+  const brokenLinks: Array<{ source: string; href: string }> = [];
+  const seo = params.systemWebsite?.seoSettings || {};
+  const pages: any[] = Array.isArray(params.customPages) ? params.customPages : [];
+  const blogs: any[] = Array.isArray(params.systemWebsite?.blogs) ? params.systemWebsite.blogs : [];
+
+  // 1. Global GSC / GA4 / Robots / Sitemap checks
+  if (!seo.googleSiteVerification) {
+    issues.push({
+      id: 'gsc-missing',
+      severity: 'warning',
+      area: 'Indexing & Analytics',
+      target: 'Google Search Console',
+      message: 'Google Search Console verification token is not configured yet.',
+    });
+  } else {
+    issues.push({
+      id: 'gsc-ok',
+      severity: 'pass',
+      area: 'Indexing & Analytics',
+      target: 'Google Search Console',
+      message: 'Google Search Console verification meta tag is configured.',
+    });
+  }
+
+  if (!seo.googleAnalyticsId) {
+    issues.push({
+      id: 'ga4-missing',
+      severity: 'warning',
+      area: 'Indexing & Analytics',
+      target: 'Google Analytics (GA4)',
+      message: 'GA4 Measurement ID (G-XXXXXXXXXX) is not set.',
+    });
+  } else {
+    issues.push({
+      id: 'ga4-ok',
+      severity: 'pass',
+      area: 'Indexing & Analytics',
+      target: 'Google Analytics (GA4)',
+      message: `GA4 tracking active (${seo.googleAnalyticsId}).`,
+    });
+  }
+
+  // 2. Build known valid internal routes for broken-link checks
+  const validInternalPaths = new Set<string>([
+    '/',
+    '/features',
+    '/gallery',
+    '/pricing',
+    '/free-trial',
+    '/about',
+    '/contact',
+    '/blog',
+    '/login',
+    '/privacy-policy',
+    '/terms-and-conditions',
+    '/refund-policy',
+    '/hotel-reservation-software',
+    '/hotel-billing-software',
+  ]);
+
+  const seenSlugs = new Map<string, string>();
+
+  const checkHtmlLinks = (sourceLabel: string, html: string) => {
+    const hrefRegex = /href\s*=\s*["']([^"']+)["']/gi;
+    let m: RegExpExecArray | null;
+    while ((m = hrefRegex.exec(html || '')) !== null) {
+      const href = String(m[1] || '').trim();
+      if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('https://wa.me')) {
+        continue;
+      }
+      if (href.startsWith('/')) {
+        const clean = href.split('?')[0].split('#')[0].replace(/\/+$/, '') || '/';
+        if (!validInternalPaths.has(clean)) {
+          brokenLinks.push({ source: sourceLabel, href });
+        }
+      } else if (!/^https?:\/\//i.test(href)) {
+        brokenLinks.push({ source: sourceLabel, href });
+      }
+    }
+  };
+
+  pages.forEach((p) => {
+    if (!p) return;
+    const slug = String(p.slug || '').trim().toLowerCase().replace(/^\/+|\/+$/g, '');
+    if (slug) {
+      validInternalPaths.add(`/page/${slug}`);
+      if (seenSlugs.has(`page:${slug}`)) {
+        issues.push({
+          id: `dup-page-${p.id}`,
+          severity: 'error',
+          area: 'Slug & Links',
+          target: `Page: ${p.title}`,
+          message: `Duplicate page slug "/page/${slug}" conflicts with "${seenSlugs.get(`page:${slug}`)}".`,
+        });
+      } else {
+        seenSlugs.set(`page:${slug}`, p.title || p.id);
+      }
+    } else {
+      issues.push({
+        id: `empty-slug-${p.id}`,
+        severity: 'error',
+        area: 'Slug & Links',
+        target: `Page: ${p.title}`,
+        message: 'Custom URL slug is missing.',
+      });
+    }
+  });
+
+  blogs.forEach((b) => {
+    if (!b) return;
+    const slug = String(b.slug || b.id || '').trim().toLowerCase().replace(/^\/+|\/+$/g, '');
+    if (slug) {
+      validInternalPaths.add(`/blog/${slug}`);
+      if (seenSlugs.has(`blog:${slug}`)) {
+        issues.push({
+          id: `dup-blog-${b.id}`,
+          severity: 'error',
+          area: 'Slug & Links',
+          target: `Blog: ${b.title}`,
+          message: `Duplicate blog slug "/blog/${slug}" conflicts with "${seenSlugs.get(`blog:${slug}`)}".`,
+        });
+      } else {
+        seenSlugs.set(`blog:${slug}`, b.title || b.id);
+      }
+    }
+  });
+
+  // 3. Audit each page & blog for SEO title, meta description, image alt, and broken internal links
+  const auditDoc = (kind: 'Page' | 'Blog', item: any) => {
+    const label = `${kind}: ${item.title || item.id}`;
+    const title = String(item.seo?.seoTitle || item.title || '').trim();
+    const desc = String(item.seo?.metaDescription || item.summary || '').trim();
+    if (title.length < 15) {
+      issues.push({
+        id: `short-title-${item.id}`,
+        severity: 'warning',
+        area: 'Meta & Title',
+        target: label,
+        message: `SEO title is short (${title.length} chars; recommended 35–60 chars).`,
+      });
+    } else if (title.length > 65) {
+      issues.push({
+        id: `long-title-${item.id}`,
+        severity: 'warning',
+        area: 'Meta & Title',
+        target: label,
+        message: `SEO title exceeds 65 chars (${title.length} chars) and may truncate in Google search.`,
+      });
+    }
+    if (!desc || desc.length < 50) {
+      issues.push({
+        id: `short-desc-${item.id}`,
+        severity: 'warning',
+        area: 'Meta & Title',
+        target: label,
+        message: `Meta description is missing or short (${desc.length} chars; recommended 110–160 chars).`,
+      });
+    }
+    const imgUrl = item.featuredImageUrl || item.imageUrl;
+    const imgAlt = item.featuredImageAlt || item.seo?.imageAlt;
+    if (imgUrl && !String(imgAlt || '').trim()) {
+      issues.push({
+        id: `missing-alt-${item.id}`,
+        severity: 'warning',
+        area: 'Images & Alt',
+        target: label,
+        message: 'Featured image is missing SEO alt text.',
+      });
+    }
+    checkHtmlLinks(label, String(item.content || ''));
+  };
+
+  pages.forEach((p) => p && auditDoc('Page', p));
+  blogs.forEach((b) => b && auditDoc('Blog', b));
+
+  // Check Header/Footer nav links for broken internal URLs
+  const navLinks = [
+    ...(Array.isArray(params.systemWebsite?.headerNavLinks) ? params.systemWebsite.headerNavLinks : []),
+    ...(Array.isArray(params.systemWebsite?.footerNavLinks) ? params.systemWebsite.footerNavLinks : []),
+  ];
+  navLinks.forEach((nav: any) => {
+    const href = String(nav?.href || '').trim();
+    if (href.startsWith('/') && !href.startsWith('/#')) {
+      const clean = href.split('?')[0].split('#')[0].replace(/\/+$/, '') || '/';
+      if (!validInternalPaths.has(clean)) {
+        brokenLinks.push({ source: `Nav Link: ${nav.label || href}`, href });
+      }
+    }
+  });
+
+  brokenLinks.forEach((bl, i) => {
+    issues.push({
+      id: `broken-link-${i}`,
+      severity: 'error',
+      area: 'Slug & Links',
+      target: bl.source,
+      message: `Broken or unregistered link detected: "${bl.href}".`,
+    });
+  });
+
+  if (brokenLinks.length === 0) {
+    issues.push({
+      id: 'links-ok',
+      severity: 'pass',
+      area: 'Slug & Links',
+      target: 'Internal Link Health',
+      message: 'Zero broken internal links detected across CMS pages, blogs, and navigation menus.',
+    });
+  }
+
+  const errorCount = issues.filter((i) => i.severity === 'error').length;
+  const warnCount = issues.filter((i) => i.severity === 'warning').length;
+  const score = Math.max(10, Math.min(100, 100 - errorCount * 15 - warnCount * 6));
+
+  return { score, issues, brokenLinks };
+}

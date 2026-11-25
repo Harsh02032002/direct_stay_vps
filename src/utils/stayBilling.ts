@@ -30,7 +30,17 @@ export interface StayBill {
 }
 
 export function buildStayBill(input: Omit<CollectStayInput, 'settings'> & { settings?: BillSettings; hotelSettings?: AnyRec | null; taxSettings?: AnyRec | null }): StayBill {
-  const settings = input.settings || normalizeBillSettings(input.taxSettings, input.hotelSettings);
+  const baseSettings = input.settings || normalizeBillSettings(input.taxSettings, input.hotelSettings);
+  const recordInclusive =
+    (input.checkin as AnyRec)?.roomRateIncludesGst !== undefined
+      ? Boolean((input.checkin as AnyRec).roomRateIncludesGst)
+      : (input.booking as AnyRec)?.roomRateIncludesGst !== undefined
+      ? Boolean((input.booking as AnyRec).roomRateIncludesGst)
+      : baseSettings.roomRateIncludesGst;
+  const settings: BillSettings =
+    recordInclusive === baseSettings.roomRateIncludesGst
+      ? baseSettings
+      : { ...baseSettings, roomRateIncludesGst: recordInclusive };
   const folio = collectStayCharges({ ...input, settings });
   const bill = calculateBill({
     charges: folio.charges,
@@ -54,6 +64,55 @@ export function allocateInvoiceNumber(existingInvoices: AnyRec[], settings: Bill
 export function allocateGrcNumber(existingGrcNumbers: Array<string | undefined>, settings: BillSettings, date = new Date()): string {
   const seq = nextInvoiceSequence(existingGrcNumbers, settings.nextGrcSequence);
   return formatGrcNumber(settings.grcPrefix, seq, date);
+}
+
+/**
+ * Authoritative backend-controlled atomic GRC allocation via POST /api/grc/allocate.
+ * - If the stay already has a persisted GRC, returns it unchanged (never silently renumbers).
+ * - Never fabricates independent client-side sequence numbers; if offline, returns '' so
+ *   backend /api/db/sync allocates atomically on persistence.
+ */
+export async function requestAtomicGrcNumber(params: {
+  existingGrc?: string | null;
+  checkinId?: string | null;
+  bookingId?: string | null;
+  settings: BillSettings;
+  financialYear?: string;
+}): Promise<string> {
+  const existing = String(params.existingGrc || '').trim();
+  if (existing) return existing;
+
+  if (typeof fetch === 'function') {
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (typeof window !== 'undefined') {
+        const token =
+          window.sessionStorage?.getItem('pms_auth_token') ||
+          window.localStorage?.getItem('pms_auth_token');
+        if (token) headers.Authorization = `Bearer ${token}`;
+      }
+      const res = await fetch('/api/grc/allocate', {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({
+          checkinId: params.checkinId || undefined,
+          bookingId: params.bookingId || undefined,
+          prefix: params.settings.grcPrefix,
+          financialYear: params.financialYear || undefined,
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.success && typeof json.grcNumber === 'string' && json.grcNumber.trim()) {
+          return json.grcNumber.trim();
+        }
+      }
+    } catch {
+      // Offline / unreachable: leave empty so backend /api/db/sync assigns atomically
+    }
+  }
+  return '';
 }
 
 /** Converts a BillResult into the persisted legacy `Invoice` record shape (all fields consistent). */
@@ -132,7 +191,9 @@ export function buildInvoiceRecord(params: {
     totalAmount: b.grandTotal,
     advancePaid: b.receipts,
     paidAmount: b.receipts,
+    amountPaid: b.receipts,
     pendingAmount: b.balance,
+    outstandingAmount: b.balance,
     refundDue: b.refundDue,
     isPaid: b.paymentStatus === 'Paid',
     paymentStatus: b.paymentStatus,
@@ -228,6 +289,238 @@ const ddmmyyyy = (raw?: string): string => {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : s;
 };
 
+/**
+ * Resolves an unambiguous, booking-accurate Tax label for the Guest Registration Card (GRC),
+ * derived from the actual stay/booking tax configuration & hotel settings (never hardcoded).
+ */
+export function resolveGrcTaxLabel(params: {
+  booking?: AnyRec | null;
+  checkin?: AnyRec | null;
+  settings: BillSettings;
+}): string {
+  const b = params.booking || {};
+  const c = params.checkin || {};
+  const s = params.settings;
+
+  // Explicit per-stay / per-booking GST exemption takes priority
+  const explicitlyExempt =
+    c.isWithoutGst === true ||
+    b.isWithoutGst === true ||
+    b.gstInvoice === false;
+
+  const rawRate =
+    c.gstRate !== undefined && c.gstRate !== null && c.gstRate !== ''
+      ? Number(c.gstRate)
+      : b.gstRate !== undefined && b.gstRate !== null && b.gstRate !== ''
+      ? Number(b.gstRate)
+      : b.taxRate !== undefined && b.taxRate !== null && b.taxRate !== ''
+      ? Number(b.taxRate)
+      : Number(s.roomGstRate || 0);
+
+  const effectiveRate = Number.isFinite(rawRate) ? Math.max(0, r2(rawRate)) : 0;
+
+  if (explicitlyExempt || effectiveRate <= 0) {
+    return 'GST Exempt (Non-GST)';
+  }
+
+  const isInclusive =
+    c.roomRateIncludesGst !== undefined
+      ? Boolean(c.roomRateIncludesGst)
+      : b.roomRateIncludesGst !== undefined
+      ? Boolean(b.roomRateIncludesGst)
+      : Boolean(s.roomRateIncludesGst);
+
+  return isInclusive
+    ? `GST Inclusive (${effectiveRate}% Incl.)`
+    : `GST Extra (+${effectiveRate}% Exclusive)`;
+}
+
+export interface ConsistentInvoiceTotals {
+  isCreditNote: boolean;
+  isSuperseded: boolean;
+  isNoGst: boolean;
+  subtotal: number;
+  discount: number;
+  netSubtotal: number;
+  taxableAmount: number;
+  cgst: number;
+  sgst: number;
+  totalTax: number;
+  grandTotal: number;
+  receipts: number;
+  balance: number;
+  refundDue: number;
+  headlineGstRate: number;
+  paymentStatus: 'Paid' | 'Partially Paid' | 'Unpaid';
+}
+
+/**
+ * Authoritative read-time financial normalizer for persisted invoices (including legacy/historical
+ * finalized invoices that must remain immutable in DB).
+ * - Uses `taxRows` as authoritative taxable/CGST/SGST/tax source when present.
+ * - Prefers `totalAmount` over stale legacy `finalAmount` on v2/taxRow invoices.
+ * - ALWAYS derives `balance = max(0, grandTotal - receipts)` so stale `pendingAmount` never
+ *   produces phantom balances (e.g. Room 301 ₹5 discrepancy).
+ */
+export function resolveConsistentInvoiceTotals(
+  inv: AnyRec | null | undefined,
+  fallbackDefaultGstRate = 5
+): ConsistentInvoiceTotals {
+  const rec = inv || {};
+  const isCreditNote = Boolean(
+    rec.isCreditNote === true ||
+      String(rec.invoiceType || '').toLowerCase().trim() === 'credit note' ||
+      String(rec.invoiceNumber || '').toUpperCase().startsWith('CN/')
+  );
+  const isSuperseded = Boolean(
+    rec.isSuperseded === true ||
+      String(rec.invoiceStatus || '').toLowerCase().trim() === 'superseded'
+  );
+
+  const rawTaxRows: AnyRec[] = Array.isArray(rec.taxRows) ? rec.taxRows : [];
+  const hasTaxRows = rawTaxRows.length > 0;
+  const rowTaxable = hasTaxRows
+    ? r2(rawTaxRows.reduce((s, r) => s + Math.abs(Number(r?.taxable || 0)), 0))
+    : 0;
+  const rowCgst = hasTaxRows
+    ? r2(rawTaxRows.reduce((s, r) => s + Math.abs(Number(r?.cgst || 0)), 0))
+    : 0;
+  const rowSgst = hasTaxRows
+    ? r2(rawTaxRows.reduce((s, r) => s + Math.abs(Number(r?.sgst || 0)), 0))
+    : 0;
+  const rowTax = hasTaxRows
+    ? r2(
+        rawTaxRows.reduce(
+          (s, r) => s + Math.abs(Number(r?.tax ?? (Number(r?.cgst || 0) + Number(r?.sgst || 0)))),
+          0
+        )
+      )
+    : 0;
+
+  const isNoGst = Boolean(
+    rec.isWithoutGst === true ||
+      (!hasTaxRows &&
+        rec.gstRate !== undefined &&
+        Number(rec.gstRate) <= 0 &&
+        Math.abs(Number(rec.taxAmount ?? rec.gst ?? 0)) <= 0) ||
+      (!hasTaxRows &&
+        rec.gstRate === undefined &&
+        Math.abs(Number(rec.taxAmount ?? rec.gst ?? 0)) <= 0)
+  );
+
+  const absSub = r2(Math.abs(Number(rec.subtotal || 0)));
+  const discount = r2(Math.abs(Number(rec.discount || 0)));
+  const absNetSub = r2(Math.max(0, absSub - discount));
+
+  let absTax = 0;
+  let absCgst = 0;
+  let absSgst = 0;
+  let absTaxable = 0;
+
+  if (!isNoGst) {
+    if (hasTaxRows) {
+      absTaxable = rowTaxable;
+      absTax = rowTax;
+      absCgst = rowCgst > 0 ? rowCgst : r2(absTax / 2);
+      absSgst = rowSgst > 0 ? rowSgst : r2(absTax - absCgst);
+    } else {
+      absTax = r2(Math.abs(Number(rec.taxAmount ?? rec.gst ?? 0)));
+      const rawCg = Math.abs(Number(rec.cgst ?? 0));
+      const rawSg = Math.abs(Number(rec.sgst ?? 0));
+      if (rawCg + rawSg > 0 && Math.abs(r2(rawCg + rawSg) - absTax) <= 0.02) {
+        absCgst = r2(rawCg);
+        absSgst = r2(rawSg);
+      } else {
+        absCgst = r2(absTax / 2);
+        absSgst = r2(absTax - absCgst);
+      }
+      absTaxable =
+        rec.taxableAmount !== undefined
+          ? r2(Math.abs(Number(rec.taxableAmount)))
+          : absNetSub;
+    }
+  } else {
+    absTaxable = absNetSub;
+  }
+
+  // Prefer authoritative v2 `totalAmount` over stale legacy `finalAmount` whenever present
+  const hasTotalAmount = rec.totalAmount !== undefined && rec.totalAmount !== null && !Number.isNaN(Number(rec.totalAmount));
+  const hasFinalAmount = rec.finalAmount !== undefined && rec.finalAmount !== null && !Number.isNaN(Number(rec.finalAmount));
+  let absGrand: number;
+  if (hasTotalAmount && (rec.billEngine === 'v2' || hasTaxRows || !hasFinalAmount)) {
+    absGrand = r2(Math.abs(Number(rec.totalAmount)));
+  } else if (hasFinalAmount) {
+    absGrand = r2(Math.abs(Number(rec.finalAmount)));
+  } else if (hasTotalAmount) {
+    absGrand = r2(Math.abs(Number(rec.totalAmount)));
+  } else {
+    absGrand = r2(absNetSub + absTax);
+  }
+
+  const subtotal = isCreditNote ? -absSub : absSub;
+  const netSubtotal = isCreditNote ? -absNetSub : absNetSub;
+  const taxableAmount = isCreditNote ? -absTaxable : absTaxable;
+  const cgst = isCreditNote ? -absCgst : absCgst;
+  const sgst = isCreditNote ? -absSgst : absSgst;
+  const totalTax = isCreditNote ? -absTax : absTax;
+  const grandTotal = isCreditNote ? -absGrand : absGrand;
+
+  const rawPaid =
+    rec.paidAmount !== undefined && rec.paidAmount !== null
+      ? Number(rec.paidAmount)
+      : rec.advancePaid !== undefined && rec.advancePaid !== null
+      ? Number(rec.advancePaid)
+      : rec.amountPaid !== undefined && rec.amountPaid !== null
+      ? Number(rec.amountPaid)
+      : rec.isPaid === true
+      ? absGrand
+      : 0;
+  const receipts = isCreditNote ? 0 : r2(Math.max(0, rawPaid));
+
+  // ALWAYS derive balance = max(0, grandTotal - receipts) so stale pendingAmount never creates phantom dues
+  const balance = isCreditNote ? 0 : r2(Math.max(0, grandTotal - receipts));
+  const refundDue = isCreditNote ? 0 : r2(Math.max(0, receipts - grandTotal));
+
+  const headlineGstRate = isNoGst
+    ? 0
+    : Number(rec.gstRate) > 0
+    ? Number(rec.gstRate)
+    : hasTaxRows && Number(rawTaxRows[0]?.rate) > 0
+    ? Number(rawTaxRows[0].rate)
+    : absTaxable > 0 && absTax > 0
+    ? r2((absTax / absTaxable) * 100)
+    : fallbackDefaultGstRate;
+
+  const paymentStatus: 'Paid' | 'Partially Paid' | 'Unpaid' = isCreditNote
+    ? 'Paid'
+    : grandTotal > 0 && balance <= 0
+    ? 'Paid'
+    : receipts > 0
+    ? 'Partially Paid'
+    : grandTotal <= 0
+    ? 'Paid'
+    : 'Unpaid';
+
+  return {
+    isCreditNote,
+    isSuperseded,
+    isNoGst,
+    subtotal,
+    discount,
+    netSubtotal,
+    taxableAmount,
+    cgst,
+    sgst,
+    totalTax,
+    grandTotal,
+    receipts,
+    balance,
+    refundDue,
+    headlineGstRate,
+    paymentStatus,
+  };
+}
+
 export function toGrcPrintData(params: {
   hotel: AnyRec | null | undefined;
   regNo: string;
@@ -262,7 +555,7 @@ export function toGrcPrintData(params: {
     roomType: String(params.roomType || c.roomType || b.roomType || b.requirements?.[0]?.categoryName || ''),
     roomCharge: params.roomRate ?? c.roomRate ?? c.rate ?? c.tariff ?? b.roomRate ?? b.rate ?? b.tariff ?? b.bookingAmount ?? b.requirements?.[0]?.unitPrice ?? '',
     planName: String(c.mealPlan || b.requirements?.[0]?.planName || 'EP'),
-    taxMode: params.settings.roomRateIncludesGst ? 'Include' : 'Exclude',
+    taxMode: resolveGrcTaxLabel({ booking: b, checkin: c, settings: params.settings }),
     bookingNo: String(b.bookingNo || b.id || c.bookingId || c.id || c.bookingNo || '').replace(/^#/, ''),
     company: String(c.companyName || b.companyName || 'Walk-in'),
     voucherNo: String(c.voucherNumber || b.voucherNumber || b.sourceBookingId || ''),
@@ -284,10 +577,11 @@ export const ROOM_ONLY_CHARGE_KINDS: BillChargeKind[] = [
   'late_checkout',
 ];
 
-/** Returns true only for active, revenue-bearing invoices (excludes Superseded and Cancelled invoices). */
+/** Returns true only for active, revenue-bearing invoices (excludes Superseded, Cancelled, and Credit Note records). */
 export function isActiveInvoice(inv: AnyRec | null | undefined): boolean {
   if (!inv) return false;
   if (inv.isSuperseded === true) return false;
+  if (inv.isCreditNote === true || String(inv.invoiceType || '').toLowerCase().trim() === 'credit note') return false;
   const st = String(inv.invoiceStatus || '').toLowerCase().trim();
   if (st === 'superseded' || st === 'cancelled' || st === 'void') return false;
   const paySt = String(inv.paymentStatus || '').toLowerCase().trim();

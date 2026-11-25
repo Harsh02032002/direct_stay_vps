@@ -34,7 +34,7 @@ import {
   PosOrderRecord,
   InventoryItemRecord,
 } from '../types';
-import type { FoodAdvanceBooking } from '../../types';
+import type { FoodAdvanceBooking, PosCategory, PosTableRecord } from '../../types';
 import FoodAdvanceBookingPanel from '../../components/FoodAdvanceBookingPanel';
 import { formatCurrency } from '../utils/formatters';
 import { useHotelTaxSettings } from '../utils/taxSettings';
@@ -49,6 +49,8 @@ import {
   PayRow,
   r4,
   parseMenuPairText,
+  findVariantMatchingBasePrice,
+  resolveDefaultVariantForItem,
   getConfiguredMenuUnitPrice,
   isManualPriceOverride,
   cleanOrderItemBaseName,
@@ -70,6 +72,10 @@ interface PosModuleProps {
   foodGstRate?: number;
   posAdvanceBookings?: FoodAdvanceBooking[];
   onUpdatePosAdvanceBookings?: (updated: FoodAdvanceBooking[]) => void;
+  posCategories?: PosCategory[];
+  onUpdatePosCategories?: (updated: PosCategory[]) => void;
+  posTables?: PosTableRecord[];
+  onUpdatePosTables?: (updated: PosTableRecord[]) => void;
   currentRole?: string;
   onAddAuditLog?: (action: string, details: string) => void;
   onSettlePosOrders?: (
@@ -116,21 +122,13 @@ export interface HybridPaymentRow {
 }
 
 interface RestaurantTableConfig {
+  id?: string;
   tableNumber: string;
   floor: string;
   capacity: number;
+  status?: 'Available' | 'Occupied' | 'Reserved' | 'Blocked' | 'Inactive' | string;
+  isActive?: boolean;
 }
-
-const DEFAULT_TABLES: RestaurantTableConfig[] = [
-  { tableNumber: 'T-01', floor: 'Main Hall', capacity: 2 },
-  { tableNumber: 'T-02', floor: 'Main Hall', capacity: 4 },
-  { tableNumber: 'T-03', floor: 'Main Hall', capacity: 4 },
-  { tableNumber: 'T-04', floor: 'Main Hall', capacity: 6 },
-  { tableNumber: 'T-05', floor: 'Main Hall', capacity: 4 },
-  { tableNumber: 'T-06', floor: 'Family Zone', capacity: 6 },
-  { tableNumber: 'T-07', floor: 'Family Zone', capacity: 8 },
-  { tableNumber: 'T-08', floor: 'Terrace / Lawn', capacity: 4 },
-];
 
 const BUILTIN_COUPONS: { code: string; type: 'percent' | 'fixed'; value: number; minSubtotal: number }[] = [
   { code: 'WELCOME10', type: 'percent', value: 10, minSubtotal: 200 },
@@ -333,6 +331,10 @@ export const PosModule: React.FC<PosModuleProps> = ({
   foodGstRate,
   posAdvanceBookings = [],
   onUpdatePosAdvanceBookings,
+  posCategories = [],
+  onUpdatePosCategories,
+  posTables = [],
+  onUpdatePosTables,
   currentRole = 'Admin',
   onAddAuditLog,
   onSettlePosOrders,
@@ -463,7 +465,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
   const [selectedBookingId, setSelectedBookingId] = useState<string>(
     bookings.find((b) => b.isCheckedIn && !b.isCheckedOut)?.id || ''
   );
-  const [tableNumber, setTableNumber] = useState('T-01');
+  const [tableNumber, setTableNumber] = useState(() => posTables[0]?.number || '');
   const [dineInPax, setDineInPax] = useState<number>(2);
   const [waiterName, setWaiterName] = useState<string>('');
   const [customerNameInput, setCustomerNameInput] = useState<string>('');
@@ -479,28 +481,50 @@ export const PosModule: React.FC<PosModuleProps> = ({
   const [printingFoodOrder, setPrintingFoodOrder] = useState<PosOrderRecord | null>(null);
   const [printingKotOrder, setPrintingKotOrder] = useState<{ order: PosOrderRecord; isReprint?: boolean } | null>(null);
 
-  // Persisted Restaurant Tables config per hotel
-  const tablesStorageKey = `pms_pos_tables_cfg_${hotelId}`;
-  const [tableConfigs, setTableConfigs] = useState<RestaurantTableConfig[]>(() => {
-    try {
-      const raw = localStorage.getItem(tablesStorageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return DEFAULT_TABLES;
-  });
+  // Dynamic Database-Persisted Restaurant Tables (NO hardcoded T-01..T-08 fallback)
+  const tableConfigs = useMemo<RestaurantTableConfig[]>(() => {
+    return (Array.isArray(posTables) ? posTables : [])
+      .filter((t) => t && t.isActive !== false && String(t.status || '') !== 'Inactive')
+      .map((t) => ({
+        id: t.id,
+        tableNumber: String(t.number || t.name || '').trim(),
+        floor: String(t.floor || t.zone || 'Main Hall').trim(),
+        capacity: Math.max(1, Number(t.capacity) || 4),
+        status: t.status || 'Available',
+        isActive: t.isActive !== false,
+      }))
+      .filter((t) => Boolean(t.tableNumber));
+  }, [posTables]);
+
+  useEffect(() => {
+    if (tableConfigs.length > 0 && (!tableNumber || !tableConfigs.some((t) => t.tableNumber === tableNumber))) {
+      setTableNumber(tableConfigs[0].tableNumber);
+    } else if (tableConfigs.length === 0 && tableNumber) {
+      setTableNumber('');
+    }
+  }, [tableConfigs, hotelId]);
+
   const [editingTableOriginalNo, setEditingTableOriginalNo] = useState<string | null>(null);
   const [newTableNo, setNewTableNo] = useState('');
   const [newTableFloor, setNewTableFloor] = useState('Main Hall');
   const [newTableCap, setNewTableCap] = useState<number>(4);
+  const [newTableStatus, setNewTableStatus] = useState<'Available' | 'Reserved' | 'Blocked'>('Available');
 
   const saveTableConfigs = (next: RestaurantTableConfig[]) => {
-    setTableConfigs(next);
-    try {
-      localStorage.setItem(tablesStorageKey, JSON.stringify(next));
-    } catch {}
+    const nowIso = new Date().toISOString();
+    const dbRecords: PosTableRecord[] = next.map((t, idx) => ({
+      id: t.id || `TBL-${hotelId}-${t.tableNumber.replace(/[^A-Za-z0-9]/g, '')}-${idx}`,
+      hotelId,
+      number: t.tableNumber,
+      name: t.tableNumber,
+      floor: t.floor || 'Main Hall',
+      zone: t.floor || 'Main Hall',
+      capacity: Math.max(1, Number(t.capacity) || 4),
+      status: t.status || 'Available',
+      isActive: t.isActive !== false,
+      updatedAt: nowIso,
+    }));
+    onUpdatePosTables?.(dbRecords);
   };
 
   // New / Edit Menu Item State (Complete Section 1 Product Management)
@@ -673,11 +697,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
       }
     }
 
-    const chosenVariantObj = explicitVariantName
-      ? item.variants?.find((v) => v.name === explicitVariantName)
-      : item.variants && item.variants.length > 0
-      ? item.variants[0]
-      : undefined;
+    const chosenVariantObj = resolveDefaultVariantForItem(item, explicitVariantName);
     const chosenVariant = chosenVariantObj?.name;
     const targetLineId = makeCartLineId(item.id, chosenVariant, []);
 
@@ -945,13 +965,14 @@ export const PosModule: React.FC<PosModuleProps> = ({
     );
   };
   const setLineVariant = (lineId: string, varName: string) => {
+    const cleanVar = String(varName || '').trim();
     setCart((prev) =>
       prev.map((c) => {
         if (c.lineId !== lineId) return c;
-        // Changing to a predefined portion resets any accidental price override so configured portion price is used cleanly
+        // Changing to a predefined portion or Base Price resets any accidental price override so configured price is used cleanly
         return {
           ...c,
-          variant: varName,
+          variant: cleanVar || undefined,
           customUnitPrice: undefined,
           priceDraft: undefined,
           overrideReason: '',
@@ -1426,10 +1447,14 @@ export const PosModule: React.FC<PosModuleProps> = ({
     showToast(`Resumed Held Order ${held.orderNumber} into active cart.`, 'success');
   };
 
-  // Convert Advance Restaurant Booking into live order (carries forward deposit & table!)
+  // Convert Advance Restaurant Booking into live order (carries forward deposit & table without double-taxing!)
   const handleConvertAdvanceToLive = (adv: FoodAdvanceBooking) => {
+    if (adv.convertedPosOrderId) {
+      showToast(`Advance booking ${adv.bookingNumber} was already converted to POS order ${adv.convertedPosOrderId}.`, 'warning');
+      return;
+    }
     setEditingOrder(null);
-    const tbl = (adv as any).tableNumber || 'T-01';
+    const tbl = (adv as any).tableNumber || tableConfigs[0]?.tableNumber || '';
     setOrderType('Dine In');
     setTableNumber(tbl);
     setDineInPax(Math.max(1, Number(adv.pax) || 2));
@@ -1440,6 +1465,12 @@ export const PosModule: React.FC<PosModuleProps> = ({
     setInstructions(adv.specialRequest || '');
     const billablePax = Math.max(1, (Number(adv.pax) || 1) - (Number(adv.focPax) || 0));
     const rate = Number(adv.ratePerPax) || 0;
+    // Respect advance booking GST configuration so GST is never double-charged
+    if (adv.gstEnabled === false) {
+      setGstEnabled(false);
+    } else if (adv.gstEnabled === true) {
+      setGstEnabled(true);
+    }
     if (rate > 0) {
       const synthItem: PosMenuItem = {
         id: `adv-pkg-${adv.id}`,
@@ -1447,7 +1478,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
         name: `${(adv.meals || ['Meal']).join('/')} — ${adv.menuCuisine || 'Advance Package'}`,
         category: 'Buffet / Package',
         price: rate,
-        taxRate: configuredFnbGst,
+        taxRate: adv.gstEnabled === false ? 0 : (adv.gstRate ?? configuredFnbGst),
         isVeg: !(adv.mealTypes || []).includes('Non-Veg'),
         available: true,
         kitchenStation: 'Main Kitchen',
@@ -1460,7 +1491,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
       );
     }
     showToast(
-      `Seated ${adv.guestOrGroupName} at Table ${tbl} (${adv.pax} Pax). Advance deposit ₹${adv.advanceAmount || 0} carried forward! Review items and click Send KOT when ready.`,
+      `Seated ${adv.guestOrGroupName}${tbl ? ` at Table ${tbl}` : ''} (${adv.pax} Pax). Advance deposit ₹${adv.advanceAmount || 0} carried forward! Review items and click Send KOT when ready.`,
       'success'
     );
   };
@@ -2648,7 +2679,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
     setEditingMenuItemId(null);
     setNewItemName('');
     setNewItemCode('');
-    setNewItemCategory('North Indian');
+    setNewItemCategory(mergedCategoryList[0] || '');
     setNewItemSubCategory('');
     setNewItemPrice(180);
     setNewItemCostPrice('');
@@ -2813,9 +2844,11 @@ export const PosModule: React.FC<PosModuleProps> = ({
         tableConfigs.map((t) =>
           t.tableNumber === editingTableOriginalNo
             ? {
+                ...t,
                 tableNumber: code,
                 floor: newTableFloor.trim() || 'Main Hall',
                 capacity: Math.max(1, Number(newTableCap) || 4),
+                status: newTableStatus,
               }
             : t
         )
@@ -2828,6 +2861,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
       if (tableNumber === editingTableOriginalNo) {
         setTableNumber(code);
       }
+      onAddAuditLog?.('POS Table Updated', `Updated Restaurant Table ${code} (${newTableCap} Seats • ${newTableFloor || 'Main Hall'} • ${newTableStatus}).`);
       showToast(`Updated Table ${code} (${newTableCap} Seats • ${newTableFloor || 'Main Hall'}).`, 'success');
       handleCancelEditTable();
       return;
@@ -2838,10 +2872,18 @@ export const PosModule: React.FC<PosModuleProps> = ({
     }
     saveTableConfigs([
       ...tableConfigs,
-      { tableNumber: code, floor: newTableFloor.trim() || 'Main Hall', capacity: Math.max(1, Number(newTableCap) || 4) },
+      {
+        id: `TBL-${hotelId}-${Date.now()}`,
+        tableNumber: code,
+        floor: newTableFloor.trim() || 'Main Hall',
+        capacity: Math.max(1, Number(newTableCap) || 4),
+        status: newTableStatus,
+        isActive: true,
+      },
     ]);
     setNewTableNo('');
-    showToast(`Added Table ${code} to Restaurant floor.`, 'success');
+    onAddAuditLog?.('POS Table Created', `Added Restaurant Table ${code} (${newTableCap} Seats • ${newTableFloor || 'Main Hall'}).`);
+    showToast(`Added Table ${code} to Restaurant floor (saved to DB).`, 'success');
   };
 
   const handleRemoveTable = (tblNo: string) => {
@@ -2850,7 +2892,19 @@ export const PosModule: React.FC<PosModuleProps> = ({
       showToast(`Cannot delete Table ${tblNo} while it has an active running check.`, 'error');
       return;
     }
+    const hasReservation = posAdvanceBookings.some(
+      (b) =>
+        String(b.tableNumber || '').toUpperCase() === tblNo.toUpperCase() &&
+        b.status !== 'Cancelled' &&
+        b.status !== 'Completed' &&
+        b.status !== 'No-Show'
+    );
+    if (hasReservation) {
+      showToast(`Cannot delete Table ${tblNo}: it has an active advance food reservation.`, 'error');
+      return;
+    }
     saveTableConfigs(tableConfigs.filter((t) => t.tableNumber !== tblNo));
+    onAddAuditLog?.('POS Table Deleted', `Deleted Restaurant Table ${tblNo}.`);
     showToast(`Removed Table ${tblNo}.`, 'info');
   };
 
@@ -2944,26 +2998,128 @@ export const PosModule: React.FC<PosModuleProps> = ({
     };
   }, [orders, menuItems, todayIst]);
 
-  const availableSubCategories = useMemo(() => {
-    if (selectedCategory === 'ALL') {
-      return Array.from(new Set(menuItems.map((m) => m.subCategory).filter(Boolean))) as string[];
+  // Identify legacy auto-generated placeholder dishes created by old quick-category code (never real final products)
+  const isAutoGeneratedPlaceholderItem = (item: PosMenuItem): boolean => {
+    const idStr = String(item?.id || '');
+    if (idStr.startsWith('ITEM-CAT-') || idStr.startsWith('MENU-CAT-')) return true;
+    const descLower = String(item?.description || '').toLowerCase();
+    if (descLower.includes('auto-created') || descLower.includes('placeholder')) return true;
+    const subLower = String(item?.subCategory || '').trim().toLowerCase();
+    const nameLower = String(item?.name || '').trim().toLowerCase();
+    if (subLower && (nameLower === `${subLower} dish` || nameLower === `${subLower} special`)) {
+      return true;
     }
-    return Array.from(
-      new Set(
-        menuItems
-          .filter((m) => m.category === selectedCategory && m.subCategory)
-          .map((m) => m.subCategory)
-      )
-    ) as string[];
-  }, [selectedCategory, menuItems]);
+    return false;
+  };
 
-  const filteredMenu = menuItems.filter((m) => {
+  // Real final products only (excludes legacy auto-created category placeholders)
+  const finalMenuItems = useMemo(
+    () => menuItems.filter((item) => !isAutoGeneratedPlaceholderItem(item)),
+    [menuItems]
+  );
+
+  // Unified DB + Menu Categories (case-insensitive deduplication, preserves categories even from legacy records)
+  const mergedCategoryList = useMemo(() => {
+    const seen = new Map<string, string>();
+    const pushCat = (raw?: string) => {
+      const clean = String(raw || '').trim();
+      if (!clean) return;
+      const key = clean.toLowerCase();
+      if (!seen.has(key)) seen.set(key, clean);
+    };
+    (Array.isArray(posCategories) ? posCategories : [])
+      .filter((c) => c && c.isActive !== false)
+      .forEach((c) => pushCat(c.name));
+    menuItems
+      .filter((m) => m.isActive !== false)
+      .forEach((m) => pushCat(m.category));
+    return Array.from(seen.values());
+  }, [posCategories, menuItems]);
+
+  const getSubCategoriesForCategory = (catName: string): string[] => {
+    const seen = new Map<string, string>();
+    const pushSub = (raw?: string) => {
+      const clean = String(raw || '').trim();
+      if (!clean) return;
+      const key = clean.toLowerCase();
+      if (!seen.has(key)) seen.set(key, clean);
+    };
+    const catLower = String(catName || '').trim().toLowerCase();
+    if (!catLower) return [];
+    (Array.isArray(posCategories) ? posCategories : []).forEach((pc) => {
+      if (!pc || pc.isActive === false) return;
+      if (String(pc.name || '').trim().toLowerCase() === catLower) {
+        (Array.isArray(pc.subcategories) ? pc.subcategories : []).forEach((sub) => pushSub(sub));
+      }
+    });
+    menuItems.forEach((m) => {
+      if (m.isActive === false || !m.subCategory) return;
+      if (String(m.category || '').trim().toLowerCase() === catLower) {
+        pushSub(m.subCategory);
+      }
+    });
+    return Array.from(seen.values());
+  };
+
+  const formSubCategories = useMemo(
+    () => getSubCategoriesForCategory(newItemCategory),
+    [newItemCategory, posCategories, menuItems]
+  );
+
+  // Keep Add Product form's Category aligned with real configured categories (never stuck on hardcoded 'North Indian')
+  useEffect(() => {
+    if (editingMenuItemId) return;
+    if (mergedCategoryList.length > 0) {
+      const hasMatch = mergedCategoryList.some(
+        (c) => c.toLowerCase() === String(newItemCategory || '').trim().toLowerCase()
+      );
+      if (!hasMatch) {
+        setNewItemCategory(mergedCategoryList[0]);
+        setNewItemSubCategory('');
+      }
+    }
+  }, [mergedCategoryList, editingMenuItemId, newItemCategory]);
+
+  const availableSubCategories = useMemo(() => {
+    const seen = new Map<string, string>();
+    const pushSub = (raw?: string) => {
+      const clean = String(raw || '').trim();
+      if (!clean) return;
+      const key = clean.toLowerCase();
+      if (!seen.has(key)) seen.set(key, clean);
+    };
+    const selCatLower = String(selectedCategory || '').trim().toLowerCase();
+
+    // 1. Subcategories persisted in DB `pos_categories`
+    (Array.isArray(posCategories) ? posCategories : []).forEach((pc) => {
+      if (!pc || pc.isActive === false) return;
+      const pcLower = String(pc.name || '').trim().toLowerCase();
+      if (selectedCategory === 'ALL' || pcLower === selCatLower) {
+        (Array.isArray(pc.subcategories) ? pc.subcategories : []).forEach((sub) => pushSub(sub));
+      }
+    });
+
+    // 2. Subcategories present on active menu items
+    menuItems.forEach((m) => {
+      if (m.isActive === false || !m.subCategory) return;
+      const mCatLower = String(m.category || '').trim().toLowerCase();
+      if (selectedCategory === 'ALL' || mCatLower === selCatLower) {
+        pushSub(m.subCategory);
+      }
+    });
+
+    return Array.from(seen.values());
+  }, [selectedCategory, posCategories, menuItems]);
+
+  const filteredMenu = finalMenuItems.filter((m) => {
     if (m.isActive === false) return false;
-    const matchCat = selectedCategory === 'ALL' || m.category === selectedCategory;
+    const matchCat =
+      selectedCategory === 'ALL' ||
+      String(m.category || '').trim().toLowerCase() === String(selectedCategory || '').trim().toLowerCase();
     const matchSubCat =
       selectedSubCategory === 'ALL' ||
       !selectedSubCategory ||
-      (m.subCategory && m.subCategory.toLowerCase() === selectedSubCategory.toLowerCase());
+      (m.subCategory && m.subCategory.trim().toLowerCase() === selectedSubCategory.trim().toLowerCase());
     const matchVeg = vegFilter === 'All' || (vegFilter === 'Veg' ? m.isVeg : !m.isVeg);
     const matchMeal =
       mealWindowFilter === 'All' ||
@@ -2976,6 +3132,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
       !q ||
       m.name.toLowerCase().includes(q) ||
       String(m.code || '').toLowerCase().includes(q) ||
+      String(m.category || '').toLowerCase().includes(q) ||
       String(m.subCategory || '').toLowerCase().includes(q);
     return matchCat && matchSubCat && matchVeg && matchMeal && matchSearch;
   });
@@ -3644,32 +3801,27 @@ export const PosModule: React.FC<PosModuleProps> = ({
               </div>
             </div>
 
-            {/* Meal Window Filter + Category Strip */}
+            {/* Meal Window Filter Row */}
             <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-mono font-bold uppercase text-slate-400 mr-0.5">Meal Time:</span>
               {(['All', 'Breakfast', 'Lunch', 'Dinner'] as const).map((mw) => (
                 <button
                   key={mw}
                   type="button"
                   onClick={() => setMealWindowFilter(mw)}
                   className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer ${
-                    mealWindowFilter === mw ? 'bg-amber-500 text-slate-950' : 'bg-slate-100 text-slate-600'
+                    mealWindowFilter === mw ? 'bg-amber-500 text-slate-950 shadow-2xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
                   {mw === 'All' ? 'All Meals' : mw}
                 </button>
               ))}
-              <span className="text-slate-300">|</span>
-              {Array.from(
-                new Set([
-                  'ALL',
-                  ...menuItems.map((m) => m.category).filter(Boolean),
-                  'North Indian',
-                  'Fast Food',
-                  'Breakfast',
-                  'Beverages',
-                  'Desserts',
-                ])
-              ).map((cat) => (
+            </div>
+
+            {/* Dynamic Food Category Strip (Loaded from DB pos_categories + Menu Items) */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
+              <span className="text-[10px] font-mono font-bold uppercase text-slate-400 mr-0.5">Category:</span>
+              {['ALL', ...mergedCategoryList].map((cat) => (
                 <button
                   key={cat}
                   type="button"
@@ -3679,17 +3831,17 @@ export const PosModule: React.FC<PosModuleProps> = ({
                   }}
                   className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition cursor-pointer ${
                     selectedCategory === cat
-                      ? 'bg-slate-900 text-amber-400'
+                      ? 'bg-slate-900 text-amber-400 shadow-2xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  {cat}
+                  {cat === 'ALL' ? 'All Categories' : cat}
                 </button>
               ))}
             </div>
 
-            {/* Subcategory Pills Strip */}
-            {availableSubCategories.length > 0 && (
+            {/* Subcategory Pills Strip (Always visible when category selected or subcategories exist) */}
+            {(availableSubCategories.length > 0 || selectedCategory !== 'ALL') && (
               <div className="flex items-center gap-1.5 overflow-x-auto pt-1.5 border-t border-slate-100">
                 <span className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Sub-Category:</span>
                 <button
@@ -3721,7 +3873,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
                   type="button"
                   onClick={() => {
                     setQuickMode('subcategory');
-                    setQuickTargetCat(selectedCategory !== 'ALL' ? selectedCategory : 'North Indian');
+                    setQuickTargetCat(selectedCategory !== 'ALL' ? selectedCategory : mergedCategoryList[0] || '');
                     setQuickSubName('');
                     setShowQuickCatModal(true);
                   }}
@@ -3837,6 +3989,15 @@ export const PosModule: React.FC<PosModuleProps> = ({
                           className="flex flex-wrap items-center gap-1.5 w-full"
                           onClick={(e) => e.stopPropagation()}
                         >
+                          {Number(item.price) > 0 && !findVariantMatchingBasePrice(item) && (
+                            <button
+                              type="button"
+                              onClick={() => addToCart(item, '')}
+                              className="flex-1 min-w-[78px] py-1 px-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10.5px] font-extrabold flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-2.5 h-2.5" /> Full ₹{item.price}
+                            </button>
+                          )}
                           {item.variants!.map((v, vIdx) => (
                             <button
                               key={v.id || `${v.name}-${vIdx}`}
@@ -4172,22 +4333,28 @@ export const PosModule: React.FC<PosModuleProps> = ({
                         </div>
                       </div>
 
-                      {item.variants && item.variants.length > 0 && (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-bold text-slate-500">Portion:</span>
-                          <select
-                            value={variant || item.variants[0].name}
-                            onChange={(e) => setLineVariant(lineId, e.target.value)}
-                            className="px-2 py-0.5 rounded border border-slate-200 bg-white text-[11px] font-bold"
-                          >
-                            {item.variants.map((v, vIdx) => (
-                              <option key={v.id || `${v.name}-${vIdx}`} value={v.name}>
-                                {v.name} (₹{v.price})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
+                      {item.variants && item.variants.length > 0 && (() => {
+                        const hasBaseVariantOption = Number(item.price) > 0 && !findVariantMatchingBasePrice(item);
+                        return (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-slate-500">Portion:</span>
+                            <select
+                              value={variant ?? (hasBaseVariantOption ? '' : item.variants[0].name)}
+                              onChange={(e) => setLineVariant(lineId, e.target.value)}
+                              className="px-2 py-0.5 rounded border border-slate-200 bg-white text-[11px] font-bold"
+                            >
+                              {hasBaseVariantOption && (
+                                <option value="">Full / Base (₹{item.price})</option>
+                              )}
+                              {item.variants.map((v, vIdx) => (
+                                <option key={v.id || `${v.name}-${vIdx}`} value={v.name}>
+                                  {v.name} (₹{v.price})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })()}
 
                       {item.addons && item.addons.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1">
@@ -4405,20 +4572,17 @@ export const PosModule: React.FC<PosModuleProps> = ({
               </button>
             </div>
             <div className="flex flex-wrap gap-2 pt-1">
-              {Array.from(new Set(menuItems.map((m) => m.category).filter(Boolean))).map((cat) => {
-                const subs = Array.from(
-                  new Set(
-                    menuItems
-                      .filter((m) => m.category === cat && m.subCategory)
-                      .map((m) => m.subCategory as string)
-                  )
-                );
+              {mergedCategoryList.map((cat) => {
+                const subs = getSubCategoriesForCategory(cat);
+                const realCount = finalMenuItems.filter(
+                  (m) => String(m.category || '').trim().toLowerCase() === cat.toLowerCase()
+                ).length;
                 return (
                   <div key={cat} className="p-2.5 bg-white rounded-xl border border-amber-200 shadow-2xs space-y-1.5 min-w-[140px]">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-extrabold text-slate-900 text-xs">{cat}</span>
                       <span className="text-[10px] text-slate-400 font-mono">
-                        {menuItems.filter((m) => m.category === cat).length} items
+                        {realCount} {realCount === 1 ? 'item' : 'items'}
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1 text-[10px]">
@@ -4432,6 +4596,11 @@ export const PosModule: React.FC<PosModuleProps> = ({
                   </div>
                 );
               })}
+              {mergedCategoryList.length === 0 && (
+                <span className="text-slate-500 italic text-xs">
+                  No categories yet. Click "+ Add Category / Sub-Category" to create one.
+                </span>
+              )}
             </div>
           </div>
 
@@ -4464,34 +4633,58 @@ export const PosModule: React.FC<PosModuleProps> = ({
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Category *</label>
-                <input
-                  type="text"
+                <select
                   required
-                  list="pos-category-options"
                   value={newItemCategory}
-                  onChange={(e) => setNewItemCategory(e.target.value)}
-                  placeholder="North Indian"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
-                />
-                <datalist id="pos-category-options">
-                  <option value="North Indian" />
-                  <option value="Fast Food" />
-                  <option value="Breakfast" />
-                  <option value="Beverages" />
-                  <option value="Desserts" />
-                  <option value="Chinese" />
-                  <option value="Tandoor" />
-                </datalist>
+                  onChange={(e) => {
+                    const nextCat = e.target.value;
+                    setNewItemCategory(nextCat);
+                    const nextSubs = getSubCategoriesForCategory(nextCat);
+                    if (
+                      newItemSubCategory &&
+                      !nextSubs.some((s) => s.toLowerCase() === newItemSubCategory.toLowerCase())
+                    ) {
+                      setNewItemSubCategory('');
+                    }
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold"
+                >
+                  {mergedCategoryList.length === 0 && (
+                    <option value="">-- Add Category First --</option>
+                  )}
+                  {mergedCategoryList.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                  {newItemCategory &&
+                    !mergedCategoryList.some(
+                      (c) => c.toLowerCase() === String(newItemCategory).trim().toLowerCase()
+                    ) && <option value={newItemCategory}>{newItemCategory}</option>}
+                </select>
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Subcategory</label>
-                <input
-                  type="text"
+                <select
                   value={newItemSubCategory}
                   onChange={(e) => setNewItemSubCategory(e.target.value)}
-                  placeholder="e.g. Rice / Mains"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
-                />
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold"
+                >
+                  <option value="">
+                    {formSubCategories.length > 0
+                      ? '-- Select Subcategory --'
+                      : '-- No Subcategories --'}
+                  </option>
+                  {formSubCategories.map((sub) => (
+                    <option key={sub} value={sub}>
+                      {sub}
+                    </option>
+                  ))}
+                  {newItemSubCategory &&
+                    !formSubCategories.some(
+                      (s) => s.toLowerCase() === String(newItemSubCategory).trim().toLowerCase()
+                    ) && <option value={newItemSubCategory}>{newItemSubCategory}</option>}
+                </select>
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Selling Price (₹) *</label>
@@ -4807,7 +5000,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
               />
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {Array.from(new Set(['ALL', ...menuItems.map((m) => m.category)])).map((cat) => (
+              {['ALL', ...mergedCategoryList].map((cat) => (
                 <button
                   key={cat}
                   type="button"
@@ -4822,7 +5015,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
             </div>
           </div>
 
-          {/* Catalog Table */}
+          {/* Catalog Table (Final Products Only — excludes legacy auto-created placeholders) */}
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
@@ -4839,18 +5032,34 @@ export const PosModule: React.FC<PosModuleProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {menuItems
-                  .filter((item) => {
-                    if (catalogCatFilter !== 'ALL' && item.category !== catalogCatFilter) return false;
+                {(() => {
+                  const visibleProducts = finalMenuItems.filter((item) => {
+                    if (
+                      catalogCatFilter !== 'ALL' &&
+                      String(item.category || '').trim().toLowerCase() !==
+                        String(catalogCatFilter).trim().toLowerCase()
+                    ) {
+                      return false;
+                    }
                     if (!catalogSearch.trim()) return true;
                     const q = catalogSearch.toLowerCase();
                     return (
                       item.name.toLowerCase().includes(q) ||
                       item.code.toLowerCase().includes(q) ||
-                      item.category.toLowerCase().includes(q)
+                      item.category.toLowerCase().includes(q) ||
+                      String(item.subCategory || '').toLowerCase().includes(q)
                     );
-                  })
-                  .map((item) => (
+                  });
+                  if (visibleProducts.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={9} className="py-8 text-center text-slate-400 font-semibold">
+                          No final products added yet. Select Category &amp; Subcategory above and click "+ Add Product".
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return visibleProducts.map((item) => (
                     <tr
                       key={item.id}
                       className={`hover:bg-slate-50/80 ${item.isActive === false ? 'opacity-50' : ''}`}
@@ -4977,7 +5186,8 @@ export const PosModule: React.FC<PosModuleProps> = ({
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  ));
+                })()}
               </tbody>
             </table>
           </div>
@@ -5026,9 +5236,18 @@ export const PosModule: React.FC<PosModuleProps> = ({
                 type="text"
                 value={newTableFloor}
                 onChange={(e) => setNewTableFloor(e.target.value)}
-                placeholder="Section (Main Hall)"
-                className="w-32 px-2.5 py-1.5 rounded-xl border border-slate-200"
+                placeholder="Floor / Zone (Main Hall)"
+                className="w-36 px-2.5 py-1.5 rounded-xl border border-slate-200"
               />
+              <select
+                value={newTableStatus}
+                onChange={(e) => setNewTableStatus(e.target.value as any)}
+                className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white font-semibold"
+              >
+                <option value="Available">Available</option>
+                <option value="Reserved">Reserved</option>
+                <option value="Blocked">Blocked</option>
+              </select>
               <button
                 type="button"
                 onClick={handleAddTable}
@@ -5054,6 +5273,16 @@ export const PosModule: React.FC<PosModuleProps> = ({
             </div>
           </div>
 
+          {tableConfigs.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-10 text-center space-y-2">
+              <div className="text-sm font-extrabold text-slate-900">
+                No Restaurant Tables Configured Yet
+              </div>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Add your actual restaurant tables above (Table Number, Seating Capacity, Floor/Zone, and Status). All tables are saved directly to MongoDB and synced across POS Terminal &amp; Advance Food Booking.
+              </p>
+            </div>
+          ) : (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
             {tableConfigs.map((tbl) => {
               const live = getTableLiveStatus(tbl.tableNumber);
@@ -5191,16 +5420,14 @@ export const PosModule: React.FC<PosModuleProps> = ({
                         >
                           Open Table
                         </button>
-                        {tableConfigs.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveTable(tbl.tableNumber)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer"
-                            title="Remove table"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTable(tbl.tableNumber)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer"
+                          title="Remove table"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </>
                     )}
                   </div>
@@ -5208,6 +5435,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
               );
             })}
           </div>
+          )}
         </div>
       )}
 
@@ -5863,6 +6091,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
             bookings={posAdvanceBookings}
             hotelName={hotelName}
             loggedInUser={loggedInUser}
+            foodGstRate={configuredFnbGst}
             availableTables={tableConfigs.map((t) => t.tableNumber)}
             initialEditBookingId={pendingEditAdvanceId}
             onClearInitialEdit={() => setPendingEditAdvanceId(null)}
@@ -8419,15 +8648,15 @@ export const PosModule: React.FC<PosModuleProps> = ({
         );
       })()}
 
-      {/* QUICK ADD CATEGORY / SUB-CATEGORY MODAL */}
+      {/* QUICK ADD / MANAGE FOOD CATEGORY & SUB-CATEGORY MODAL (Persisted to pos_categories, NO placeholder dishes!) */}
       {showQuickCatModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[88vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <div className="flex items-center space-x-2">
                 <Utensils className="w-5 h-5 text-amber-600" />
                 <h3 className="font-extrabold text-slate-900 text-base">
-                  {quickMode === 'category' ? 'Add Food Category' : 'Add Sub-Category'}
+                  {quickMode === 'category' ? 'Manage Food Categories' : 'Add Sub-Category'}
                 </h3>
               </div>
               <button
@@ -8472,7 +8701,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     <label className="font-bold text-slate-700 block mb-1">Category Name *</label>
                     <input
                       type="text"
-                      placeholder="e.g. Main Course, Chinese, Snacks, Beverages, Thali"
+                      placeholder="e.g. Breakfast, Main Course, Chinese, Beverages, Thali"
                       value={quickCatName}
                       onChange={(e) => setQuickCatName(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500 font-semibold"
@@ -8480,11 +8709,11 @@ export const PosModule: React.FC<PosModuleProps> = ({
                   </div>
                   <div>
                     <label className="font-bold text-slate-700 block mb-1">
-                      Sub-Category (Optional)
+                      Initial Sub-Category (Optional)
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g. Paneer Special, Dal, Breads"
+                      placeholder="e.g. Prantha, Beverages, Light, Heavy"
                       value={quickSubName}
                       onChange={(e) => setQuickSubName(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500"
@@ -8496,11 +8725,12 @@ export const PosModule: React.FC<PosModuleProps> = ({
                   <div>
                     <label className="font-bold text-slate-700 block mb-1">Select Parent Category *</label>
                     <select
-                      value={quickTargetCat || menuItems[0]?.category || 'North Indian'}
+                      value={quickTargetCat || mergedCategoryList[0] || ''}
                       onChange={(e) => setQuickTargetCat(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500 font-semibold bg-white"
                     >
-                      {Array.from(new Set(menuItems.map((m) => m.category).filter(Boolean))).map((c) => (
+                      {mergedCategoryList.length === 0 && <option value="">Create a category first</option>}
+                      {mergedCategoryList.map((c) => (
                         <option key={c} value={c}>
                           {c}
                         </option>
@@ -8511,7 +8741,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     <label className="font-bold text-slate-700 block mb-1">Sub-Category Name *</label>
                     <input
                       type="text"
-                      placeholder="e.g. Paneer Special, Dal, Tandoori Breads"
+                      placeholder="e.g. Prantha, Beverages, Light, Heavy"
                       value={quickSubName}
                       onChange={(e) => setQuickSubName(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-1 focus:ring-amber-500 font-semibold"
@@ -8532,74 +8762,192 @@ export const PosModule: React.FC<PosModuleProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  const currentCats: PosCategory[] = Array.isArray(posCategories) ? [...posCategories] : [];
                   if (quickMode === 'category') {
                     const cat = quickCatName.trim();
                     if (!cat) {
-                      showToast('Please enter category name', 'warning');
+                      showToast('Please enter a category name.', 'warning');
                       return;
                     }
-                    const sub = quickSubName.trim() || undefined;
-                    const starterItem: PosMenuItem = {
-                      id: `fnb-${Date.now()}`,
-                      name: sub ? `${sub} Dish` : `${cat} Dish`,
-                      code: `POS-${Math.floor(100 + Math.random() * 900)}`,
-                      category: cat,
-                      subCategory: sub,
-                      price: 150,
-                      costPrice: 80,
-                      taxRate: foodGstRate || 5,
-                      isVeg: true,
-                      isActive: true,
-                      outletName: facilityOverrides.posOutletName || hotelSettings?.posOutletName || 'Restaurant',
-                      availablePortions: [{ name: 'Regular', price: 150 }],
-                      recipeBOM: [],
-                      mealWindows: ['All Day'],
-                      prepTimeMinutes: 15
-                    };
-                    onAddMenuItem?.(starterItem);
+                    const sub = quickSubName.trim();
+                    const existingIdx = currentCats.findIndex(
+                      (c) => String(c.name || '').trim().toLowerCase() === cat.toLowerCase()
+                    );
+                    if (existingIdx >= 0) {
+                      const prevSubs = Array.isArray(currentCats[existingIdx].subcategories)
+                        ? currentCats[existingIdx].subcategories!
+                        : [];
+                      const nextSubs =
+                        sub && !prevSubs.some((s) => s.toLowerCase() === sub.toLowerCase())
+                          ? [...prevSubs, sub]
+                          : prevSubs;
+                      currentCats[existingIdx] = {
+                        ...currentCats[existingIdx],
+                        isActive: true,
+                        subcategories: nextSubs,
+                      };
+                    } else {
+                      currentCats.push({
+                        id: `POSCAT-${Date.now()}`,
+                        hotelId,
+                        name: cat,
+                        subcategories: sub ? [sub] : [],
+                        isActive: true,
+                      });
+                    }
+                    onUpdatePosCategories?.(currentCats);
                     setSelectedCategory(cat);
                     setSelectedSubCategory(sub || 'ALL');
-                    showToast(`Category "${cat}" added successfully!`, 'success');
+                    setNewItemCategory(cat);
+                    setNewItemSubCategory(sub || '');
+                    onAddAuditLog?.('POS Category Saved', `Saved POS food category "${cat}"${sub ? ` with sub-category "${sub}"` : ''}.`);
+                    showToast(`Category "${cat}" saved to database!`, 'success');
                     setShowQuickCatModal(false);
                     setQuickCatName('');
                     setQuickSubName('');
                   } else {
-                    const target = quickTargetCat || menuItems[0]?.category || 'North Indian';
+                    const target = (quickTargetCat || mergedCategoryList[0] || '').trim();
                     const sub = quickSubName.trim();
-                    if (!sub) {
-                      showToast('Please enter sub-category name', 'warning');
+                    if (!target) {
+                      showToast('Please create or select a parent category first.', 'warning');
                       return;
                     }
-                    const starterItem: PosMenuItem = {
-                      id: `fnb-${Date.now()}`,
-                      name: `${sub} Special`,
-                      code: `POS-${Math.floor(100 + Math.random() * 900)}`,
-                      category: target,
-                      subCategory: sub,
-                      price: 180,
-                      costPrice: 90,
-                      taxRate: foodGstRate || 5,
-                      isVeg: true,
-                      isActive: true,
-                      outletName: facilityOverrides.posOutletName || hotelSettings?.posOutletName || 'Restaurant',
-                      availablePortions: [{ name: 'Regular', price: 180 }],
-                      recipeBOM: [],
-                      mealWindows: ['All Day'],
-                      prepTimeMinutes: 15
-                    };
-                    onAddMenuItem?.(starterItem);
+                    if (!sub) {
+                      showToast('Please enter a sub-category name.', 'warning');
+                      return;
+                    }
+                    const existingIdx = currentCats.findIndex(
+                      (c) => String(c.name || '').trim().toLowerCase() === target.toLowerCase()
+                    );
+                    if (existingIdx >= 0) {
+                      const prevSubs = Array.isArray(currentCats[existingIdx].subcategories)
+                        ? currentCats[existingIdx].subcategories!
+                        : [];
+                      if (prevSubs.some((s) => s.toLowerCase() === sub.toLowerCase())) {
+                        showToast(`Sub-category "${sub}" already exists under "${target}".`, 'warning');
+                        return;
+                      }
+                      currentCats[existingIdx] = {
+                        ...currentCats[existingIdx],
+                        subcategories: [...prevSubs, sub],
+                      };
+                    } else {
+                      currentCats.push({
+                        id: `POSCAT-${Date.now()}`,
+                        hotelId,
+                        name: target,
+                        subcategories: [sub],
+                        isActive: true,
+                      });
+                    }
+                    onUpdatePosCategories?.(currentCats);
                     setSelectedCategory(target);
                     setSelectedSubCategory(sub);
-                    showToast(`Sub-category "${sub}" added under "${target}"!`, 'success');
+                    setNewItemCategory(target);
+                    setNewItemSubCategory(sub);
+                    onAddAuditLog?.('POS Sub-Category Saved', `Added sub-category "${sub}" under "${target}".`);
+                    showToast(`Sub-category "${sub}" saved under "${target}"!`, 'success');
                     setShowQuickCatModal(false);
                     setQuickSubName('');
                   }
                 }}
                 className="flex-1 py-2.5 bg-amber-600 text-white font-bold rounded-xl text-xs hover:bg-amber-700 shadow-xs cursor-pointer"
               >
-                Save
+                Save to Database
               </button>
             </div>
+
+            {/* Saved Categories & Subcategories Directory with Safe Delete */}
+            {mergedCategoryList.length > 0 && (
+              <div className="pt-3 border-t border-slate-200 space-y-2">
+                <div className="text-[10.5px] font-mono font-bold uppercase text-slate-500">
+                  Configured Categories &amp; Sub-Categories ({mergedCategoryList.length})
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {mergedCategoryList.map((catName) => {
+                    const dbCat = (posCategories || []).find(
+                      (c) => String(c.name || '').trim().toLowerCase() === catName.toLowerCase()
+                    );
+                    const subs = Array.from(
+                      new Set([
+                        ...(Array.isArray(dbCat?.subcategories) ? dbCat!.subcategories! : []),
+                        ...menuItems
+                          .filter((m) => String(m.category || '').trim().toLowerCase() === catName.toLowerCase() && m.subCategory)
+                          .map((m) => String(m.subCategory || '').trim()),
+                      ])
+                    );
+                    const itemCount = menuItems.filter(
+                      (m) => String(m.category || '').trim().toLowerCase() === catName.toLowerCase()
+                    ).length;
+                    return (
+                      <div key={catName} className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 text-xs">
+                            {catName} <span className="text-[10px] font-mono text-slate-400">({itemCount} items)</span>
+                          </span>
+                          {dbCat && itemCount === 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onUpdatePosCategories?.((posCategories || []).filter((c) => c.id !== dbCat.id));
+                                if (selectedCategory.toLowerCase() === catName.toLowerCase()) {
+                                  setSelectedCategory('ALL');
+                                  setSelectedSubCategory('ALL');
+                                }
+                                showToast(`Deleted empty category "${catName}".`, 'info');
+                              }}
+                              className="text-rose-600 hover:text-rose-800 text-[10px] font-bold cursor-pointer"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                        {subs.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {subs.map((sub) => (
+                              <span
+                                key={sub}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[10px] font-semibold text-slate-700"
+                              >
+                                {sub}
+                                {dbCat && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const hasSubItems = menuItems.some(
+                                        (m) =>
+                                          String(m.category || '').trim().toLowerCase() === catName.toLowerCase() &&
+                                          String(m.subCategory || '').trim().toLowerCase() === sub.toLowerCase()
+                                      );
+                                      if (hasSubItems) {
+                                        showToast(`Cannot remove "${sub}": menu items still belong to it.`, 'warning');
+                                        return;
+                                      }
+                                      onUpdatePosCategories?.(
+                                        (posCategories || []).map((c) =>
+                                          c.id === dbCat.id
+                                            ? { ...c, subcategories: (c.subcategories || []).filter((s) => s !== sub) }
+                                            : c
+                                        )
+                                      );
+                                      showToast(`Removed sub-category "${sub}".`, 'info');
+                                    }}
+                                    className="text-rose-500 hover:text-rose-700 cursor-pointer"
+                                    title={`Remove ${sub}`}
+                                  >
+                                    ×
+                                  </button>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

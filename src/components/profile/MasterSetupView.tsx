@@ -15,7 +15,10 @@ import {
   AlertCircle,
   Eye,
   ShieldCheck,
-  Calendar
+  Calendar,
+  Layers,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { Hotel, HotelSettings, UserRole } from '../../types';
 import { showToast } from '../../utils/toast';
@@ -85,6 +88,11 @@ export default function MasterSetupView({
   const [hotelTimeZone, setHotelTimeZone] = useState('Asia/Kolkata');
   const [hotelDateFormat, setHotelDateFormat] = useState('DD/MM/YYYY');
 
+  // Custom Floors Configuration (persisted in DB on Hotel & HotelSettings)
+  const DEFAULT_FLOOR_PRESETS = ['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor', '4th Floor', '5th Floor'];
+  const [customFloors, setCustomFloors] = useState<string[]>(DEFAULT_FLOOR_PRESETS);
+  const [newFloorInput, setNewFloorInput] = useState('');
+
   // Credentials & Passcode
   const [hotelUsername, setHotelUsername] = useState('admin');
   const [currentPasscode, setCurrentPasscode] = useState('');
@@ -118,9 +126,37 @@ export default function MasterSetupView({
     setHotelCurrency(target.currency || 'INR');
     setHotelTimeZone(target.timeZone || 'Asia/Kolkata');
     setHotelDateFormat(target.dateFormat || 'DD/MM/YYYY');
+    const savedFloors = Array.isArray(target.customFloors) && target.customFloors.length > 0
+      ? target.customFloors
+      : Array.isArray(hotelSettings?.customFloors) && hotelSettings.customFloors.length > 0
+      ? hotelSettings.customFloors
+      : DEFAULT_FLOOR_PRESETS;
+    setCustomFloors(savedFloors);
 
     setHotelUsername(target.username || 'admin');
-  }, [activeHotel]);
+  }, [activeHotel, hotelSettings?.customFloors]);
+
+  const handleAddCustomFloor = () => {
+    const clean = newFloorInput.trim();
+    if (!clean) {
+      showToast('Enter a floor name (e.g., Basement, Mezzanine, 6th Floor, Terrace).', 'warning');
+      return;
+    }
+    if (customFloors.some((f) => f.toLowerCase() === clean.toLowerCase())) {
+      showToast(`Floor "${clean}" already exists.`, 'warning');
+      return;
+    }
+    setCustomFloors((prev) => [...prev, clean]);
+    setNewFloorInput('');
+  };
+
+  const handleRemoveCustomFloor = (floorName: string) => {
+    if (customFloors.length <= 1) {
+      showToast('At least one floor must remain configured.', 'warning');
+      return;
+    }
+    setCustomFloors((prev) => prev.filter((f) => f !== floorName));
+  };
 
   const handleSaveMaster = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,6 +211,7 @@ export default function MasterSetupView({
         currency: hotelCurrency.trim(),
         timeZone: hotelTimeZone.trim(),
         dateFormat: hotelDateFormat,
+        customFloors: customFloors.length > 0 ? customFloors : DEFAULT_FLOOR_PRESETS,
         username: hotelUsername.trim() || 'admin',
         ...(isPasswordChanged && updatedPassword ? { password: updatedPassword } : {}),
       };
@@ -208,6 +245,7 @@ export default function MasterSetupView({
           earlyCheckInFixedRate: Math.max(0, Number(hotelEarlyCheckInFixedRate) || 0),
           timeZone: hotelTimeZone.trim(),
           dateFormat: hotelDateFormat,
+          customFloors: customFloors.length > 0 ? customFloors : DEFAULT_FLOOR_PRESETS,
         });
       }
 
@@ -522,6 +560,87 @@ export default function MasterSetupView({
               </div>
             )}
           </div>
+        </div>
+
+        {/* Section 2B: Custom Floor Configuration */}
+        <div className="bg-white border border-luxury-brown-100 rounded-3xl p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-luxury-brown-50">
+            <div>
+              <h3 className="text-sm font-serif font-bold text-luxury-brown-950 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-luxury-gold-600" />
+                Property Floor Configuration (Custom Floors)
+              </h3>
+              <p className="text-[11px] text-luxury-brown-500 mt-0.5">
+                Define unlimited floors (Ground, 1st–10th+, Basement, Mezzanine, Terrace, Executive Wing). Available across Room Creation, Bulk Builder, Room Editing &amp; Filters.
+              </p>
+            </div>
+            <span className="px-2.5 py-1 rounded-full bg-luxury-beige-100 text-luxury-brown-800 text-[10px] font-mono font-bold">
+              {customFloors.length} Floors Configured
+            </span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="text"
+              value={newFloorInput}
+              onChange={(e) => setNewFloorInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAddCustomFloor();
+                }
+              }}
+              placeholder="e.g. Basement, Mezzanine, 6th Floor, 7th Floor, Terrace, Penthouse..."
+              className="flex-1 text-xs bg-white border border-luxury-brown-200 rounded-xl px-4 py-2 font-medium focus:outline-none focus:border-luxury-gold-500"
+            />
+            <button
+              type="button"
+              onClick={handleAddCustomFloor}
+              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-luxury-gold-600 hover:bg-luxury-gold-700 text-white font-bold text-xs cursor-pointer shadow-xs"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Floor
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {['Basement', 'Ground Floor', 'Mezzanine', '6th Floor', '7th Floor', '8th Floor', 'Terrace', 'Penthouse']
+              .filter((preset) => !customFloors.some((f) => f.toLowerCase() === preset.toLowerCase()))
+              .map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setCustomFloors((prev) => [...prev, preset])}
+                  className="px-2.5 py-1 rounded-lg bg-luxury-beige-50 hover:bg-luxury-beige-100 border border-dashed border-luxury-brown-200 text-luxury-brown-700 text-[10.5px] font-bold cursor-pointer"
+                >
+                  + {preset}
+                </button>
+              ))}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 pt-1">
+            {customFloors.map((fl, idx) => (
+              <div
+                key={fl}
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-luxury-beige-50/70 border border-luxury-brown-200/70 text-xs"
+              >
+                <span className="font-bold text-luxury-brown-900 truncate">
+                  <span className="text-[10px] font-mono text-luxury-brown-400 mr-1.5">#{idx + 1}</span>
+                  {fl}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveCustomFloor(fl)}
+                  className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 hover:text-rose-700 cursor-pointer shrink-0"
+                  title={`Remove ${fl}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10.5px] text-luxury-brown-500 italic">
+            Click &ldquo;Save Master Property Setup&rdquo; below to persist floor changes to the database.
+          </p>
         </div>
 
         {/* Section 3: Credentials & Passcode */}

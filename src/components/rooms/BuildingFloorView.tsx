@@ -23,6 +23,10 @@ interface BuildingFloorViewProps {
   rooms: Room[];
   onUpdateRooms: (rooms: Room[]) => void;
   hotelName?: string;
+  hotelId?: string;
+  customFloorLabels?: string[];
+  onUpdateCustomFloors?: (floors: string[]) => void;
+  categories?: Array<{ name: string; rate: number }>;
   onAddAuditLog?: (action: string, details: string) => void;
 }
 
@@ -38,6 +42,10 @@ export default function BuildingFloorView({
   rooms = [],
   onUpdateRooms,
   hotelName = 'DirectStay Hotel',
+  hotelId,
+  customFloorLabels,
+  onUpdateCustomFloors,
+  categories = [],
   onAddAuditLog,
 }: BuildingFloorViewProps) {
   // Buildings State
@@ -106,47 +114,65 @@ export default function BuildingFloorView({
 
   const handleAddFloorLevel = () => {
     const nextLevel = customFloors.length > 0 ? Math.max(...customFloors) + 1 : 1;
+    const nextLabel = getFloorName(nextLevel);
     setCustomFloors([...customFloors, nextLevel]);
-    showToast(`Added ${getFloorName(nextLevel)} to hotel structure!`, 'success');
+    if (onUpdateCustomFloors) {
+      const existing = Array.isArray(customFloorLabels) ? customFloorLabels : [];
+      if (!existing.some((f) => f.toLowerCase() === nextLabel.toLowerCase())) {
+        onUpdateCustomFloors([...existing, nextLabel]);
+      }
+    }
+    showToast(`Added ${nextLabel} to hotel structure!`, 'success');
   };
 
   const handleMoveRoomFloor = (roomId: string, nextFloor: number) => {
+    const floorLabel = getFloorName(nextFloor);
     const updated = rooms.map((r) => {
       if (r.id === roomId) {
         return {
           ...r,
+          floor: floorLabel,
           floorNumber: nextFloor,
         } as Room;
       }
       return r;
     });
     onUpdateRooms(updated);
-    showToast(`Room re-assigned to ${getFloorName(nextFloor)}.`, 'info');
+    showToast(`Room re-assigned to ${floorLabel}.`, 'info');
   };
 
   const handleBulkGenerateRooms = (e: React.FormEvent) => {
     e.preventDefault();
     const count = Math.min(25, Math.max(1, Number(genCount) || 1));
+    const resolvedHotelId = hotelId || rooms[0]?.hotelId || 'hotel-1';
+    const floorLabel = getFloorName(genFloor);
     const newRooms: Room[] = [];
 
     for (let i = 0; i < count; i++) {
       const roomNum = String(Number(genStartNum) + i);
       // Check if room number already exists
-      if ((rooms || []).some((r) => r && (r.roomNumber === roomNum || (r as any).number === roomNum))) continue;
+      if ((rooms || []).some((r) => r && (String(r.number || '').trim() === roomNum || String(r.roomNumber || '').trim() === roomNum))) continue;
 
       newRooms.push({
-        id: `rm-gen-${Date.now()}-${i}`,
+        id: `${resolvedHotelId}-${roomNum}`,
+        hotelId: resolvedHotelId,
+        number: roomNum,
         roomNumber: roomNum,
-        type: genCategory,
         category: genCategory,
+        type: genCategory,
+        rate: Number(genBaseTariff) || 2000,
         price: Number(genBaseTariff) || 2000,
         status: 'Available',
         cleaningStatus: 'Clean',
-        capacity: 2,
-        amenities: ['WiFi', 'Air Conditioning', 'Television', 'Attached Bath'],
-        description: `${genCategory} room located on ${getFloorName(genFloor)}`,
+        baseOccupancy: 2,
+        maxOccupancy: 3,
+        extraPersonCharge: 500,
+        floor: floorLabel,
         floorNumber: genFloor,
-      } as any);
+        bedType: 'King Size Bed',
+        allowExtraBed: true,
+        amenities: ['WiFi', 'Air Conditioning', 'Television', 'Attached Bath'],
+      });
     }
 
     if (newRooms.length === 0) {
@@ -157,9 +183,9 @@ export default function BuildingFloorView({
     const updated = [...rooms, ...newRooms];
     onUpdateRooms(updated);
     setShowGeneratorModal(false);
-    const firstNum = newRooms[0].roomNumber || newRooms[0].number;
-    const lastNum = newRooms[newRooms.length - 1].roomNumber || newRooms[newRooms.length - 1].number;
-    const log = `Bulk generated ${newRooms.length} room(s) on ${getFloorName(genFloor)} (Numbers: ${firstNum} to ${lastNum}).`;
+    const firstNum = newRooms[0].number;
+    const lastNum = newRooms[newRooms.length - 1].number;
+    const log = `Bulk generated ${newRooms.length} room(s) on ${floorLabel} (Numbers: ${firstNum} to ${lastNum}).`;
     onAddAuditLog?.('Bulk Rooms Generated', log);
     showToast(log, 'success', 5000, 'Rooms Created');
   };

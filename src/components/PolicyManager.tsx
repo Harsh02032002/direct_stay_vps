@@ -43,7 +43,7 @@ export default function PolicyManager({
   const [gstNumber, setGstNumber] = useState<string>(hotelSettings?.gstNumber || '');
   const [checkInTime, setCheckInTime] = useState<string>(hotelSettings?.checkInTime || '12:00 PM');
   const [checkOutTime, setCheckOutTime] = useState<string>(hotelSettings?.checkOutTime || '11:00 AM');
-  const [earlyCheckInEnabled, setEarlyCheckInEnabled] = useState<boolean>(hotelSettings?.earlyCheckInEnabled ?? true);
+  const [earlyCheckInEnabled, setEarlyCheckInEnabled] = useState<boolean>(hotelSettings?.earlyCheckInEnabled === true);
   const [earlyCheckInType, setEarlyCheckInType] = useState<'hourly' | 'fixed'>(hotelSettings?.earlyCheckInType || 'hourly');
   const [earlyCheckInHourlyRate, setEarlyCheckInHourlyRate] = useState<number>(Number(hotelSettings?.earlyCheckInHourlyRate) || 0);
   const [earlyCheckInFixedRate, setEarlyCheckInFixedRate] = useState<number>(Number(hotelSettings?.earlyCheckInFixedRate) || 0);
@@ -67,7 +67,7 @@ export default function PolicyManager({
       setGstNumber(hotelSettings.gstNumber || '');
       setCheckInTime(hotelSettings.checkInTime || '12:00 PM');
       setCheckOutTime(hotelSettings.checkOutTime || '11:00 AM');
-      setEarlyCheckInEnabled(hotelSettings.earlyCheckInEnabled ?? true);
+      setEarlyCheckInEnabled(hotelSettings.earlyCheckInEnabled === true);
       setEarlyCheckInType(hotelSettings.earlyCheckInType || 'hourly');
       setEarlyCheckInHourlyRate(Number(hotelSettings.earlyCheckInHourlyRate) || 0);
       setEarlyCheckInFixedRate(Number(hotelSettings.earlyCheckInFixedRate) || 0);

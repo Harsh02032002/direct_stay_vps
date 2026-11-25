@@ -21,6 +21,7 @@ import {
   buildStayBill,
   isActiveInvoice,
   reconcileScopedStayInvoice,
+  resolveConsistentInvoiceTotals,
   resolveInvoiceScope,
   toInvoicePrintData,
 } from '../../utils/stayBilling';
@@ -84,41 +85,34 @@ function reconstructSavedInvoiceBill(
   booking: BookingRecord,
   settings: BillSettings
 ): BillResult {
-  const grandTotal = r2(inv?.finalAmount ?? inv?.totalAmount ?? record.grandTotal ?? 0);
-  const receipts = r2(
-    inv?.isPaid === true && !(Number(inv?.paidAmount ?? inv?.advancePaid) > 0)
-      ? grandTotal
-      : inv?.paidAmount ?? inv?.advancePaid ?? record.amountPaid ?? 0
-  );
-  const balance =
-    inv?.pendingAmount !== undefined
-      ? r2(inv.pendingAmount)
-      : inv?.isPaid === true
-      ? 0
-      : r2(record.balanceDue ?? Math.max(0, grandTotal - receipts));
-  const refundDue = r2(inv?.refundDue ?? record.refundDue ?? Math.max(0, receipts - grandTotal));
-  const discount = r2(inv?.discount ?? record.discount ?? 0);
-
-  const isNoGst = Boolean(
-    inv?.isWithoutGst === true ||
-      record.isWithoutGst === true ||
-      ((inv?.gstRate !== undefined ? Number(inv.gstRate) <= 0 : false) &&
-        Number(inv?.gst ?? record.totalTax ?? 0) <= 0)
-  );
-  const totalTax = isNoGst ? 0 : r2(inv?.gst ?? inv?.taxAmount ?? record.totalTax ?? 0);
-  const cgst = isNoGst ? 0 : r2(inv?.cgst !== undefined ? inv.cgst : totalTax / 2);
-  const sgst = isNoGst ? 0 : r2(inv?.sgst !== undefined ? inv.sgst : totalTax - cgst);
-  const taxableAmount = r2(
-    inv?.taxableAmount !== undefined ? inv.taxableAmount : Math.max(0, grandTotal - totalTax)
-  );
-  const subtotal = r2(inv?.subtotal !== undefined ? inv.subtotal : taxableAmount + discount);
-  const headlineGstRate = isNoGst
-    ? 0
-    : Number(inv?.gstRate ?? record.gstRate) > 0
-    ? Number(inv?.gstRate ?? record.gstRate)
-    : taxableAmount > 0 && totalTax > 0
-    ? r2((totalTax / taxableAmount) * 100)
-    : settings.roomGstRate;
+  const mergedSource = {
+    ...record,
+    ...inv,
+    taxRows: Array.isArray(inv?.taxRows) && inv.taxRows.length > 0 ? inv.taxRows : record.taxRows,
+    paidAmount:
+      inv?.paidAmount !== undefined
+        ? inv.paidAmount
+        : inv?.advancePaid !== undefined
+        ? inv.advancePaid
+        : record.amountPaid,
+  };
+  const resolved = resolveConsistentInvoiceTotals(mergedSource, settings.roomGstRate);
+  const {
+    isNoGst,
+    subtotal,
+    discount,
+    netSubtotal,
+    taxableAmount,
+    cgst,
+    sgst,
+    totalTax,
+    grandTotal,
+    receipts,
+    balance,
+    refundDue,
+    headlineGstRate,
+    paymentStatus,
+  } = resolved;
 
   const firstRoom =
     (Array.isArray(record.roomNumbers) && record.roomNumbers[0]) ||
@@ -256,23 +250,41 @@ function reconstructSavedInvoiceBill(
       ? inv.taxRows
       : Array.isArray(record.taxRows) && record.taxRows.length > 0
       ? record.taxRows
-      : totalTax > 0
+      : Math.abs(totalTax) > 0
       ? [{ rate: headlineGstRate, taxable: taxableAmount, cgst, sgst, tax: totalTax }]
       : [];
 
-  const paymentStatus: BillResult['paymentStatus'] =
-    grandTotal > 0 && balance <= 0
-      ? 'Paid'
-      : receipts > 0
-      ? 'Partially Paid'
-      : grandTotal <= 0
-      ? 'Paid'
-      : 'Unpaid';
+  const extractedPaymentItems: BillPayment[] = resolved.isCreditNote
+    ? []
+    : Array.isArray(inv?.paymentHistory) && inv.paymentHistory.length > 0
+    ? inv.paymentHistory
+        .filter((ph: any) => ph && Number(ph.amount || 0) !== 0)
+        .map((ph: any, idx: number) => ({
+          id: String(ph.id || `ph-${idx}`),
+          amount: r2(Number(ph.amount || 0)),
+          method: String(ph.paymentMethod || ph.method || 'Cash'),
+          date: String(ph.date || ph.dateTime || inv?.dateCreated || '').slice(0, 10),
+          reference: ph.referenceNo || ph.reference || undefined,
+          note: ph.notes || ph.note || undefined,
+        }))
+    : lines
+        .filter((l) => l.type === 'receipt' && Number(l.receipts || 0) !== 0)
+        .map((l, idx) => {
+          const parts = String(l.description || '').split(/\n|—/);
+          const modePart = parts.length > 1 ? parts[1].trim() : String(inv?.paymentMethod || record.paymentMethod || 'Cash');
+          return {
+            id: String(l.sourceId || `rcpt-${idx}`),
+            amount: r2(Number(l.receipts || 0)),
+            method: modePart || 'Cash',
+            date: l.dateLabel || inv?.dateCreated || record.createdAt || '',
+          };
+        });
 
   return {
     lines,
     chargeLines,
     taxRows,
+    paymentItems: extractedPaymentItems,
     totalsByKind: {
       room: roomCharges,
       extra_bed: extraBedCharges,
@@ -288,6 +300,7 @@ function reconstructSavedInvoiceBill(
     },
     subtotal,
     discount,
+    netSubtotal,
     taxableAmount,
     cgst,
     sgst,
@@ -297,7 +310,7 @@ function reconstructSavedInvoiceBill(
     balance,
     refundDue,
     paymentStatus,
-    isGstInvoice: !isNoGst && totalTax > 0,
+    isGstInvoice: !isNoGst && Math.abs(totalTax) > 0,
     headlineGstRate: isNoGst ? 0 : headlineGstRate,
     amountInWords: inv?.amountInWords || record.amountInWords || amountToIndianWords(grandTotal),
     legacy: {
@@ -433,8 +446,20 @@ export default function InvoicePreviewModal({
     const displayInvoiceNumber =
       invoiceRecord?.invoiceNumber || `FOLIO/${booking.bookingNo.replace(/^#/, '')}`;
 
-    const html = renderInvoiceHtml(
-      toInvoicePrintData({
+    const isCreditNoteModal = Boolean(
+      (invoiceRecord as any)?.isCreditNote ||
+        (rawInvoice as any)?.isCreditNote ||
+        String((invoiceRecord as any)?.invoiceType || (rawInvoice as any)?.invoiceType || '').toLowerCase() === 'credit note' ||
+        String(displayInvoiceNumber || '').toUpperCase().startsWith('CN/')
+    );
+    const origInvNoModal =
+      String((rawInvoice as any)?.originalInvoiceNumber || '').trim() ||
+      (isCreditNoteModal && String(displayInvoiceNumber || '').toUpperCase().startsWith('CN/')
+        ? String(displayInvoiceNumber).slice(3)
+        : '');
+
+    const html = renderInvoiceHtml({
+      ...toInvoicePrintData({
         hotel: { ...hotelProfile, ...(hotelSettings || {}) },
         invoiceNumber: displayInvoiceNumber,
         invoiceDate:
@@ -446,8 +471,33 @@ export default function InvoicePreviewModal({
         checkin: rawCheckin || null,
         folio: effectiveFolio,
         bill: effectiveBill,
-      })
-    );
+      }),
+      ...(isCreditNoteModal
+        ? {
+            isCreditNote: true,
+            documentTitle: 'CREDIT NOTE / CHECKOUT REVERSAL',
+            originalInvoiceNumber: origInvNoModal || undefined,
+            creditNoteReason: String((rawInvoice as any)?.notes || '').trim() || undefined,
+            reversedPayments: Array.isArray((rawInvoice as any)?.reversedPayments)
+              ? (rawInvoice as any).reversedPayments.map((p: any) => ({
+                  date: String(p.date || p.dateTime || '').slice(0, 10),
+                  method: String(p.paymentMethod || p.method || 'Cash'),
+                  reference: p.referenceNo || p.reference || undefined,
+                  amount: Math.abs(Number(p.amount || 0)),
+                  note: p.notes || p.note || undefined,
+                }))
+              : [],
+          }
+        : isViewingSuperseded
+        ? {
+            isSuperseded: true,
+            supersededByInvoiceNumber:
+              invoiceRecord?.supersededByInvoiceNumber ||
+              (rawInvoice as any)?.supersededByInvoiceNumber ||
+              undefined,
+          }
+        : {}),
+    });
 
     return { html, bill: effectiveBill, displayInvoiceNumber };
   }, [

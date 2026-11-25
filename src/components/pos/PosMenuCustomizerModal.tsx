@@ -29,9 +29,17 @@ export default function PosMenuCustomizerModal({
   onClose,
   onAddToCart
 }: PosMenuCustomizerModalProps) {
+  const baseMatchesVariant =
+    Number(item.price) > 0 && Array.isArray(item.variants)
+      ? item.variants.find(v => Math.abs((Number(v.price) || 0) - Number(item.price)) < 0.005) || null
+      : null;
   const [quantity, setQuantity] = useState<number>(1);
   const [selectedVariant, setSelectedVariant] = useState<PosItemVariant | null>(
-    item.variants && item.variants.length > 0 ? item.variants[0] : null
+    Number(item.price) > 0
+      ? baseMatchesVariant
+      : item.variants && item.variants.length > 0
+      ? item.variants[0]
+      : null
   );
   const [selectedAddons, setSelectedAddons] = useState<PosItemAddon[]>([]);
   const [selectedModifiers, setSelectedModifiers] = useState<string[]>([]);
@@ -93,6 +101,20 @@ export default function PosMenuCustomizerModal({
           <div className="space-y-2 text-xs">
             <label className="font-bold text-slate-700 block">Select Portion / Variant:</label>
             <div className="grid grid-cols-2 gap-2">
+              {Number(item.price) > 0 && !baseMatchesVariant && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedVariant(null)}
+                  className={`p-2.5 rounded-xl border text-left flex justify-between items-center transition-all ${
+                    selectedVariant === null
+                      ? 'bg-amber-50 border-amber-500 ring-1 ring-amber-500 text-amber-900 font-bold'
+                      : 'bg-white border-slate-200 text-slate-700 hover:border-amber-300'
+                  }`}
+                >
+                  <span>Full / Base</span>
+                  <span className="font-bold">₹{item.price}</span>
+                </button>
+              )}
               {item.variants.map(varItem => (
                 <button
                   key={varItem.id}

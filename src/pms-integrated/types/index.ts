@@ -246,6 +246,8 @@ export interface InvoiceRecord {
   isSeparateInvoice?: boolean;
   parentInvoiceId?: string;
   invoiceStatus?: 'Draft' | 'Generated' | 'Finalized' | 'Cancelled' | 'Superseded';
+  invoiceType?: string;
+  isCreditNote?: boolean;
   isSuperseded?: boolean;
   supersededByInvoiceId?: string;
   supersededByInvoiceNumber?: string;
@@ -300,13 +302,61 @@ export interface LaundryOrderRecord {
 
 export interface LostFoundRecord {
   id: string;
+  hotelId?: string;
+  recordType?: 'found' | 'lost';
   itemName: string;
   category: string;
+  description?: string;
   roomNumber: string;
+  bookingId?: string;
+  checkInId?: string;
+  source?: string;
+  locationFound?: string;
   foundBy: string;
   dateFound: string;
-  status: 'Registered' | 'Returned to Guest' | 'Disposed';
+  storageLocation?: string;
+  guestName?: string;
+  guestMobile?: string;
+  guestEmail?: string;
+  dateReported?: string;
+  lastSeenLocation?: string;
+  reportedByStaff?: string;
+  matchedItemId?: string;
+  matchedItemName?: string;
+  matchedBy?: string;
+  matchedAt?: string;
+  matchNotes?: string;
+  status:
+    | 'Lost – Reported'
+    | 'Found – Registered'
+    | 'Matching – In Progress'
+    | 'Matched'
+    | 'Stored'
+    | 'Returned to Guest'
+    | 'Closed'
+    | 'Registered'
+    | 'Claimed'
+    | 'Disposed';
   claimedBy?: string;
+  claimGuestMobile?: string;
+  claimIdProof?: string;
+  claimDate?: string;
+  returnedBy?: string;
+  returnNotes?: string;
+  closedAt?: string;
+  closedBy?: string;
+  closedReason?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  auditHistory?: Array<{
+    id?: string;
+    action: string;
+    fromStatus?: string;
+    toStatus?: string;
+    performedBy: string;
+    dateTime: string;
+    notes?: string;
+  }>;
 }
 
 export interface PosMenuItem {

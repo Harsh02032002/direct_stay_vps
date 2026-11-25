@@ -74,7 +74,14 @@ function kindFromLabel(category?: string, sourceType?: string, serviceType?: str
   const d = String(desc || '').toLowerCase();
   if (st.includes('pos') || c === 'food' || sv.includes('room service') || sv.includes('food') || d.startsWith('pos ')) return 'food';
   if (st.includes('water') || c.includes('water') || sv.includes('water') || d.includes('water bottle')) return 'water';
-  if (st.includes('laundry') || c === 'laundry' || sv.includes('laundry')) return 'laundry';
+  if (
+    st.includes('laundry') ||
+    c === 'laundry' ||
+    sv.includes('laundry') ||
+    d.includes('laundry') ||
+    d.includes('dry clean') ||
+    /\biron(ing)?\b/.test(d)
+  ) return 'laundry';
   if (c === 'damage' || sv.includes('damage') || sv.includes('fine') || d.includes('fine')) return 'fine';
   if (c.includes('late') || d.includes('late check')) return 'late_checkout';
   if (d.includes('early check')) return 'early_checkin';
@@ -435,15 +442,81 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
     payments.push({ ...p, amount: r2(p.amount) });
   };
   const hubPayments: AnyRec[] = Array.isArray(b?.payments) ? b!.payments : [];
+  const allCheckinPosPays: AnyRec[] = (Array.isArray(c?.payments) ? c!.payments : []).filter(
+    (p: AnyRec) => p && n(p.amount) !== 0 && !String(p.notes || '').toLowerCase().includes('marked as due')
+  );
+
   if (hubPayments.length > 0) {
-    hubPayments.forEach((p, i) =>
-      addPay({ id: String(p.id || `bp-${i}`), amount: n(p.amount), method: String(p.paymentMethod || p.method || 'Cash'), date: String(p.date || p.dateTime || '').slice(0, 10), reference: p.transactionId || p.reference, note: p.notes })
+    const hubSum = r2(hubPayments.reduce((s, p) => s + n(p.amount), 0));
+    const hubHasAdvance = hubPayments.some(
+      (p) =>
+        p?.paymentType === 'Advance Deposit' ||
+        String(p?.id || '').toLowerCase().includes('adv') ||
+        String(p?.id || '').toLowerCase().includes('checkin') ||
+        String(p?.notes || '').toLowerCase().includes('advance')
     );
-    // Check-in payments made in legacy screens after the hub list was saved
-    (Array.isArray(c?.payments) ? c!.payments : []).forEach((p: AnyRec, i: number) => {
-      if (p.paymentType === 'Advance Deposit') return;
-      addPay({ id: String(p.id || `cp-${i}`), amount: n(p.amount), method: String(p.paymentMethod || p.method || 'Cash'), date: String(p.dateTime || p.date || '').slice(0, 10), reference: p.reference, note: p.notes });
+    hubPayments.forEach((p, i) =>
+      addPay({
+        id: String(p.id || `bp-${i}`),
+        amount: n(p.amount),
+        method: String(p.paymentMethod || p.method || 'Cash'),
+        date: String(p.date || p.dateTime || '').slice(0, 10),
+        reference: p.transactionId || p.reference,
+        note: p.notes,
+      })
+    );
+    // Include any check-in payments not already represented in booking.payments (deduped by ID / advance match)
+    allCheckinPosPays.forEach((p: AnyRec, i: number) => {
+      if (p.paymentType === 'Advance Deposit' && hubHasAdvance) {
+        // Avoid double-counting advance when booking.payments already carries it under a different synthetic ID
+        if (Math.abs(hubSum - n(p.amount)) < 1) return;
+      }
+      addPay({
+        id: String(p.id || `cp-${i}`),
+        amount: n(p.amount),
+        method: String(p.paymentMethod || p.method || 'Cash'),
+        date: String(p.date || p.dateTime || '').slice(0, 10),
+        reference: p.referenceNo || p.reference,
+        note: p.notes,
+      });
     });
+  } else if (allCheckinPosPays.length > 0) {
+    // Structured checkin.payments[] is authoritative (includes Advance Deposit, Partial Payment, Final Settlement, Hybrid splits)
+    // Never silently drop 'Advance Deposit' rows and never double-count scalar cashAmountPaid/onlineAmountPaid (BUG-P2-01)
+    allCheckinPosPays.forEach((p: AnyRec, i: number) => {
+      addPay({
+        id: String(p.id || `cp-${i}`),
+        amount: n(p.amount),
+        method: String(p.paymentMethod || p.method || 'Cash'),
+        date: String(p.date || p.dateTime || b?.bookingDate || checkInDate || '').slice(0, 10),
+        reference: p.referenceNo || p.reference,
+        note: p.notes,
+      });
+    });
+    // Include a separate pre-arrival booking.advanceAmount ONLY if it is not already covered by checkin.payments[]
+    const bAdv = n(b?.advanceAmount);
+    if (bAdv > 0) {
+      const ciSum = r2(allCheckinPosPays.reduce((s, p) => s + n(p.amount), 0));
+      const ciHasAdvOrCheckin = allCheckinPosPays.some(
+        (p) =>
+          p.paymentType === 'Advance Deposit' ||
+          String(p.id || '').toLowerCase().includes('adv') ||
+          String(p.id || '').toLowerCase().includes('checkin') ||
+          String(p.notes || '').toLowerCase().includes('advance')
+      );
+      if (!ciHasAdvOrCheckin && Math.abs(ciSum - bAdv) >= 1) {
+        addPay({
+          id: `adv-${b?.id || c?.id}`,
+          amount: bAdv,
+          method: String(b?.paymentMethod || 'Cash'),
+          date: String(b?.bookingDate || checkInDate || '').slice(0, 10),
+          note: 'Advance',
+        });
+      }
+    }
+    if (n(b?.refundAmount) > 0) {
+      addPay({ id: `ref-${b?.id}`, amount: -n(b?.refundAmount), method: String(b?.paymentMethod || 'Cash'), date: checkOutDate, note: 'Refund' });
+    }
   } else {
     const deskPaid = (n(c?.cashAmountPaid) + n(c?.onlineAmountPaid)) > 0
       ? n(c?.cashAmountPaid) + n(c?.onlineAmountPaid)
@@ -463,37 +536,15 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
       c?.paymentMethod ||
       (n(c?.onlineAmountPaid) > 0 ? 'UPI' : n(c?.cashAmountPaid) > 0 ? 'Cash' : b?.paymentMethod || 'Cash')
     );
-    // Hybrid / split advance: when several 'Advance Deposit' records (one per mode) add up to the advance,
-    // list each mode separately instead of one lump-sum advance.
-    const advSplitRecs: AnyRec[] = (Array.isArray(c?.payments) ? c!.payments : []).filter(
-      (p: AnyRec) => p && p.paymentType === 'Advance Deposit' && n(p.amount) > 0
-    );
-    const advSplitSum = advSplitRecs.reduce((s: number, p: AnyRec) => s + n(p.amount), 0);
-    if (advance > 0 && advSplitRecs.length >= 1 && Math.abs(advSplitSum - advance) < 1) {
-      advSplitRecs.forEach((p: AnyRec, i: number) =>
-        addPay({
-          id: String(p.id || `adv-split-${i}`),
-          amount: n(p.amount),
-          method: String(p.paymentMethod || p.method || resolvedMethod),
-          date: String(p.date || p.dateTime || b?.bookingDate || checkInDate || '').slice(0, 10),
-          reference: p.referenceNo || p.reference,
-          note: p.notes || 'Advance',
-        })
-      );
-    } else if (advance > 0) {
-      addPay({ id: `adv-${c?.id || b?.id}`, amount: advance, method: resolvedMethod, date: String(b?.bookingDate || checkInDate || '').slice(0, 10), note: 'Advance' });
+    if (advance > 0) {
+      addPay({
+        id: `adv-${c?.id || b?.id}`,
+        amount: advance,
+        method: resolvedMethod,
+        date: String(b?.bookingDate || checkInDate || '').slice(0, 10),
+        note: 'Advance',
+      });
     }
-    (Array.isArray(c?.payments) ? c!.payments : []).forEach((p: AnyRec, i: number) => {
-      if (p.paymentType === 'Advance Deposit') return;
-      const isCheckInDeskPay = (
-        String(p.id || '').includes('-checkin') ||
-        String(p.notes || '').toLowerCase().includes('check-in')
-      );
-      if (isCheckInDeskPay && advance > 0 && Math.abs(n(p.amount) - advance) < 0.01) {
-        return;
-      }
-      addPay({ id: String(p.id || `cp-${i}`), amount: n(p.amount), method: String(p.paymentMethod || p.method || 'Cash'), date: String(p.date || p.dateTime || '').slice(0, 10), reference: p.referenceNo || p.reference, note: p.notes });
-    });
     if (n(b?.refundAmount) > 0) {
       addPay({ id: `ref-${b?.id}`, amount: -n(b?.refundAmount), method: String(b?.paymentMethod || 'Cash'), date: checkOutDate, note: 'Refund' });
     }

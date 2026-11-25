@@ -61,6 +61,7 @@ import {
   allocateInvoiceNumber,
   buildInvoiceRecord,
   buildStayBill,
+  requestAtomicGrcNumber,
   toGrcPrintData,
 } from '../utils/stayBilling';
 import { renderGrcHtml } from '../utils/printTemplates';
@@ -2564,10 +2565,22 @@ export default function ReservationView({
     openPrintWindow(html);
   };
 
-  const handlePrintFilledGrc = (item: EnrichedReservationItem) => {
+  const handlePrintFilledGrc = async (item: EnrichedReservationItem) => {
+    const persistedRegNo = String(
+      (item.linkedCheckin as any)?.grcNumber || (item.booking as any)?.grcNumber || ''
+    ).trim();
+    const regNo =
+      persistedRegNo ||
+      (await requestAtomicGrcNumber({
+        existingGrc: persistedRegNo,
+        checkinId: item.linkedCheckin?.id || item.booking.id,
+        bookingId: item.booking.id,
+        settings: billSettings,
+      })) ||
+      'PENDING (Assigned at Check-In)';
     const grcData = toGrcPrintData({
       hotel: hotelSettings || {},
-      regNo: `GRC/${item.booking.id}`,
+      regNo,
       booking: item.booking,
       checkin: item.linkedCheckin || undefined,
       settings: billSettings,

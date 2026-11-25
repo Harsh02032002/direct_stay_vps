@@ -114,6 +114,9 @@ export interface BillResult {
   /** Sum of pre-tax charges before discount. */
   subtotal: number;
   discount: number;
+  /** Net pre-tax charges after discount (includes GST-exempt items such as Damage Fines). */
+  netSubtotal?: number;
+  /** Authoritative taxable base subject to GST (derived from taxRows when GST is enabled; excludes GST-exempt items like Damage Fines). */
   taxableAmount: number;
   cgst: number;
   sgst: number;
@@ -368,11 +371,17 @@ export function calculateBill(input: BillInput): BillResult {
     taxRows.push({ rate, taxable, cgst, sgst, tax });
   });
 
-  const taxableAmount = r2(subtotal - discount);
+  const netSubtotal = r2(subtotal - discount);
+  const taxableAmount =
+    gstEnabled && taxRows.length > 0
+      ? r2(taxRows.reduce((x, t) => x + t.taxable, 0))
+      : gstEnabled
+      ? 0
+      : netSubtotal;
   const cgst = r2(taxRows.reduce((x, t) => x + t.cgst, 0));
   const sgst = r2(taxRows.reduce((x, t) => x + t.sgst, 0));
   const totalTax = r2(cgst + sgst);
-  const grandTotal = r2(taxableAmount + totalTax);
+  const grandTotal = r2(netSubtotal + totalTax);
 
   const payments = (input.payments || [])
     .filter((p) => p && num(p.amount) !== 0)
@@ -460,6 +469,7 @@ export function calculateBill(input: BillInput): BillResult {
     paymentsByMode,
     subtotal,
     discount,
+    netSubtotal,
     taxableAmount,
     cgst,
     sgst,
@@ -551,8 +561,9 @@ export function formatGrcNumber(prefix: string, seq: number, date: Date = new Da
 export function nextInvoiceSequence(existingNumbers: Array<string | undefined>, settingsNext: number): number {
   let maxSeq = 0;
   existingNumbers.forEach((n) => {
-    const s = String(n || '');
-    const slash = s.match(/\/(\d+)\/\d{4}-\d{2}$/);
+    const s = String(n || '').trim();
+    if (!s) return;
+    const slash = s.match(/\/(\d+)\/\d{2,4}(?:-\d{2})?$/);
     const tail = s.match(/(\d+)$/);
     const v = slash ? +slash[1] : tail ? +tail[1] : 0;
     if (v > maxSeq && v < 100000000) maxSeq = v;

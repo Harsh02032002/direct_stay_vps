@@ -21,7 +21,7 @@ export interface ArrivalTableRow {
   eta: string;
   roomLabel: string;
   roomType: string;
-  status: 'Arriving' | 'Confirmed' | 'Checked In' | 'VIP' | 'Pending';
+  status: 'Arriving' | 'Confirmed' | 'Checked In' | 'Checked Out' | 'VIP' | 'Pending';
   isVip: boolean;
   hubBooking?: BookingRecord;
 }
@@ -256,6 +256,30 @@ function isStayCoveringNight(b: BookingRecord, targetIso: string): boolean {
   return inDate <= targetIso && targetIso < outDate;
 }
 
+function isNonFoodServiceDescription(desc?: string): boolean {
+  const d = String(desc || '').toLowerCase();
+  return (
+    d.includes('water') ||
+    d.includes('bottle') ||
+    d.includes('laundry') ||
+    d.includes('dry clean') ||
+    /\biron(ing)?\b/.test(d) ||
+    d.includes('damage') ||
+    d.includes('fine') ||
+    d.includes('spa')
+  );
+}
+
+function isFoodOtherService(srv: { serviceType?: string; description?: string }): boolean {
+  const st = String(srv.serviceType || '').trim().toUpperCase();
+  if (st === 'POS_FOOD') return true;
+  if (st === 'ROOM SERVICE') {
+    // Legacy records sometimes defaulted water/laundry/other extraCharges to 'ROOM SERVICE'
+    return !isNonFoodServiceDescription(srv.description);
+  }
+  return false;
+}
+
 function computeDayRevenueBreakdown(
   targetIso: string,
   bookings: BookingRecord[],
@@ -272,13 +296,15 @@ function computeDayRevenueBreakdown(
   let roomRevenue = 0;
   let folioOtherRevenue = 0;
   let occupiedRoomsForAdr = 0;
+  // Track POS order IDs whose GST is already included inside a staying booking's b.taxAmount
+  const gstIncludedRoomPosIds = new Set<string>();
 
   for (const b of stayingBookings) {
     const nights = Math.max(1, Number(b.nights) || 1);
     const roomsCount = Math.max(1, b.roomNumbers.filter(Boolean).length || 1);
     occupiedRoomsForAdr += roomsCount;
 
-    // Room subtotal + room GST prorated per stay night
+    // Room subtotal + stay GST (counted ONCE) prorated per stay night
     const totalTaxAmt =
       Number(b.taxAmount) ||
       (Number((b as any).cgst) || 0) +
@@ -291,10 +317,16 @@ function computeDayRevenueBreakdown(
     );
     roomRevenue += totalRoomSide / nights;
 
-    // Non-POS other services recorded on targetIso (or prorated if undated)
+    // Non-POS other services (Water Bottle, Laundry, Other Services, Fine) recorded on targetIso (or prorated if undated)
     if (Array.isArray(b.otherServices) && b.otherServices.length > 0) {
       for (const srv of b.otherServices) {
-        if (srv.serviceType === 'POS_FOOD' || srv.serviceType === 'ROOM SERVICE') continue;
+        if (isFoodOtherService(srv)) {
+          if (b.gstInvoice && totalTaxAmt > 0) {
+            if (srv.id) gstIncludedRoomPosIds.add(String(srv.id).replace(/^EC-POS-/i, ''));
+            if (srv.orderNumber) gstIncludedRoomPosIds.add(String(srv.orderNumber));
+          }
+          continue;
+        }
         const srvDate = normalizeDatePrefix(srv.dateTime);
         if (srvDate === targetIso) {
           folioOtherRevenue += (Number(srv.amount) || 0) + (Number(srv.taxAmount) || 0);
@@ -324,20 +356,30 @@ function computeDayRevenueBreakdown(
     const ordDate =
       normalizeDatePrefix(ord.date) || normalizeDatePrefix((ord as any).createdAt);
     if (ordDate === targetIso) {
-      const amt = Number(ord.grandTotal ?? (ord as any).totalAmount ?? 0) || 0;
-      fnbRevenue += Math.max(0, amt);
-      countedPosIds.add(ord.id);
+      const gross = Number(ord.grandTotal ?? (ord as any).totalAmount ?? 0) || 0;
+      const ordTax = Number(ord.taxAmount ?? (ord as any).gstAmount ?? 0) || 0;
+      const ordIdStr = String(ord.id || '');
+      const ordNumStr = String(ord.orderNumber || '');
+      const taxAlreadyInStay =
+        (ordIdStr && gstIncludedRoomPosIds.has(ordIdStr)) ||
+        (ordNumStr && gstIncludedRoomPosIds.has(ordNumStr));
+      const revenueAmt = taxAlreadyInStay ? Math.max(0, gross - ordTax) : Math.max(0, gross);
+      fnbRevenue += revenueAmt;
+      if (ordIdStr) countedPosIds.add(ordIdStr);
+      if (ordNumStr) countedPosIds.add(ordNumStr);
     }
   }
 
-  // Also include any POS_FOOD / ROOM SERVICE items on bookings if not already in appPosOrders
+  // Also include any manual folio POS_FOOD / ROOM SERVICE items on bookings not already counted via appPosOrders
   for (const b of bookings) {
     if (isCancelledStatus(b.status) || isNoShowStatus(b.status)) continue;
     for (const srv of b.otherServices || []) {
-      if (srv.serviceType !== 'POS_FOOD' && srv.serviceType !== 'ROOM SERVICE') continue;
-      if (srv.id && countedPosIds.has(srv.id)) continue;
+      if (!isFoodOtherService(srv)) continue;
+      const cleanId = String(srv.id || '').replace(/^EC-POS-/i, '');
+      const ordNo = String(srv.orderNumber || '');
+      if ((cleanId && countedPosIds.has(cleanId)) || (ordNo && countedPosIds.has(ordNo))) continue;
       const srvDate = normalizeDatePrefix(srv.dateTime);
-      if (srvDate === targetIso && appPosOrders.length === 0) {
+      if (srvDate === targetIso) {
         fnbRevenue += (Number(srv.amount) || 0) + (Number(srv.taxAmount) || 0);
       }
     }
@@ -573,6 +615,7 @@ export function computeDashboardMetrics(input: DashboardMetricsInput): Dashboard
 
   const todaysArrivals: ArrivalTableRow[] = arrivalsBookings.map((b) => {
     const rawBk = rawBookingById.get(String(b.id));
+    const rawCi = rawCheckinById.get(String(b.id));
     const etaStr = formatTime12h(
       rawBk?.checkInTime || b.expectedArrivalTime || b.checkInTime,
       standardCheckInTime
@@ -597,8 +640,21 @@ export function computeDashboardMetrics(input: DashboardMetricsInput): Dashboard
       /suite|presidential/i.test(catLabel);
     if (isVip) vipArrivalsCount += 1;
 
-    const alreadyIn = Boolean(b.isCheckedIn);
-    if (alreadyIn) arrivalsCheckedInCount += 1;
+    // Cross-check persisted booking & check-in lifecycle states (UI-BUG-05)
+    const isCheckedOut =
+      isCheckedOutBooking(b) ||
+      Boolean(rawCi?.checkedOutDateTime) ||
+      String(rawCi?.status || '').trim().toLowerCase() === 'checked out' ||
+      String(rawBk?.status || '').trim().toLowerCase() === 'checkedout' ||
+      String(rawBk?.status || '').trim().toLowerCase() === 'checked out' ||
+      Boolean(rawBk?.isCompleted);
+    const alreadyIn =
+      !isCheckedOut &&
+      (Boolean(b.isCheckedIn) ||
+        Boolean(rawBk?.isCheckedIn) ||
+        Boolean(rawCi && !rawCi.checkedOutDateTime));
+
+    if (alreadyIn || isCheckedOut) arrivalsCheckedInCount += 1;
 
     const roomLabel =
       b.roomNumbers.filter(Boolean).length > 0
@@ -606,7 +662,8 @@ export function computeDashboardMetrics(input: DashboardMetricsInput): Dashboard
         : 'Unassigned';
 
     let rowStatus: ArrivalTableRow['status'] = 'Confirmed';
-    if (alreadyIn) rowStatus = 'Checked In';
+    if (isCheckedOut) rowStatus = 'Checked Out';
+    else if (alreadyIn) rowStatus = 'Checked In';
     else if (isVip) rowStatus = 'VIP';
     else if (String(rawBk?.status || '') === 'Pending') rowStatus = 'Pending';
 

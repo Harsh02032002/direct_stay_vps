@@ -46,11 +46,17 @@ import {
   Vendor,
   StaffReimbursement,
   SubscriptionInvoice,
+  SystemWebsiteConfig,
 } from '../types';
 import { computeHotelFinancialSummary, isCapitalContributionType } from '../utils/financeEngine';
 import { showToast as triggerGlobalToast } from '../utils/toast';
 import AuditLogsView, { formatAuditTimestamp, sortAuditLogsChronologically } from './AuditLogsView';
 import SubscriptionInvoiceModal from './SubscriptionInvoiceModal';
+import MembershipRenewalCheckout, {
+  computeDaysRemaining,
+  resolveEffectiveActivePackages,
+} from './MembershipRenewalCheckout';
+import WhatsAppSupportWidget, { DEFAULT_WHATSAPP_NUMBER } from './WhatsAppSupportWidget';
 
 export type HotelOwnerSubTab =
   | 'dashboard'
@@ -82,6 +88,7 @@ interface HotelOwnerViewProps {
   staff: Staff[];
   ownerPayments: OwnerDirectorPayment[];
   auditLogs: AuditLog[];
+  systemWebsite?: SystemWebsiteConfig;
   onUpdateHotel: (updatedHotel: Hotel) => void;
   onUpdateExpenses: (updatedExpenses: Expense[]) => void;
   onUpdateOwnerPayments: (updatedPayments: OwnerDirectorPayment[]) => void;
@@ -109,12 +116,15 @@ export default function HotelOwnerView({
   staff = [],
   ownerPayments = [],
   auditLogs = [],
+  systemWebsite,
   onUpdateHotel,
   onUpdateExpenses,
   onUpdateOwnerPayments,
   onAddAuditLog,
   onNavigateToProfile
 }: HotelOwnerViewProps) {
+  const [checkoutPkgId, setCheckoutPkgId] = useState<string | undefined>(undefined);
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [bookingSearch, setBookingSearch] = useState('');
   const [bookingStatusFilter, setBookingStatusFilter] = useState<string>('All');
@@ -1533,106 +1543,189 @@ export default function HotelOwnerView({
       )}
 
       {/* 7. SUBSCRIPTION & BILLING */}
-      {activeSubTab === 'subscription' && (
+      {activeSubTab === 'subscription' && (() => {
+        const dynamicPlans = resolveEffectiveActivePackages(packages);
+        const daysRemaining = computeDaysRemaining(hotel?.subscriptionEndDate);
+        const isExpired = hotel?.subscriptionStatus === 'Expired' || (daysRemaining !== null && daysRemaining < 0);
+        const isExpiringSoon = !isExpired && daysRemaining !== null && daysRemaining <= 30;
+        const paymentHistory = Array.isArray(hotel?.subscriptionPayments) ? hotel.subscriptionPayments : [];
+        const whatsappPhone = systemWebsite?.whatsappNumber || systemWebsite?.supportPhone || DEFAULT_WHATSAPP_NUMBER;
+
+        return (
         <div className="bg-white border border-luxury-brown-100 rounded-2xl p-6 space-y-6">
           <div className="border-b border-luxury-brown-100 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h3 className="text-lg font-serif font-bold text-luxury-brown-950">
-                SaaS Subscription & Package Licensing
+                SaaS Membership, Renewal &amp; Billing History
               </h3>
               <p className="text-xs text-luxury-brown-500">
-                Manage your DirectStay / Imperial PMS license, room tier capacity, and billing renewals.
+                Track active package validity, remaining days, verified payment history, GST tax invoices, and plan upgrades.
               </p>
             </div>
-            <span className="px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 font-mono text-xs font-bold">
-              Status: {hotel?.subscriptionStatus || 'Active'}
-            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span
+                className={`px-3.5 py-1.5 rounded-full font-mono text-xs font-bold border ${
+                  isExpired
+                    ? 'bg-rose-50 border-rose-200 text-rose-800'
+                    : isExpiringSoon
+                    ? 'bg-amber-50 border-amber-300 text-amber-800'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                }`}
+              >
+                Status: {isExpired ? 'Expired' : hotel?.subscriptionStatus || 'Active'}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setCheckoutPkgId(hotel?.packageId || dynamicPlans[0]?.id);
+                  setShowCheckoutModal(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-luxury-gold-500 hover:bg-luxury-gold-400 text-luxury-brown-950 font-bold text-xs shadow-sm cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <CreditCard className="w-3.5 h-3.5" />
+                <span>{isExpired || isExpiringSoon ? 'Renew Now' : 'Renew / Upgrade Plan'}</span>
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-5 rounded-2xl bg-luxury-beige-50/70 border border-luxury-brown-100 space-y-1">
-              <span className="text-[10px] font-mono uppercase text-luxury-brown-500 font-bold">Current Active Plan</span>
-              <p className="text-xl font-serif font-bold text-luxury-brown-950">
-                {hotel?.subscriptionPlan || 'Yearly'} ({activePackage.name})
+          {(isExpired || isExpiringSoon) && (
+            <div
+              className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                isExpired ? 'bg-rose-50 border-rose-300 text-rose-950' : 'bg-amber-50 border-amber-300 text-amber-950'
+              }`}
+            >
+              <div className="space-y-0.5 text-xs">
+                <p className="font-bold flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  {isExpired
+                    ? `Membership expired ${Math.abs(daysRemaining || 0)} day(s) ago — your hotel data is safe, renew now to restore full access.`
+                    : `Your membership expires in ${daysRemaining} day(s) (${hotel?.subscriptionEndDate}). Renew now for uninterrupted PMS & OTA access.`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCheckoutPkgId(hotel?.packageId || dynamicPlans[0]?.id);
+                  setShowCheckoutModal(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-luxury-brown-950 hover:bg-luxury-brown-900 text-luxury-gold-400 text-xs font-bold shrink-0 cursor-pointer"
+              >
+                Renew Now →
+              </button>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl bg-luxury-beige-50/70 border border-luxury-brown-100 space-y-1">
+              <span className="text-[10px] font-mono uppercase text-luxury-brown-500 font-bold">Current Package</span>
+              <p className="text-base font-serif font-bold text-luxury-brown-950">
+                {activePackage.name}
               </p>
               <p className="text-xs font-mono text-luxury-gold-700">
-                Tariff: ₹{(hotel?.subscriptionPrice || 14000).toLocaleString('en-IN')}
+                ₹{(hotel?.subscriptionPrice || activePackage.priceYearly || 5999).toLocaleString('en-IN')} / yr (+ 18% GST)
               </p>
             </div>
 
-            <div className="p-5 rounded-2xl bg-luxury-beige-50/70 border border-luxury-brown-100 space-y-1">
-              <span className="text-[10px] font-mono uppercase text-luxury-brown-500 font-bold">License Validity Window</span>
-              <p className="text-xl font-serif font-bold text-luxury-brown-950">
-                Valid until {hotel?.subscriptionEndDate || '2027-06-01'}
+            <div className="p-4 rounded-2xl bg-luxury-beige-50/70 border border-luxury-brown-100 space-y-1">
+              <span className="text-[10px] font-mono uppercase text-luxury-brown-500 font-bold">Activation Date</span>
+              <p className="text-base font-serif font-bold text-luxury-brown-950 font-mono">
+                {hotel?.subscriptionActivatedAt || hotel?.trialStartDate || 'N/A'}
               </p>
-              <p className="text-xs font-mono text-luxury-brown-500">
-                Started: {hotel?.trialStartDate || '2026-06-01'}
+              <p className="text-[11px] font-mono text-luxury-brown-500">
+                Cycle: {hotel?.subscriptionPlan || 'Yearly'}
               </p>
             </div>
 
-            <div className="p-5 rounded-2xl bg-luxury-beige-50/70 border border-luxury-brown-100 space-y-1">
-              <span className="text-[10px] font-mono uppercase text-luxury-brown-500 font-bold">Room Tier Capacity</span>
-              <p className="text-xl font-serif font-bold text-luxury-brown-950">
-                {totalRooms} / {activePackage.maxRooms || 50} Rooms Used
+            <div className="p-4 rounded-2xl bg-luxury-beige-50/70 border border-luxury-brown-100 space-y-1">
+              <span className="text-[10px] font-mono uppercase text-luxury-brown-500 font-bold">Expiry &amp; Remaining Days</span>
+              <p className="text-base font-serif font-bold text-luxury-brown-950 font-mono">
+                {hotel?.subscriptionEndDate || 'N/A'}
               </p>
-              <p className="text-xs font-mono text-emerald-700">
-                Tier Limit: {hotel?.roomTierLimit || '10-20'} Rooms
+              <p
+                className={`text-xs font-mono font-bold ${
+                  isExpired ? 'text-rose-700' : isExpiringSoon ? 'text-amber-700' : 'text-emerald-700'
+                }`}
+              >
+                {daysRemaining === null
+                  ? 'Active License'
+                  : daysRemaining < 0
+                  ? `${Math.abs(daysRemaining)} day(s) overdue`
+                  : `${daysRemaining} day(s) remaining`}
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-luxury-beige-50/70 border border-luxury-brown-100 space-y-1">
+              <span className="text-[10px] font-mono uppercase text-luxury-brown-500 font-bold">Room Capacity</span>
+              <p className="text-base font-serif font-bold text-luxury-brown-950">
+                {totalRooms} / {activePackage.maxRooms >= 999 ? 'Unlimited' : activePackage.maxRooms || 50} Rooms
+              </p>
+              <p className="text-[11px] font-mono text-emerald-700">
+                {(activePackage as any).otaLimitLabel || ((activePackage as any).modules?.ota ? 'OTA Channel Manager Active' : 'Full PMS License')}
               </p>
             </div>
           </div>
 
           <div className="pt-2 space-y-3">
-            <h4 className="text-xs font-mono uppercase text-luxury-brown-700 font-bold">
-              Instant Plan Renewal / Upgrade Options
-            </h4>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h4 className="text-xs font-mono uppercase text-luxury-brown-700 font-bold">
+                Available DirectStay Plans &amp; Upgrades (18% GST Extra)
+              </h4>
+              <span className="text-[11px] font-mono text-luxury-brown-500">
+                Click any plan to open Direct UPI QR &amp; Verified Checkout
+              </span>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-5 rounded-2xl border border-luxury-brown-200 flex flex-col justify-between space-y-4">
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-luxury-gold-700 font-bold">Flexible Monthly</span>
-                  <h5 className="text-lg font-serif font-bold text-luxury-brown-950">Monthly Pack</h5>
-                  <p className="text-2xl font-serif font-bold mt-2">₹1,899 <span className="text-xs font-normal">/ Month</span></p>
-                  <p className="text-[11px] font-mono text-luxury-brown-500 mt-0.5">+ 18% GST (Total ₹2,241)</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleRenewSubscription('Monthly')}
-                  className="w-full py-2.5 bg-luxury-brown-950 hover:bg-luxury-brown-900 text-white text-xs font-bold rounded-xl cursor-pointer"
-                >
-                  Purchase Monthly Pack
-                </button>
-              </div>
-
-              <div className="p-5 rounded-2xl border border-luxury-brown-200 flex flex-col justify-between space-y-4">
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-emerald-700 font-bold">50% OFF (Regular ₹11,999)</span>
-                  <h5 className="text-lg font-serif font-bold text-luxury-brown-950">Annual Pack – Special Offer</h5>
-                  <p className="text-2xl font-serif font-bold mt-2">₹5,999 <span className="text-xs font-normal">/ Year</span></p>
-                  <p className="text-[11px] font-mono text-luxury-brown-500 mt-0.5">+ 18% GST (Total ₹7,079)</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleRenewSubscription('HalfYearly')}
-                  className="w-full py-2.5 bg-luxury-brown-950 hover:bg-luxury-brown-900 text-white text-xs font-bold rounded-xl cursor-pointer"
-                >
-                  Claim Annual Discount Pack
-                </button>
-              </div>
-
-              <div className="p-5 rounded-2xl border-2 border-luxury-gold-500 bg-luxury-beige-50/40 flex flex-col justify-between space-y-4">
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-luxury-gold-700 font-bold">Complete PMS + OTA Connectivity</span>
-                  <h5 className="text-lg font-serif font-bold text-luxury-brown-950">Premium Property Pack</h5>
-                  <p className="text-2xl font-serif font-bold mt-2">₹17,000 <span className="text-xs font-normal">/ Year</span></p>
-                  <p className="text-[11px] font-mono text-luxury-brown-500 mt-0.5">+ 5% GST (Total ₹17,850)</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleRenewSubscription('Yearly')}
-                  className="w-full py-2.5 bg-luxury-gold-500 hover:bg-luxury-gold-400 text-luxury-brown-950 text-xs font-bold rounded-xl cursor-pointer shadow-sm"
-                >
-                  Purchase Premium Pack
-                </button>
-              </div>
+              {dynamicPlans.map((pkg) => {
+                const pkgPrice = Number(pkg.priceYearly || pkg.priceMonthly || 5999);
+                const pkgGst = Number(pkg.gstRate ?? 18);
+                const pkgTotal = pkgPrice + Math.round(pkgPrice * (pkgGst / 100));
+                const isCurrent = pkg.id === hotel?.packageId;
+                return (
+                  <div
+                    key={pkg.id}
+                    className={`p-5 rounded-2xl flex flex-col justify-between space-y-4 ${
+                      pkg.isPopular
+                        ? 'border-2 border-luxury-gold-500 bg-luxury-beige-50/40'
+                        : 'border border-luxury-brown-200 bg-white'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-mono uppercase text-luxury-gold-700 font-bold">
+                          {pkg.badge || pkg.discountLabel || 'Annual Plan'}
+                        </span>
+                        {isCurrent && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold">
+                            Current Plan
+                          </span>
+                        )}
+                      </div>
+                      <h5 className="text-lg font-serif font-bold text-luxury-brown-950">{pkg.name}</h5>
+                      <p className="text-[11px] text-luxury-brown-600">{pkg.tagline || pkg.roomTierLabel}</p>
+                      <p className="text-2xl font-serif font-bold mt-2">
+                        ₹{pkgPrice.toLocaleString('en-IN')} <span className="text-xs font-normal">/ Year</span>
+                      </p>
+                      <p className="text-[11px] font-mono text-luxury-brown-500">
+                        + {pkgGst}% GST (Total ₹{pkgTotal.toLocaleString('en-IN')})
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCheckoutPkgId(pkg.id);
+                        setShowCheckoutModal(true);
+                      }}
+                      className={`w-full py-2.5 text-xs font-bold rounded-xl cursor-pointer transition-all ${
+                        pkg.isPopular
+                          ? 'bg-luxury-gold-500 hover:bg-luxury-gold-400 text-luxury-brown-950 shadow-sm'
+                          : 'bg-luxury-brown-950 hover:bg-luxury-brown-900 text-white'
+                      }`}
+                    >
+                      {isCurrent ? 'Renew Now (UPI / QR)' : `Upgrade to ${pkg.name}`}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -1641,19 +1734,96 @@ export default function HotelOwnerView({
               <div className="space-y-1">
                 <span className="text-[10px] font-mono uppercase font-bold text-amber-800 flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-                  Pending Renewal Request Sent to Super Admin
+                  Payment Submitted • Pending Billing Verification
                 </span>
                 <p className="font-semibold text-luxury-brown-950">
-                  Requested Plan: <strong>{hotel.renewalRequest.requestedPackageName}</strong> ({hotel.renewalRequest.requestedPlan}) • Base Tariff: ₹{Number(hotel.renewalRequest.requestedAmount || 0).toLocaleString('en-IN')}
+                  Requested Plan: <strong>{hotel.renewalRequest.requestedPackageName}</strong> • Payable: ₹
+                  {Number(hotel.renewalRequest.totalAmount || hotel.renewalRequest.requestedAmount || 0).toLocaleString('en-IN')}
                 </p>
                 <p className="text-[11px] font-mono text-luxury-brown-600">
-                  Payment Mode: {hotel.renewalRequest.paymentMethod} • Ref: {hotel.renewalRequest.transactionReference || 'N/A'} • Requested: {hotel.renewalRequest.requestedAt}
+                  Mode: {hotel.renewalRequest.paymentMethod} • UTR: {hotel.renewalRequest.transactionReference || 'N/A'} • Submitted: {hotel.renewalRequest.requestedAt}
                 </p>
               </div>
               <span className="px-3 py-1 rounded-full bg-amber-200/70 text-amber-900 font-mono text-[10px] font-bold uppercase shrink-0">
-                Awaiting Super Admin Approval
+                Pending Verification
               </span>
             </div>
+          )}
+
+          {/* Payment History Table */}
+          {paymentHistory.length > 0 && (
+            <div className="pt-4 border-t border-luxury-brown-100 space-y-3">
+              <h4 className="text-sm font-serif font-bold text-luxury-brown-950">
+                Membership Payment History ({paymentHistory.length})
+              </h4>
+              <div className="overflow-x-auto border border-luxury-brown-100 rounded-2xl">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-luxury-beige-50 border-b border-luxury-brown-100 text-[10px] font-mono uppercase text-luxury-brown-600">
+                      <th className="py-2.5 px-4">Date</th>
+                      <th className="py-2.5 px-4">Package</th>
+                      <th className="py-2.5 px-4">Mode &amp; UTR</th>
+                      <th className="py-2.5 px-4 text-right">Amount (Incl. GST)</th>
+                      <th className="py-2.5 px-4 text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-luxury-brown-100">
+                    {paymentHistory.map((pay) => (
+                      <tr key={pay.id} className="hover:bg-luxury-beige-50/40">
+                        <td className="py-2.5 px-4 font-mono text-[11px]">{pay.createdAt}</td>
+                        <td className="py-2.5 px-4 font-semibold text-luxury-brown-950">{pay.packageName}</td>
+                        <td className="py-2.5 px-4 font-mono text-[11px]">
+                          {pay.paymentMethod} {pay.utrNumber ? `(${pay.utrNumber})` : ''}
+                        </td>
+                        <td className="py-2.5 px-4 font-mono font-bold text-right">
+                          ₹{Number(pay.totalAmount || 0).toLocaleString('en-IN')}
+                        </td>
+                        <td className="py-2.5 px-4 text-right">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                              pay.status === 'Approved'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : pay.status === 'Pending'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {pay.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* WhatsApp Renewal & Billing Support */}
+          <WhatsAppSupportWidget
+            variant="banner"
+            phone={whatsappPhone}
+            context="renewal"
+            hotelName={hotel?.name}
+            packageName={activePackage.name}
+          />
+
+          {showCheckoutModal && (
+            <MembershipRenewalCheckout
+              hotel={hotel}
+              packages={packages}
+              systemWebsite={systemWebsite}
+              initialPackageId={checkoutPkgId}
+              requestedBy={hotel?.ownerName || hotel?.username || 'Hotel Owner'}
+              onClose={() => setShowCheckoutModal(false)}
+              onSubmitted={(reqObj) => {
+                onUpdateHotel({ ...hotel, renewalRequest: reqObj });
+                onAddAuditLog(
+                  'Submitted Membership Renewal Payment',
+                  `Submitted ${reqObj.requestedPackageName} renewal (UTR: ${reqObj.transactionReference}) for verification.`
+                );
+              }}
+            />
           )}
 
           {/* Subscription Renewal Tax Invoices Table */}
@@ -1721,11 +1891,17 @@ export default function HotelOwnerView({
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       <SubscriptionInvoiceModal
         invoice={viewingSubInvoice}
         onClose={() => setViewingSubInvoice(null)}
+        businessName={systemWebsite?.businessName}
+        supportPhone={systemWebsite?.supportPhone || DEFAULT_WHATSAPP_NUMBER}
+        supportEmail={systemWebsite?.supportEmail}
+        gstNumber={systemWebsite?.paymentSettings?.gstNumber}
+        sacCode={systemWebsite?.paymentSettings?.sacCode}
       />
 
       {/* Membership Renewal Request Modal */}

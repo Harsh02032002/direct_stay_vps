@@ -1,9 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Room, Booking, GuestCheckIn, Invoice, Expense, Staff, AuditLog, 
   HotelSettings, WaterBottleRecord, PosOrder, PosItem, UserRole, RoomVerification,
   HotelPolicy, AllocatedGuestService, ExtraCharge, InventoryProduct, InventoryStockMovement, DeletedItemRecord,
-  TravelAgent, AgentCommissionPayment, PaymentRecord
+  TravelAgent, AgentCommissionPayment, PaymentRecord, LostAndFoundItem
 } from '../types';
 import { showToast, showConfirmToast } from '../utils/toast';
 import { evaluateAndBuildInvoice, normalizeInvoiceConditions, deduplicateInvoicesByBooking } from '../utils/invoiceConditions';
@@ -17,10 +17,12 @@ import {
 } from '../utils/billCalculator';
 import { stayNights } from '../utils/folioCollector';
 import {
-  allocateGrcNumber,
   allocateInvoiceNumber,
   buildInvoiceRecord,
   buildStayBill,
+  isActiveInvoice,
+  requestAtomicGrcNumber,
+  resolveConsistentInvoiceTotals,
   toGrcPrintData,
 } from '../utils/stayBilling';
 import { defaultGrcTerms, renderGrcHtml } from '../utils/printTemplates';
@@ -92,6 +94,134 @@ interface FrontDeskViewProps {
   agentCommissionPayments?: AgentCommissionPayment[];
   onUpdateTravelAgents?: (agents: TravelAgent[]) => void;
   onUpdateAgentCommissionPayments?: (payments: AgentCommissionPayment[]) => void;
+  lostAndFoundItems?: LostAndFoundItem[];
+  onUpdateLostAndFoundItems?: (items: LostAndFoundItem[]) => void;
+}
+
+export function computeExtraPersonForOccupancy(
+  numGuests: number,
+  room?: Pick<Room, 'baseOccupancy' | 'extraPersonCharge'> | null,
+  fallbackRate = 500
+): { hasExtraPerson: boolean; extraPersonCount: number; extraPersonRate: number } {
+  const baseOccupancy = Math.max(1, Number(room?.baseOccupancy) || 2);
+  const extraCount = Math.max(0, Math.floor(Number(numGuests) || 1) - baseOccupancy);
+  const rate = Math.max(
+    0,
+    Number(room?.extraPersonCharge) > 0 ? Number(room?.extraPersonCharge) : Number(fallbackRate) || 500
+  );
+  return {
+    hasExtraPerson: extraCount > 0,
+    extraPersonCount: extraCount,
+    extraPersonRate: rate,
+  };
+}
+
+export function buildEditedGuestDraftCheckin(params: {
+  guest: GuestCheckIn;
+  roomNumber: string;
+  checkInDate: string;
+  checkOutDate: string;
+  numGuests: number;
+  roomRate: number;
+  hasExtraBed: boolean;
+  extraBedCount: number;
+  extraBedRate: number;
+  hasExtraPerson: boolean;
+  extraPersonCount: number;
+  extraPersonRate: number;
+  extraCharges: ExtraCharge[];
+  discount: number;
+  gstEnabled: boolean;
+  gstRate: number;
+  isInclusive: boolean;
+}): {
+  draftCheckin: GuestCheckIn;
+  draftNights: number;
+  effectiveExtraBedNights: number;
+  effectiveExtraPersonNights: number;
+  extraPersonChargeApplied: number;
+} {
+  const { guest } = params;
+  const origNights = stayNights(guest.checkInDate, guest.checkOutDate);
+  const draftNights = stayNights(
+    params.checkInDate || guest.checkInDate,
+    params.checkOutDate || guest.checkOutDate
+  );
+
+  // Recalculate Extra Bed & Extra Person nights whenever stay dates change (BUG-P2-02)
+  const datesChanged = draftNights !== origNights;
+  const effectiveExtraBedNights =
+    datesChanged || !guest.extraBedNights ? draftNights : Math.max(1, Number(guest.extraBedNights) || draftNights);
+  const effectiveExtraPersonNights =
+    datesChanged || !guest.extraPersonNights
+      ? draftNights
+      : Math.max(1, Number(guest.extraPersonNights) || draftNights);
+
+  const ebCount = params.hasExtraBed ? Math.max(1, Number(params.extraBedCount) || 1) : 0;
+  const ebRate = Math.max(0, Number(params.extraBedRate) || 0);
+  const ebTotal = params.hasExtraBed ? r2(ebCount * ebRate * effectiveExtraBedNights) : 0;
+
+  const epCount = params.hasExtraPerson ? Math.max(1, Number(params.extraPersonCount) || 1) : 0;
+  const epRate = Math.max(0, Number(params.extraPersonRate) || 0);
+  const epApplied = params.hasExtraPerson ? r2(epCount * epRate * effectiveExtraPersonNights) : 0;
+
+  const cleanRoomRate = Math.max(0, Number(params.roomRate) || 0);
+  const cleanDiscount = Math.max(0, Number(params.discount) || 0);
+  const cleanNumGuests = Math.max(1, Math.floor(Number(params.numGuests) || 1));
+
+  const draftCheckin: GuestCheckIn = {
+    ...guest,
+    roomNumber: params.roomNumber || guest.roomNumber,
+    checkInDate: params.checkInDate || guest.checkInDate,
+    checkOutDate: params.checkOutDate || guest.checkOutDate,
+    numGuests: cleanNumGuests,
+    adults: cleanNumGuests,
+    roomRate: cleanRoomRate,
+    hasExtraBed: params.hasExtraBed,
+    extraBedCount: ebCount,
+    extraBedRate: ebRate,
+    extraBedNights: effectiveExtraBedNights,
+    extraBedTotal: ebTotal,
+    hasExtraPerson: params.hasExtraPerson,
+    extraPersonCount: epCount,
+    extraPersonRate: epRate,
+    extraPersonNights: effectiveExtraPersonNights,
+    extraPersonChargeApplied: epApplied,
+    extraCharges: params.extraCharges,
+    discount: cleanDiscount,
+    discountAmount: cleanDiscount,
+    isWithoutGst: !params.gstEnabled,
+    gstRate: params.gstRate,
+    roomRateIncludesGst: params.isInclusive,
+    bookedRooms:
+      Array.isArray(guest.bookedRooms) && guest.bookedRooms.length > 0
+        ? guest.bookedRooms.map((br, idx) =>
+            idx === 0
+              ? {
+                  ...br,
+                  roomNumber: params.roomNumber || br.roomNumber,
+                  rate: cleanRoomRate,
+                  guestsCount: cleanNumGuests,
+                  extraGuestsCount: epCount,
+                  extraPersonChargeApplied: epApplied,
+                  hasExtraBed: params.hasExtraBed,
+                  extraBedCount: ebCount,
+                  extraBedRate: ebRate,
+                  extraBedNights: effectiveExtraBedNights,
+                  extraBedTotal: ebTotal,
+                }
+              : br
+          )
+        : guest.bookedRooms,
+  };
+
+  return {
+    draftCheckin,
+    draftNights,
+    effectiveExtraBedNights,
+    effectiveExtraPersonNights,
+    extraPersonChargeApplied: epApplied,
+  };
 }
 
 export default function FrontDeskView({
@@ -137,7 +267,9 @@ export default function FrontDeskView({
   travelAgents = [],
   agentCommissionPayments = [],
   onUpdateTravelAgents,
-  onUpdateAgentCommissionPayments
+  onUpdateAgentCommissionPayments,
+  lostAndFoundItems = [],
+  onUpdateLostAndFoundItems
 }: FrontDeskViewProps) {
   const checkins: GuestCheckIn[] = React.useMemo(() => {
     const list = [...rawCheckinsProp];
@@ -243,6 +375,24 @@ export default function FrontDeskView({
   const [inHouseFromDate, setInHouseFromDate] = useState<string>(todayStr);
   const [inHouseToDate, setInHouseToDate] = useState<string>(todayStr);
 
+  // Target in-house guest to inspect (Read-Only View) or edit directly on the Check-In Form
+  const [checkInFormTargetGuest, setCheckInFormTargetGuest] = useState<GuestCheckIn | null>(null);
+  const [checkInFormReadOnly, setCheckInFormReadOnly] = useState<boolean>(false);
+
+  const handleOpenGuestOnCheckInForm = (guest: GuestCheckIn, readOnly: boolean) => {
+    setSelectedBookingForCheckin(null);
+    setCheckInFormTargetGuest(guest);
+    setCheckInFormReadOnly(readOnly);
+    onSelectSubTab('checkin');
+  };
+
+  useEffect(() => {
+    if (currentSubTab !== 'checkin' && checkInFormTargetGuest) {
+      setCheckInFormTargetGuest(null);
+      setCheckInFormReadOnly(false);
+    }
+  }, [currentSubTab]);
+
   const applyInHouseDatePreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
     setInHouseDatePreset(preset);
     const now = new Date();
@@ -289,11 +439,78 @@ export default function FrontDeskView({
     return true;
   };
 
-  // Express Check-Out & Departure Settlement Desk Date Filter (Default: Today in Asia/Kolkata)
-  const [checkoutDatePreset, setCheckoutDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('today');
-  const [checkoutFromDate, setCheckoutFromDate] = useState<string>(todayStr);
-  const [checkoutToDate, setCheckoutToDate] = useState<string>(todayStr);
+  // Checkout Lost & Found quick-registration state
+  const [coLfOpen, setCoLfOpen] = useState(false);
+  const [coLfItemName, setCoLfItemName] = useState('');
+  const [coLfCategory, setCoLfCategory] = useState('Electronics');
+  const [coLfStorage, setCoLfStorage] = useState('Front Desk Safe');
+  const [coLfNotes, setCoLfNotes] = useState('');
+
+  const handleLogFoundItemAtCheckout = (guest: GuestCheckIn) => {
+    if (!coLfItemName.trim()) {
+      showToast('Enter the found item name first.', 'warning');
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const todayIso = nowIso.slice(0, 10);
+    const newItem: LostAndFoundItem = {
+      id: `LF-${Date.now()}`,
+      hotelId: selectedHotelId || guest.hotelId || 'hotel-1',
+      recordType: 'found',
+      itemName: coLfItemName.trim(),
+      category: coLfCategory,
+      description: coLfNotes.trim(),
+      roomNumber: String(guest.roomNumber || ''),
+      bookingId: guest.bookingId || guest.id,
+      checkInId: guest.id,
+      source: 'Checkout',
+      locationFound: `Room ${guest.roomNumber} (Found at Checkout)`,
+      foundByStaff: loggedInUser || 'Front Desk',
+      dateFound: todayIso,
+      storageLocation: coLfStorage.trim() || 'Front Desk Safe',
+      guestName: guest.guestName,
+      guestMobile: guest.mobile,
+      status: 'Found – Registered',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      auditHistory: [
+        {
+          id: `AUD-${Date.now()}`,
+          action: 'Found Item Registered at Checkout',
+          toStatus: 'Found – Registered',
+          performedBy: loggedInUser || 'Front Desk',
+          dateTime: nowIso,
+          notes: `Logged during checkout of ${guest.guestName} (Room ${guest.roomNumber})`,
+        },
+      ],
+    };
+    if (onUpdateLostAndFoundItems) {
+      onUpdateLostAndFoundItems([newItem, ...lostAndFoundItems]);
+    }
+    onAddAuditLog(
+      'Lost & Found (Checkout)',
+      `Registered "${newItem.itemName}" (${newItem.category}) found in Room ${guest.roomNumber} during checkout of ${guest.guestName}.`
+    );
+    showToast(`Logged "${newItem.itemName}" in Central Lost & Found Register!`, 'success');
+    setCoLfItemName('');
+    setCoLfNotes('');
+  };
+
+  // Express Check-Out & Departure Settlement Desk Date Filter (Default: All active pending checkouts so future/open stays are never hidden)
+  const [checkoutDatePreset, setCheckoutDatePreset] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'all' | 'custom'>('all');
+  const [checkoutFromDate, setCheckoutFromDate] = useState<string>('');
+  const [checkoutToDate, setCheckoutToDate] = useState<string>('');
   const [checkoutSearch, setCheckoutSearch] = useState<string>('');
+
+  const normalizeDateIso = (raw?: string): string => {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    const dmy = s.match(/^(\d{2})[-/](\d{2})[-/](\d{4})/);
+    if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+    const parsed = new Date(s);
+    return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+  };
 
   const applyCheckoutDatePreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
     setCheckoutDatePreset(preset);
@@ -310,19 +527,22 @@ export default function FrontDeskView({
       setCheckoutToDate(y);
     } else if (preset === 'this_week') {
       const w = new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10);
+      const next7 = new Date(now.getTime() + 7 * 86400000).toISOString().slice(0, 10);
       setCheckoutFromDate(w);
-      setCheckoutToDate(todayStr);
+      setCheckoutToDate(next7);
     } else if (preset === 'this_month') {
       setCheckoutFromDate(`${todayStr.slice(0, 7)}-01`);
-      setCheckoutToDate(todayStr);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+      setCheckoutToDate(endOfMonth);
     }
   };
 
   const matchesCheckoutDate = (checkOutDate?: string, checkInDate?: string): boolean => {
     if (checkoutDatePreset === 'all' && !checkoutFromDate && !checkoutToDate) return true;
-    const co = String(checkOutDate || '').slice(0, 10);
-    if (!co) return checkoutDatePreset === 'all';
+    const co = normalizeDateIso(checkOutDate);
+    if (!co) return checkoutDatePreset === 'all' || checkoutDatePreset === 'today';
     if (checkoutDatePreset === 'today') {
+      // Include departures due today, overdue stays, and open stays
       return co <= todayStr;
     }
     if (checkoutFromDate && co < checkoutFromDate) return false;
@@ -391,6 +611,14 @@ export default function FrontDeskView({
   const [editGuestHasExtraBed, setEditGuestHasExtraBed] = useState(false);
   const [editGuestExtraBedCount, setEditGuestExtraBedCount] = useState(1);
   const [editGuestExtraBedRate, setEditGuestExtraBedRate] = useState(500);
+  const [editGuestHasExtraPerson, setEditGuestHasExtraPerson] = useState(false);
+  const [editGuestExtraPersonCount, setEditGuestExtraPersonCount] = useState(0);
+  const [editGuestExtraPersonRate, setEditGuestExtraPersonRate] = useState(500);
+  const [editGuestExtraCharges, setEditGuestExtraCharges] = useState<ExtraCharge[]>([]);
+  const [editExtraChargesDirty, setEditExtraChargesDirty] = useState(false);
+  const [editNewSvcCategory, setEditNewSvcCategory] = useState<ExtraCharge['category']>('Other');
+  const [editNewSvcDesc, setEditNewSvcDesc] = useState('');
+  const [editNewSvcAmount, setEditNewSvcAmount] = useState<string>('');
   const [editGuestDiscount, setEditGuestDiscount] = useState(0);
   const [editGuestPaymentMethod, setEditGuestPaymentMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Online' | 'Custom'>('UPI');
   const [editCustomPayLabel, setEditCustomPayLabel] = useState('');
@@ -404,6 +632,7 @@ export default function FrontDeskView({
   const [editHybridPay, setEditHybridPay] = useState(false);
   const [editSplit, setEditSplit] = useState<Record<SplitMode, number | ''>>(emptySplit);
   const [editSplitOtherLabel, setEditSplitOtherLabel] = useState('');
+  const [editPaymentDirty, setEditPaymentDirty] = useState(false);
   const editSplitTotal = SPLIT_MODES.reduce((s, m) => s + (Number(editSplit[m]) || 0), 0);
   const normalizeSplitMode = (m: any): SplitMode => {
     const v = String(m || '').toLowerCase();
@@ -443,8 +672,32 @@ export default function FrontDeskView({
   const [editingCheckedOutGuest, setEditingCheckedOutGuest] = useState<GuestCheckIn | null>(null);
   const [checkedOutHistoryFilter, setCheckedOutHistoryFilter] = useState<'today' | '7days' | 'all'>('today');
   const [checkedOutSearch, setCheckedOutSearch] = useState<string>('');
+  const preCheckoutGuestSnapRef = useRef<{
+    id: string;
+    payments?: PaymentRecord[];
+    extraCharges?: ExtraCharge[];
+    cashAmountPaid?: number;
+    onlineAmountPaid?: number;
+    advanceAmount?: number;
+    totalAmount?: number;
+    gstAmount?: number;
+    discount?: number;
+    pendingAmount?: number;
+  } | null>(null);
 
   const handleOpenCheckoutConfirmModal = (guest: GuestCheckIn) => {
+    preCheckoutGuestSnapRef.current = {
+      id: guest.id,
+      payments: Array.isArray(guest.payments) ? guest.payments.map(p => ({ ...p })) : [],
+      extraCharges: Array.isArray(guest.extraCharges) ? guest.extraCharges.map(ec => ({ ...ec })) : [],
+      cashAmountPaid: Number(guest.cashAmountPaid) || 0,
+      onlineAmountPaid: Number(guest.onlineAmountPaid) || 0,
+      advanceAmount: Number(guest.advanceAmount) || 0,
+      totalAmount: Number(guest.totalAmount) || 0,
+      gstAmount: Number(guest.gstAmount) || 0,
+      discount: Number(guest.discount ?? guest.discountAmount ?? 0) || 0,
+      pendingAmount: Number(guest.pendingAmount) || 0,
+    };
     setCheckoutConfirmGuest(guest);
     setCoHasDamageFine(false);
     setCoDamageDesc('');
@@ -465,7 +718,7 @@ export default function FrontDeskView({
     setCoSplitTarget(initialCalc.balanceDue <= 0 && initialCalc.alreadyPaid > 0 ? 'advance' : 'checkout');
   };
 
-  const handlePrintGuestGrc = (guest: GuestCheckIn) => {
+  const handlePrintGuestGrc = async (guest: GuestCheckIn) => {
     const billSettings = normalizeBillSettings(hotelSettings);
     const matchedBooking =
       bookings.find(
@@ -473,13 +726,21 @@ export default function FrontDeskView({
           b.id === guest.id ||
           ((guest as any).bookingId && b.id === (guest as any).bookingId)
       ) || null;
-    const existingGrcNumbers = [
-      ...checkins.map(c => (c as any).grcNumber as string | undefined),
-      ...bookings.map(b => (b as any).grcNumber as string | undefined),
-    ];
+    const persistedRegNo = String((guest as any).grcNumber || (matchedBooking as any)?.grcNumber || '').trim();
     const regNo =
-      String((guest as any).grcNumber || (matchedBooking as any)?.grcNumber || '').trim() ||
-      allocateGrcNumber(existingGrcNumbers, billSettings);
+      persistedRegNo ||
+      (await requestAtomicGrcNumber({
+        existingGrc: persistedRegNo,
+        checkinId: guest.id,
+        bookingId: matchedBooking?.id || (guest as any).bookingId || guest.id,
+        settings: billSettings,
+      })) ||
+      'PENDING (Assigned by Server)';
+    if (!persistedRegNo && regNo && !regNo.startsWith('PENDING')) {
+      onUpdateCheckins(
+        checkins.map(c => (c.id === guest.id ? ({ ...c, grcNumber: regNo } as GuestCheckIn) : c))
+      );
+    }
     const roomObj = rooms.find(r => r.number === guest.roomNumber);
     const rawTerms = Array.isArray(hotelSettings?.grcTerms)
       ? hotelSettings.grcTerms.filter(t => String(t || '').trim().length > 0)
@@ -515,6 +776,7 @@ export default function FrontDeskView({
       ) || null;
     const existingStayInv = invoices.find(
       inv =>
+        isActiveInvoice(inv) &&
         !inv.isSeparateInvoice &&
         (inv.bookingId === guest.id ||
           inv.checkInId === guest.id ||
@@ -757,7 +1019,7 @@ export default function FrontDeskView({
     const damageSum = finalBill.legacy.fineCharges;
     const otherExtrasSum = r2(finalBill.legacy.serviceCharges + finalBill.legacy.otherCharges);
     const discountVal = finalBill.discount;
-    const subtotal = finalBill.taxableAmount;
+    const subtotal = finalBill.netSubtotal ?? r2(finalBill.subtotal - finalBill.discount);
     const gstRate = finalBill.isGstInvoice ? finalBill.headlineGstRate || resolvedGstRate : 0;
     const gstAmount = finalBill.totalTax;
     const cgst = finalBill.cgst;
@@ -937,13 +1199,27 @@ export default function FrontDeskView({
 
     const totalPaidFinal = r2(calc.alreadyPaid + collectedNow);
     const finalPending = Math.max(0, r2(calc.grandTotal - totalPaidFinal));
+    const finalCashPaid = r2(
+      nextPayments
+        .filter(p => p && Number(p.amount) > 0 && String(p.paymentMethod || '').toLowerCase().includes('cash'))
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    );
+    const finalOnlinePaid = r2(
+      nextPayments
+        .filter(p => p && Number(p.amount) > 0 && !String(p.paymentMethod || '').toLowerCase().includes('cash'))
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    );
 
     const finalizedGuest: GuestCheckIn = {
       ...workingGuest,
       payments: nextPayments,
       paymentMethod: (coHybridPay && coSplitEntries.length > 0 ? coSplitLabel(coSplitEntries[0].mode) : resolvedSingleCoMethod) as any,
       totalAmount: calc.grandTotal,
+      gstRate: calc.gstRate,
+      gstAmount: calc.gstAmount,
       discount: calc.discountVal,
+      cashAmountPaid: finalCashPaid,
+      onlineAmountPaid: finalOnlinePaid,
       pendingAmount: finalPending,
       checkedOutDateTime: nowIso,
       checkedOutBy: loggedInUser || currentRole || 'Front Desk'
@@ -981,7 +1257,17 @@ export default function FrontDeskView({
     const priorBookingState = (() => {
       const pb = bookings.find(matchesFinalizedBooking);
       return pb
-        ? { id: pb.id, isCheckedIn: pb.isCheckedIn, isCompleted: pb.isCompleted, status: pb.status }
+        ? {
+            id: pb.id,
+            isCheckedIn: pb.isCheckedIn,
+            isCompleted: pb.isCompleted,
+            status: pb.status,
+            payments: Array.isArray((pb as any).payments) ? (pb as any).payments.map((p: any) => ({ ...p })) : undefined,
+            amountPaid: (pb as any).amountPaid,
+            dueAmount: (pb as any).dueAmount,
+            paymentStatus: pb.paymentStatus,
+            totalAmount: (pb as any).totalAmount,
+          }
         : null;
     })();
     onUpdateRooms(
@@ -1017,9 +1303,19 @@ export default function FrontDeskView({
       defaultGstRate: calc.gstRate
     });
     const matchedBooking = bookings.find(matchesFinalizedBooking) || null;
+    const isActiveStayInvoice = (inv: Invoice): boolean =>
+      Boolean(
+        inv &&
+          !inv.isSeparateInvoice &&
+          !inv.isSuperseded &&
+          !(inv as any).isCreditNote &&
+          inv.invoiceType !== 'Credit Note' &&
+          inv.invoiceStatus !== 'Superseded' &&
+          inv.invoiceStatus !== 'Cancelled'
+      );
     const existingInv = invoices.find(
       inv =>
-        !inv.isSeparateInvoice &&
+        isActiveStayInvoice(inv) &&
         (inv.bookingId === finalizedGuest.id ||
           inv.checkInId === finalizedGuest.id ||
           (matchedBooking && inv.bookingId === matchedBooking.id))
@@ -1102,8 +1398,10 @@ export default function FrontDeskView({
       settings: calc.settings,
     });
 
+    const baseFallbackInvId = `INV-STAY-${finalizedGuest.id}`;
+    const fallbackIdTaken = invoices.some(inv => inv && inv.id === baseFallbackInvId);
     const fallbackRecord = buildInvoiceRecord({
-      id: existingInv?.id || `INV-STAY-${finalizedGuest.id}`,
+      id: existingInv?.id || (fallbackIdTaken ? `${baseFallbackInvId}-R${Date.now()}` : baseFallbackInvId),
       invoiceNumber: invNum,
       hotelId: finalizedGuest.hotelId || hotelSettings?.id,
       bookingId: matchedBooking?.id || finalizedGuest.id,
@@ -1174,34 +1472,45 @@ export default function FrontDeskView({
         : {}),
     };
 
-    const nextInvoices = deduplicateInvoicesByBooking(
-      invoices.some(
-        inv =>
-          inv.id === finalInvoice.id ||
-          (existingInv && inv.id === existingInv.id) ||
-          (!inv.isSeparateInvoice && inv.bookingId && inv.bookingId === finalInvoice.bookingId)
-      )
-        ? invoices.map(inv =>
-            inv.id === finalInvoice.id ||
+    const matchesActiveTargetInv = (inv: Invoice): boolean =>
+      Boolean(
+        inv &&
+          !inv.isSuperseded &&
+          !(inv as any).isCreditNote &&
+          inv.invoiceType !== 'Credit Note' &&
+          inv.invoiceStatus !== 'Superseded' &&
+          inv.invoiceStatus !== 'Cancelled' &&
+          (inv.id === finalInvoice.id ||
             (existingInv && inv.id === existingInv.id) ||
-            (!inv.isSeparateInvoice && inv.bookingId && inv.bookingId === finalInvoice.bookingId)
-              ? finalInvoice
-              : inv
-          )
+            (!inv.isSeparateInvoice && inv.bookingId && inv.bookingId === finalInvoice.bookingId))
+      );
+
+    const nextInvoices = deduplicateInvoicesByBooking(
+      invoices.some(matchesActiveTargetInv)
+        ? invoices.map(inv => (matchesActiveTargetInv(inv) ? finalInvoice : inv))
         : [finalInvoice, ...invoices]
     );
     onUpdateInvoices(nextInvoices);
 
-    // Save the checked-out guest together with a snapshot that allows "Undo Check-Out" for 24 hours
+    // Save the checked-out guest together with a snapshot (captured BEFORE any checkout-modal fines/edits)
+    // that allows "Undo Check-Out" for 24 hours without corrupting pre-checkout charges or payments.
     const { checkoutUndoSnapshot: _prevSnap, ...guestBeforeCheckout } = checkoutConfirmGuest as any;
+    const preModalSnap =
+      preCheckoutGuestSnapRef.current && preCheckoutGuestSnapRef.current.id === finalizedGuest.id
+        ? preCheckoutGuestSnapRef.current
+        : null;
     const undoSnapshot = {
       takenAt: nowIso,
       guest: {
-        payments: guestBeforeCheckout.payments,
-        extraCharges: guestBeforeCheckout.extraCharges,
-        totalAmount: guestBeforeCheckout.totalAmount,
-        discount: guestBeforeCheckout.discount,
-        pendingAmount: guestBeforeCheckout.pendingAmount,
+        payments: preModalSnap?.payments ?? guestBeforeCheckout.payments,
+        extraCharges: preModalSnap?.extraCharges ?? guestBeforeCheckout.extraCharges,
+        cashAmountPaid: preModalSnap?.cashAmountPaid ?? (Number(guestBeforeCheckout.cashAmountPaid) || 0),
+        onlineAmountPaid: preModalSnap?.onlineAmountPaid ?? (Number(guestBeforeCheckout.onlineAmountPaid) || 0),
+        advanceAmount: preModalSnap?.advanceAmount ?? (Number(guestBeforeCheckout.advanceAmount) || 0),
+        totalAmount: preModalSnap?.totalAmount ?? guestBeforeCheckout.totalAmount,
+        gstAmount: preModalSnap?.gstAmount ?? guestBeforeCheckout.gstAmount,
+        discount: preModalSnap?.discount ?? guestBeforeCheckout.discount,
+        pendingAmount: preModalSnap?.pendingAmount ?? guestBeforeCheckout.pendingAmount,
       },
       rooms: priorRoomStates,
       booking: priorBookingState,
@@ -1209,6 +1518,7 @@ export default function FrontDeskView({
       invoice: existingInv || null,
       finalInvoiceId: finalInvoice.id,
     };
+    preCheckoutGuestSnapRef.current = null;
     onUpdateCheckins(
       checkins.map(c =>
         c.id === finalizedGuest.id
@@ -1334,6 +1644,8 @@ export default function FrontDeskView({
     if (!ok) return;
 
     const nowIso = new Date().toISOString();
+    const undoDateStr = nowIso.slice(0, 10);
+    const undoActor = loggedInUser || currentRole || 'Front Desk';
     const {
       checkoutUndoSnapshot: _snap,
       checkedOutDateTime: _outAt,
@@ -1341,23 +1653,95 @@ export default function FrontDeskView({
       ...rest
     } = guest as any;
 
-    const restoredGuest: GuestCheckIn = {
+    const restoredPayments: PaymentRecord[] = Array.isArray(snap?.guest?.payments)
+      ? snap.guest.payments
+      : (guest.payments || []).filter(p => !String((p as any).id || '').startsWith('PAY-CO-'));
+    const restoredExtraCharges: ExtraCharge[] = Array.isArray(snap?.guest?.extraCharges)
+      ? snap.guest.extraCharges
+      : (guest.extraCharges || []).filter(ec => !String(ec?.id || '').startsWith('EC-FINE-'));
+    const restoredDiscount =
+      snap?.guest?.discount !== undefined
+        ? Math.max(0, Number(snap.guest.discount) || 0)
+        : Math.max(0, Number(guest.discount ?? guest.discountAmount ?? 0) || 0);
+
+    // Recompute all scalar payment totals strictly from the restored payments[] array (prevents stale checkout UPI/Cash)
+    const positiveRestoredPayments = restoredPayments.filter(
+      p => p && Number(p.amount) > 0 && !String(p.notes || '').toLowerCase().includes('marked as due')
+    );
+    const restoredCashPaid = r2(
+      positiveRestoredPayments
+        .filter(p => String(p.paymentMethod || '').toLowerCase().includes('cash'))
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    );
+    const restoredOnlinePaid = r2(
+      positiveRestoredPayments
+        .filter(p => !String(p.paymentMethod || '').toLowerCase().includes('cash'))
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    );
+    const restoredAdvanceDeposit = r2(
+      positiveRestoredPayments
+        .filter(p => p.paymentType === 'Advance Deposit')
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    );
+
+    const matchedUndoBooking =
+      bookings.find(
+        b =>
+          b.id === guest.id ||
+          ((guest as any).bookingId && b.id === (guest as any).bookingId) ||
+          (snap?.booking?.id && b.id === snap.booking.id)
+      ) || null;
+
+    // Recalculate authoritative pre-checkout bill totals from restored charges + payments via buildStayBill()
+    const restoredDraftCheckin: GuestCheckIn = {
       ...rest,
       status: 'Active',
       isCheckedOut: false,
-      ...(snap?.guest
+      payments: restoredPayments,
+      extraCharges: restoredExtraCharges,
+      discount: restoredDiscount,
+      discountAmount: restoredDiscount,
+      advanceAmount: restoredAdvanceDeposit,
+      cashAmountPaid: restoredCashPaid,
+      onlineAmountPaid: restoredOnlinePaid,
+    } as GuestCheckIn;
+
+    const restoredBillSettings = normalizeBillSettings(hotelSettings);
+    const restoredStayBill = buildStayBill({
+      booking: matchedUndoBooking
         ? {
-            payments: snap.guest.payments,
-            extraCharges: snap.guest.extraCharges,
-            totalAmount: snap.guest.totalAmount,
-            discount: snap.guest.discount,
-            pendingAmount: snap.guest.pendingAmount,
+            ...matchedUndoBooking,
+            payments: restoredPayments as any,
+            advanceAmount: restoredAdvanceDeposit,
           }
-        : {
-            payments: (guest.payments || []).filter(p => !String((p as any).id || '').startsWith('PAY-CO-')),
-          }),
+        : null,
+      checkin: restoredDraftCheckin,
+      posOrders,
+      waterBottles,
+      rooms,
+      settings: restoredBillSettings,
+      discountOverride: restoredDiscount,
+    });
+
+    const restoredTotal = restoredStayBill.bill.grandTotal;
+    const restoredGst = restoredStayBill.bill.totalTax;
+    const restoredPaidSum = restoredStayBill.bill.receipts;
+    const restoredPending = restoredStayBill.bill.balance;
+    const restoredPaymentStatus: Booking['paymentStatus'] =
+      restoredTotal > 0 && restoredPending <= 0
+        ? 'Fully Paid'
+        : restoredPaidSum > 0
+        ? 'Partially Paid'
+        : 'Unpaid';
+
+    const restoredGuest: GuestCheckIn = {
+      ...restoredDraftCheckin,
+      totalAmount: restoredTotal,
+      finalAmount: restoredTotal,
+      gstAmount: restoredGst,
+      pendingAmount: restoredPending,
       checkoutUndoneAt: nowIso,
-      checkoutUndoneBy: loggedInUser || currentRole || 'Front Desk',
+      checkoutUndoneBy: undoActor,
     } as GuestCheckIn;
 
     onUpdateCheckins(rawCheckinsProp.map(c => (c.id === guest.id ? restoredGuest : c)));
@@ -1375,7 +1759,7 @@ export default function FrontDeskView({
       })
     );
 
-    // Booking: back to checked-in
+    // Booking: back to checked-in with recalculated payments, amountPaid, dueAmount, totalAmount & paymentStatus
     onUpdateBookings(
       bookings.map(b => {
         const pb = snap?.booking;
@@ -1390,34 +1774,155 @@ export default function FrontDeskView({
           isCompleted: pb ? Boolean(pb.isCompleted) : false,
           isCheckedOut: false,
           status: (pb?.status && String(pb.status).toLowerCase() !== 'checkedout' ? pb.status : 'Confirmed') as any,
-        };
+          payments: restoredPayments.map((p, idx) => ({
+            id: p.id || `pay-undo-${b.id}-${idx + 1}`,
+            bookingId: b.id,
+            amount: Number(p.amount) || 0,
+            paymentMethod: p.paymentMethod,
+            paymentType: p.paymentType,
+            date: String((p as any).date || p.dateTime || undoDateStr).slice(0, 10),
+            notes: p.notes,
+          })),
+          advanceAmount: restoredPaidSum,
+          amountPaid: restoredPaidSum,
+          dueAmount: restoredPending,
+          totalAmount: restoredTotal,
+          paymentStatus: restoredPaymentStatus,
+        } as any;
       })
     );
 
-    // Invoice: restore the one that existed before check-out, or drop the one created at check-out
-    if (snap) {
-      if (snap.hadInvoice && snap.invoice) {
-        onUpdateInvoices(
-          invoices.map(inv =>
-            inv.id === snap.invoice.id || inv.id === snap.finalInvoiceId ? (snap.invoice as Invoice) : inv
-          )
+    // Invoice handling on Undo Check-Out:
+    // NEVER silently overwrite or delete a Finalized invoice.
+    // Instead, supersede the finalized invoice with an auditable Credit Note (CN/...) preserving all original financial fields.
+    const targetCheckoutInv = invoices.find(
+      inv =>
+        inv &&
+        !inv.isSuperseded &&
+        !(inv as any).isCreditNote &&
+        inv.invoiceType !== 'Credit Note' &&
+        ((snap?.finalInvoiceId && inv.id === snap.finalInvoiceId) ||
+          (!inv.isSeparateInvoice && (inv.bookingId === guest.id || inv.checkInId === guest.id)))
+    );
+
+    if (targetCheckoutInv) {
+      const targetIsFinalized =
+        targetCheckoutInv.isFinalInvoice === true || targetCheckoutInv.invoiceStatus === 'Finalized';
+
+      if (targetIsFinalized) {
+        const creditNoteId = `CN-UNDO-${targetCheckoutInv.id}-${Date.now()}`;
+        const creditNoteNumber = `CN/${targetCheckoutInv.invoiceNumber}`;
+        const resolvedOrig = resolveConsistentInvoiceTotals(targetCheckoutInv);
+        const origSub = Math.abs(resolvedOrig.subtotal);
+        const origTaxable = Math.abs(resolvedOrig.taxableAmount);
+        const origTax = Math.abs(resolvedOrig.totalTax);
+        const origCgst = Math.abs(resolvedOrig.cgst);
+        const origSgst = Math.abs(resolvedOrig.sgst);
+        const origFinal = Math.abs(resolvedOrig.grandTotal);
+
+        const reversedLedgerLines = Array.isArray(targetCheckoutInv.ledgerLines)
+          ? targetCheckoutInv.ledgerLines
+              .filter((l: any) => l && l.type !== 'receipt')
+              .map((l: any) => ({
+                ...l,
+                charges: -Math.abs(Number(l.charges || 0)),
+                receipts: 0,
+              }))
+          : undefined;
+        const reversedTaxRows = Array.isArray(targetCheckoutInv.taxRows)
+          ? targetCheckoutInv.taxRows.map((tr: any) => ({
+              ...tr,
+              taxable: -Math.abs(Number(tr.taxable || 0)),
+              cgst: -Math.abs(Number(tr.cgst || 0)),
+              sgst: -Math.abs(Number(tr.sgst || 0)),
+              tax: -Math.abs(Number(tr.tax || 0)),
+            }))
+          : undefined;
+        const reversedPaymentsAudit = Array.isArray(targetCheckoutInv.paymentHistory)
+          ? targetCheckoutInv.paymentHistory.map((p: any) => ({ ...p }))
+          : [];
+
+        const creditNoteInvoice: Invoice = {
+          ...targetCheckoutInv,
+          id: creditNoteId,
+          invoiceNumber: creditNoteNumber,
+          invoiceType: 'Credit Note',
+          isCreditNote: true,
+          isSeparateInvoice: true,
+          isFinalInvoice: true,
+          invoiceStatus: 'Finalized',
+          isSuperseded: false,
+          supersededByInvoiceId: undefined,
+          supersededByInvoiceNumber: undefined,
+          supersededAt: undefined,
+          parentInvoiceId: targetCheckoutInv.id,
+          ...({
+            originalInvoiceNumber: targetCheckoutInv.invoiceNumber,
+            reversedPayments: reversedPaymentsAudit,
+          } as any),
+          dateCreated: undoDateStr,
+          date: undoDateStr,
+          subtotal: -origSub,
+          taxableAmount: -origTaxable,
+          gst: -origTax,
+          taxAmount: -origTax,
+          cgst: -origCgst,
+          sgst: -origSgst,
+          finalAmount: -origFinal,
+          totalAmount: -origFinal,
+          advancePaid: 0,
+          paidAmount: 0,
+          amountPaid: 0,
+          pendingAmount: 0,
+          outstandingAmount: 0,
+          isPaid: true,
+          paymentStatus: 'Refunded',
+          paymentHistory: [],
+          ledgerLines: reversedLedgerLines,
+          taxRows: reversedTaxRows,
+          notes: `Credit Note / Reversal for Undo Check-Out of ${targetCheckoutInv.invoiceNumber} by ${undoActor} (${nowIso})`,
+        };
+
+        const supersededInvoices = invoices.map(inv =>
+          inv.id === targetCheckoutInv.id
+            ? {
+                ...inv,
+                isSuperseded: true,
+                invoiceStatus: 'Superseded' as const,
+                supersededByInvoiceId: creditNoteId,
+                supersededByInvoiceNumber: creditNoteNumber,
+                supersededAt: nowIso,
+              }
+            : inv
         );
-      } else if (snap.finalInvoiceId) {
-        onUpdateInvoices(invoices.filter(inv => inv.id !== snap.finalInvoiceId));
+        onUpdateInvoices([creditNoteInvoice, ...supersededInvoices]);
+      } else if (snap) {
+        if (snap.hadInvoice && snap.invoice) {
+          onUpdateInvoices(
+            invoices.map(inv =>
+              inv.id === snap.invoice.id || inv.id === snap.finalInvoiceId ? (snap.invoice as Invoice) : inv
+            )
+          );
+        } else if (snap.finalInvoiceId) {
+          onUpdateInvoices(invoices.filter(inv => inv.id !== snap.finalInvoiceId));
+        }
       }
     }
 
     onAddAuditLog(
       'Check-Out Reverted',
-      `Check-out of ${guest.guestName} (Room ${guest.roomNumber}) was reverted by ${
-        loggedInUser || currentRole || 'Front Desk'
-      } within the 24-hour undo window. Guest is In-House again.`
+      `Check-out of ${guest.guestName} (Room ${guest.roomNumber}) was reverted by ${undoActor} within the 24-hour undo window.${
+        targetCheckoutInv && (targetCheckoutInv.isFinalInvoice || targetCheckoutInv.invoiceStatus === 'Finalized')
+          ? ` Finalized invoice ${targetCheckoutInv.invoiceNumber} superseded via Credit Note CN/${targetCheckoutInv.invoiceNumber}.`
+          : ''
+      } Guest is In-House again.`
     );
     showToast(`Check-Out undone: ${guest.guestName} is back In-House (Room ${guest.roomNumber}).`, 'success');
   };
 
   const handleOpenEditInHouseGuest = (guest: GuestCheckIn) => {
     setEditingInHouseGuest(guest);
+    setEditPaymentDirty(false);
     setEditGuestName(guest.guestName || '');
     setEditGuestMobile(guest.mobile || '');
     setEditGuestEmail(guest.emailAddress || '');
@@ -1429,12 +1934,37 @@ export default function FrontDeskView({
     setEditGuestCheckOutDate(guest.checkOutDate || '');
     setEditGuestNumGuests(guest.numGuests || 1);
     setEditGuestRoomRate(guest.roomRate || 2000);
-    setEditGuestAdvance(guest.advanceAmount || 0);
     setEditGuestCompanyName(guest.companyName || '');
     setEditGuestGstNumber(guest.gstNumber || '');
     setEditGuestHasExtraBed(Boolean(guest.hasExtraBed));
     setEditGuestExtraBedCount(guest.extraBedCount || 1);
     setEditGuestExtraBedRate(guest.extraBedRate || 500);
+    const roomObjForEdit = rooms.find(r => r.number === guest.roomNumber);
+    const epAmtExisting = Number(guest.extraPersonChargeApplied || 0);
+    const hasEpExisting = Boolean(guest.hasExtraPerson || epAmtExisting > 0);
+    const guestNightsInit = stayNights(guest.checkInDate, guest.checkOutDate);
+    const epCntExisting =
+      Number(guest.extraPersonCount) > 0
+        ? Number(guest.extraPersonCount)
+        : hasEpExisting
+        ? 1
+        : 0;
+    const epRateExisting =
+      Number(guest.extraPersonRate) > 0
+        ? Number(guest.extraPersonRate)
+        : epAmtExisting > 0 && epCntExisting > 0
+        ? r2(epAmtExisting / (epCntExisting * Math.max(1, Number(guest.extraPersonNights) || guestNightsInit)))
+        : Number(roomObjForEdit?.extraPersonCharge) || 500;
+    setEditGuestHasExtraPerson(hasEpExisting);
+    setEditGuestExtraPersonCount(epCntExisting);
+    setEditGuestExtraPersonRate(epRateExisting);
+    setEditGuestExtraCharges(
+      Array.isArray(guest.extraCharges) ? guest.extraCharges.map(ec => ({ ...ec })) : []
+    );
+    setEditExtraChargesDirty(false);
+    setEditNewSvcCategory('Other');
+    setEditNewSvcDesc('');
+    setEditNewSvcAmount('');
     setEditGuestDiscount(guest.discount || 0);
     const isNoGst =
       guest.isWithoutGst === true ||
@@ -1446,27 +1976,62 @@ export default function FrontDeskView({
     } else {
       setEditGuestGstMode('gst_extra');
     }
-    const rawPrevMethod = String(guest.paymentMethod || 'UPI');
-    if (['UPI', 'Cash', 'Card', 'Online'].includes(rawPrevMethod)) {
-      setEditGuestPaymentMethod(rawPrevMethod as any);
-      setEditCustomPayLabel('');
-    } else {
-      setEditGuestPaymentMethod('Custom');
-      setEditCustomPayLabel(rawPrevMethod);
+
+    // Collect ALL existing paid transactions (Advance Deposit + Partial Payment + legacy desk/advance fields)
+    const matchedBkg =
+      bookings.find(b => b.id === guest.id || b.id === guest.bookingId) ||
+      bookings.find(b => b.roomNumber === guest.roomNumber && !b.isCompleted && b.guestName === guest.guestName) ||
+      null;
+
+    const rawPayList: any[] = [];
+    const seenIds = new Set<string>();
+    const pushPayRec = (p: any) => {
+      if (!p) return;
+      const amt = Number(p.amount) || 0;
+      if (amt <= 0) return;
+      if (String(p.notes || '').toLowerCase().includes('marked as due')) return;
+      const pid = String(p.id || '');
+      if (pid && seenIds.has(pid)) return;
+      if (pid) seenIds.add(pid);
+      rawPayList.push(p);
+    };
+
+    if (Array.isArray(guest.payments) && guest.payments.length > 0) {
+      guest.payments.forEach(pushPayRec);
+    } else if (Array.isArray((matchedBkg as any)?.payments) && (matchedBkg as any).payments.length > 0) {
+      (matchedBkg as any).payments.forEach(pushPayRec);
     }
 
-    // Detect an existing split (hybrid) advance: more than one payment mode on Advance Deposit records
-    const advRecs = (guest.payments || []).filter(
-      p => p && p.paymentType === 'Advance Deposit' && Number(p.amount) > 0
-    );
     const byMode: Record<SplitMode, number> = { Cash: 0, UPI: 0, Card: 0, Bank: 0, Other: 0 };
     let otherLabel = '';
-    advRecs.forEach(p => {
-      const k = normalizeSplitMode(p.paymentMethod);
-      byMode[k] += Number(p.amount) || 0;
-      if (k === 'Other') otherLabel = String(p.paymentMethod || '');
-    });
+    if (rawPayList.length > 0) {
+      rawPayList.forEach(p => {
+        const methodRaw = p.paymentMethod || p.method || 'Cash';
+        const k = normalizeSplitMode(methodRaw);
+        byMode[k] = r2(byMode[k] + (Number(p.amount) || 0));
+        if (k === 'Other' && !otherLabel) otherLabel = String(methodRaw || '');
+      });
+    } else {
+      // Legacy fallback when payments[] array is absent
+      const cashAmt = Math.max(0, Number(guest.cashAmountPaid) || 0);
+      const onlineAmt = Math.max(0, Number(guest.onlineAmountPaid) || 0);
+      const advAmt = Math.max(0, Number(guest.advanceAmount) || 0);
+      if (cashAmt > 0) byMode.Cash = r2(byMode.Cash + cashAmt);
+      if (onlineAmt > 0) {
+        const k = normalizeSplitMode(guest.paymentMethod || 'UPI');
+        byMode[k === 'Cash' ? 'UPI' : k] = r2(byMode[k === 'Cash' ? 'UPI' : k] + onlineAmt);
+      }
+      if (cashAmt === 0 && onlineAmt === 0 && advAmt > 0) {
+        const k = normalizeSplitMode(guest.paymentMethod || matchedBkg?.paymentMethod || 'UPI');
+        byMode[k] = r2(byMode[k] + advAmt);
+        if (k === 'Other') otherLabel = String(guest.paymentMethod || '');
+      }
+    }
+
+    const totalExistingPaid = r2(SPLIT_MODES.reduce((s, m) => s + byMode[m], 0));
     const usedModes = SPLIT_MODES.filter(m => byMode[m] > 0);
+    setEditGuestAdvance(totalExistingPaid);
+
     if (usedModes.length > 1) {
       setEditHybridPay(true);
       setEditSplit({
@@ -1477,30 +2042,151 @@ export default function FrontDeskView({
         Other: byMode.Other || '',
       });
       setEditSplitOtherLabel(otherLabel);
+      const biggest = usedModes.reduce((best, m) => (byMode[m] > byMode[best] ? m : best), usedModes[0]);
+      setEditGuestPaymentMethod((biggest === 'Bank' ? 'Online' : biggest === 'Other' ? 'Custom' : biggest) as any);
+      setEditCustomPayLabel(biggest === 'Other' ? otherLabel : '');
+    } else if (usedModes.length === 1) {
+      setEditHybridPay(false);
+      setEditSplit(emptySplit);
+      setEditSplitOtherLabel('');
+      const singleMode = usedModes[0];
+      if (singleMode === 'Bank') {
+        setEditGuestPaymentMethod('Online');
+        setEditCustomPayLabel('');
+      } else if (singleMode === 'Other') {
+        setEditGuestPaymentMethod('Custom');
+        setEditCustomPayLabel(otherLabel || String(guest.paymentMethod || ''));
+      } else {
+        setEditGuestPaymentMethod(singleMode as any);
+        setEditCustomPayLabel('');
+      }
     } else {
       setEditHybridPay(false);
       setEditSplit(emptySplit);
       setEditSplitOtherLabel('');
+      const rawPrevMethod = String(guest.paymentMethod || 'UPI');
+      if (['UPI', 'Cash', 'Card', 'Online'].includes(rawPrevMethod)) {
+        setEditGuestPaymentMethod(rawPrevMethod as any);
+        setEditCustomPayLabel('');
+      } else {
+        setEditGuestPaymentMethod('Custom');
+        setEditCustomPayLabel(rawPrevMethod);
+      }
     }
   };
 
+  /**
+   * Single-source-of-truth live calculation for the Edit In-House Guest modal using buildStayBill().
+   * Includes ALL stay charges (Room, Extra Bed, Extra Person, Early Check-In, Water, Laundry, Services, POS)
+   * and avoids double-counting existing payments.
+   */
+  const computeEditGuestBill = () => {
+    if (!editingInHouseGuest) return null;
+    const baseSettings = normalizeBillSettings(hotelSettings as any);
+    const defaultRoomGst = Number(hotelSettings?.defaultGstRate ?? baseSettings.roomGstRate ?? 5) || 5;
+    const gstEnabled = editGuestGstMode !== 'non_gst';
+    const resolvedGstRate = gstEnabled ? defaultRoomGst : 0;
+    const isInclusive = editGuestGstMode === 'including_gst';
+
+    const effectiveSettings = {
+      ...baseSettings,
+      roomGstRate: resolvedGstRate,
+      foodGstRate: gstEnabled ? baseSettings.foodGstRate || resolvedGstRate : 0,
+      roomRateIncludesGst: isInclusive,
+    };
+
+    const matchedBooking =
+      bookings.find(b => b.id === editingInHouseGuest.id || b.id === editingInHouseGuest.bookingId) ||
+      bookings.find(b => b.roomNumber === editingInHouseGuest.roomNumber && !b.isCompleted && b.guestName === editingInHouseGuest.guestName) ||
+      null;
+
+    const {
+      draftCheckin,
+      effectiveExtraBedNights,
+      effectiveExtraPersonNights,
+      extraPersonChargeApplied: draftExtraPersonApplied,
+    } = buildEditedGuestDraftCheckin({
+      guest: editingInHouseGuest,
+      roomNumber: editGuestRoomNo || editingInHouseGuest.roomNumber,
+      checkInDate: editGuestCheckInDate || editingInHouseGuest.checkInDate,
+      checkOutDate: editGuestCheckOutDate || editingInHouseGuest.checkOutDate,
+      numGuests: Number(editGuestNumGuests) || 1,
+      roomRate: Math.max(0, Number(editGuestRoomRate) || 0),
+      hasExtraBed: editGuestHasExtraBed,
+      extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
+      extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
+      hasExtraPerson: editGuestHasExtraPerson,
+      extraPersonCount: editGuestHasExtraPerson ? Math.max(1, Number(editGuestExtraPersonCount) || 1) : 0,
+      extraPersonRate: Math.max(0, Number(editGuestExtraPersonRate) || 0),
+      extraCharges: editGuestExtraCharges,
+      discount: Math.max(0, Number(editGuestDiscount) || 0),
+      gstEnabled,
+      gstRate: resolvedGstRate,
+      isInclusive,
+    });
+
+    // When Extra Services were edited in the modal, let edited draftCheckin.extraCharges be authoritative over stale waterBottles
+    const effectiveWaterBottles = editExtraChargesDirty ? [] : waterBottles;
+
+    const stay = buildStayBill({
+      booking: matchedBooking,
+      checkin: draftCheckin,
+      posOrders,
+      waterBottles: effectiveWaterBottles,
+      rooms,
+      settings: effectiveSettings,
+      gstEnabledOverride: gstEnabled,
+      discountOverride: Math.max(0, Number(editGuestDiscount) || 0),
+    });
+
+    const bill = stay.bill;
+    const totalPaid = editPaymentDirty
+      ? r2(editHybridPay ? editSplitTotal : Math.max(0, Number(editGuestAdvance) || 0))
+      : r2(bill.receipts);
+    const netDue = Math.max(0, r2(bill.grandTotal - totalPaid));
+    const roomAndBed = r2(bill.legacy.roomCharges + bill.legacy.extraBedCharges);
+    const otherStayCharges = r2(
+      bill.legacy.extraPersonCharges +
+      bill.legacy.earlyCheckInCharges +
+      bill.legacy.lateCheckOutCharges +
+      bill.legacy.foodCharges +
+      bill.legacy.waterCharges +
+      bill.legacy.laundryCharges +
+      bill.legacy.serviceCharges +
+      bill.legacy.fineCharges +
+      bill.legacy.otherCharges
+    );
+
+    return {
+      stay,
+      bill,
+      matchedBooking,
+      nights: stay.folio.nights,
+      effectiveExtraBedNights,
+      effectiveExtraPersonNights,
+      extraPersonChargeApplied: draftExtraPersonApplied,
+      roomCharges: bill.legacy.roomCharges,
+      extraBedCharges: bill.legacy.extraBedCharges,
+      roomAndBed,
+      otherStayCharges,
+      subtotal: bill.subtotal,
+      discountVal: bill.discount,
+      gstRate: resolvedGstRate,
+      gstAmt: bill.totalTax,
+      grandTotal: bill.grandTotal,
+      totalPaid,
+      netDue,
+      isInclusive,
+    };
+  };
+
   const getEditGrandTotal = (): number => {
-    if (!editingInHouseGuest) return 0;
-    const d1 = new Date(editGuestCheckInDate);
-    const d2 = new Date(editGuestCheckOutDate);
-    const nights = Math.max(1, Math.ceil(Math.abs(d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)) || 1);
-    const roomRent = Math.max(0, Number(editGuestRoomRate) || 0) * nights;
-    const extraBed = editGuestHasExtraBed
-      ? Math.max(1, Number(editGuestExtraBedCount) || 1) * Math.max(0, Number(editGuestExtraBedRate) || 0) * nights
-      : 0;
-    const sub = Math.max(0, roomRent + extraBed - Math.max(0, Number(editGuestDiscount) || 0));
-    const gstPct = editingInHouseGuest.gstRate !== undefined
-      ? Number(editingInHouseGuest.gstRate)
-      : (hotelSettings?.isGstEnabled === false ? 0 : Number(hotelSettings?.defaultGstRate ?? 5));
-    return sub + Math.round((sub * gstPct) / 100);
+    const calc = computeEditGuestBill();
+    return calc ? calc.grandTotal : 0;
   };
 
   const handleToggleHybridPay = (on: boolean) => {
+    setEditPaymentDirty(true);
     setEditHybridPay(on);
     if (on) {
       // Pre-fill the current advance into the currently selected mode so only the split needs adjusting
@@ -1516,7 +2202,7 @@ export default function FrontDeskView({
       );
       if (editSplitTotal > 0) {
         setEditGuestAdvance(editSplitTotal);
-        setEditGuestPaymentMethod((biggest === 'Bank' ? 'Online' : biggest === 'Other' ? 'UPI' : biggest) as any);
+        setEditGuestPaymentMethod((biggest === 'Bank' ? 'Online' : biggest === 'Other' ? 'Custom' : biggest) as any);
       }
     }
   };
@@ -1557,95 +2243,111 @@ export default function FrontDeskView({
     }
     const stayNights = Math.max(1, Math.ceil(Math.abs(d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)) || 1);
     const targetRoomObj = rooms.find(r => r.number === editGuestRoomNo);
-    const extraBedTotal = editGuestHasExtraBed
-      ? Math.max(1, Number(editGuestExtraBedCount) || 1) * Math.max(0, Number(editGuestExtraBedRate) || 0) * stayNights
-      : 0;
-    const roomRentTotal = Math.max(0, Number(editGuestRoomRate) || 0) * stayNights;
-    const discountVal = Math.max(0, Number(editGuestDiscount) || 0);
-    const netRoomSubtotal = Math.max(0, roomRentTotal + extraBedTotal - discountVal);
-    const dynamicGstPercent = editGuestGstMode === 'non_gst' ? 0 : (Number(hotelSettings?.defaultGstRate ?? 5) || 5);
-    const isInclusive = editGuestGstMode === 'including_gst';
-    let gstTax = 0;
-    let newTotalAmount = 0;
-    if (isInclusive && dynamicGstPercent > 0) {
-      newTotalAmount = netRoomSubtotal;
-      const baseNet = Math.round((netRoomSubtotal / (1 + dynamicGstPercent / 100)) * 100) / 100;
-      gstTax = Math.round((netRoomSubtotal - baseNet) * 100) / 100;
-    } else if (editGuestGstMode === 'gst_extra' && dynamicGstPercent > 0) {
-      gstTax = Math.round((netRoomSubtotal * dynamicGstPercent) / 100);
-      newTotalAmount = netRoomSubtotal + gstTax;
-    } else {
-      gstTax = 0;
-      newTotalAmount = netRoomSubtotal;
-    }
-    const alreadyPaid = (editingInHouseGuest.cashAmountPaid || 0) + (editingInHouseGuest.onlineAmountPaid || 0);
-    // Hybrid / split payment: amount per mode typed by the receptionist (Cash / UPI / Card / Bank / custom)
+    const editCalc = computeEditGuestBill();
+    if (!editCalc) return;
+
+    const {
+      bill: editBill,
+      discountVal,
+      gstRate: dynamicGstPercent,
+      gstAmt: gstTax,
+      grandTotal: newTotalAmount,
+      isInclusive,
+      roomCharges: roomRentTotal,
+      extraBedCharges: extraBedTotal,
+      effectiveExtraBedNights,
+      effectiveExtraPersonNights,
+      extraPersonChargeApplied: editExtraPersonApplied,
+    } = editCalc;
+
+    // Payment reconciliation:
+    // - If payment fields were NOT modified in the modal, preserve existing payments[], IDs, types & scalar fields byte-for-byte!
+    // - If payment fields WERE modified, reconcile cleanly by mode (preserving existing payment IDs where modes match)
+    //   and NEVER double-count cashAmountPaid/onlineAmountPaid on top of payments[].
     const splitEntries = editHybridPay
-      ? SPLIT_MODES.map(m => ({ mode: m, amount: Math.max(0, Number(editSplit[m]) || 0) })).filter(e => e.amount > 0)
+      ? SPLIT_MODES.map(m => ({ mode: m, amount: r2(Math.max(0, Number(editSplit[m]) || 0)) })).filter(e => e.amount > 0)
       : [];
-    const advanceTotal = editHybridPay ? splitEntries.reduce((s, e) => s + e.amount, 0) : Number(editGuestAdvance) || 0;
-    const biggestSplit = splitEntries.reduce(
-      (best, e) => (e.amount > best.amount ? e : best),
-      { mode: 'Cash' as SplitMode, amount: -1 }
-    );
     const splitMethodLabel = (m: SplitMode): string =>
       m === 'Other' ? (editSplitOtherLabel.trim() || 'Other') : m;
     const resolvedSingleEditMethod =
       editGuestPaymentMethod === 'Custom'
         ? (editCustomPayLabel.trim() || 'Custom')
         : editGuestPaymentMethod;
-    const effectiveMethod: any = editHybridPay
-      ? (biggestSplit.mode === 'Bank' ? 'Online' : splitMethodLabel(biggestSplit.mode))
-      : resolvedSingleEditMethod;
-    const effectiveSummaryMethod: string = editHybridPay && splitEntries.length > 0
-      ? splitEntries.map(e => `${splitMethodLabel(e.mode)} ₹${e.amount}`).join(' + ')
-      : resolvedSingleEditMethod;
-    const nowIsoPay = new Date().toISOString();
-    const priorAdvanceRec = (editingInHouseGuest.payments || []).find(
-      p => p && p.paymentType === 'Advance Deposit'
-    );
-    const hadPaymentsArray = Array.isArray(editingInHouseGuest.payments) && editingInHouseGuest.payments.length > 0;
+
     let nextPayments: PaymentRecord[] | undefined = editingInHouseGuest.payments;
-    if (editHybridPay || hadPaymentsArray || editGuestPaymentMethod === 'Custom') {
-      const keptPayments = (editingInHouseGuest.payments || []).filter(
-        p => p && p.paymentType !== 'Advance Deposit'
-      );
-      // Legacy guests (no payments array) keep their desk payment so the folio stays correct
-      const legacyDeskPaid = (editingInHouseGuest.cashAmountPaid || 0) + (editingInHouseGuest.onlineAmountPaid || 0);
-      if (!hadPaymentsArray && legacyDeskPaid > 0) {
-        keptPayments.push({
-          id: `desk-${editingInHouseGuest.id}`,
-          amount: legacyDeskPaid,
-          paymentMethod: (editingInHouseGuest.paymentMethod || 'Cash') as any,
-          paymentType: 'Partial Payment',
-          dateTime: editingInHouseGuest.checkInDate || nowIsoPay,
-          notes: 'Check-In Desk Payment',
-        });
-      }
-      const advanceRecords: PaymentRecord[] = editHybridPay
-        ? splitEntries.map(e => ({
-            id: `PAY-${editingInHouseGuest.id}-adv-${e.mode.toLowerCase()}`,
+    let nextAdvanceAmount = editingInHouseGuest.advanceAmount ?? 0;
+    let nextCashAmountPaid = editingInHouseGuest.cashAmountPaid ?? 0;
+    let nextOnlineAmountPaid = editingInHouseGuest.onlineAmountPaid ?? 0;
+    let effectiveMethod: any = editingInHouseGuest.paymentMethod || 'Cash';
+    let effectiveSummaryMethod: string = String(editingInHouseGuest.paymentMethod || 'Cash');
+    let totalPaidFinal = r2(editCalc.totalPaid);
+
+    if (editPaymentDirty) {
+      const nowIsoPay = new Date().toISOString();
+      const existingPays = Array.isArray(editingInHouseGuest.payments) ? editingInHouseGuest.payments : [];
+      const findExistingForMode = (modeKey: SplitMode) =>
+        existingPays.find(p => p && normalizeSplitMode(p.paymentMethod) === modeKey);
+
+      const desiredTotal = editHybridPay
+        ? r2(splitEntries.reduce((s, e) => s + e.amount, 0))
+        : r2(Math.max(0, Number(editGuestAdvance) || 0));
+      totalPaidFinal = desiredTotal;
+
+      if (editHybridPay) {
+        const biggestSplit = splitEntries.reduce(
+          (best, e) => (e.amount > best.amount ? e : best),
+          { mode: 'Cash' as SplitMode, amount: -1 }
+        );
+        effectiveMethod = biggestSplit.mode === 'Bank' ? 'Online' : splitMethodLabel(biggestSplit.mode);
+        effectiveSummaryMethod =
+          splitEntries.length > 0
+            ? splitEntries.map(e => `${splitMethodLabel(e.mode)} ₹${e.amount}`).join(' + ')
+            : 'Cash';
+        nextPayments = splitEntries.map((e, idx) => {
+          const prevRec = findExistingForMode(e.mode);
+          return {
+            id: prevRec?.id || `PAY-${editingInHouseGuest.id}-adv-${e.mode.toLowerCase()}-${idx + 1}`,
             amount: e.amount,
             paymentMethod: (e.mode === 'Bank' ? 'Bank' : splitMethodLabel(e.mode)) as any,
-            paymentType: 'Advance Deposit' as const,
-            dateTime: priorAdvanceRec?.dateTime || nowIsoPay,
-            notes: `Hybrid payment: ₹${e.amount} via ${splitMethodLabel(e.mode)}`,
-          }))
-        : advanceTotal > 0
-        ? [
+            paymentType: (prevRec?.paymentType || 'Advance Deposit') as any,
+            dateTime: prevRec?.dateTime || nowIsoPay,
+            date: String(prevRec?.date || prevRec?.dateTime || editGuestCheckInDate || nowIsoPay).slice(0, 10),
+            notes: prevRec?.notes || `Hybrid payment: ₹${e.amount} via ${splitMethodLabel(e.mode)}`,
+          };
+        });
+      } else {
+        effectiveMethod = resolvedSingleEditMethod;
+        effectiveSummaryMethod = resolvedSingleEditMethod;
+        if (desiredTotal > 0) {
+          const modeKey = normalizeSplitMode(resolvedSingleEditMethod);
+          const prevRec = findExistingForMode(modeKey) || existingPays[0];
+          nextPayments = [
             {
-              id: priorAdvanceRec?.id || `PAY-${editingInHouseGuest.id}-adv`,
-              amount: advanceTotal,
+              id: prevRec?.id || `PAY-${editingInHouseGuest.id}-adv`,
+              amount: desiredTotal,
               paymentMethod: (editGuestPaymentMethod === 'Online' ? 'Bank' : resolvedSingleEditMethod) as any,
               paymentType: 'Advance Deposit' as const,
-              dateTime: priorAdvanceRec?.dateTime || nowIsoPay,
-              notes: priorAdvanceRec?.notes || `Advance paid (${resolvedSingleEditMethod})`,
+              dateTime: prevRec?.dateTime || nowIsoPay,
+              date: String(prevRec?.date || prevRec?.dateTime || editGuestCheckInDate || nowIsoPay).slice(0, 10),
+              notes: prevRec?.notes || `Advance paid (${resolvedSingleEditMethod})`,
             },
-          ]
-        : [];
-      nextPayments = [...advanceRecords, ...keptPayments];
+          ];
+        } else {
+          nextPayments = [];
+        }
+      }
+      // Keep scalar fields consistent with payments[] so folioCollector & DailyCollectionSheet never double-count
+      nextAdvanceAmount = desiredTotal;
+      nextCashAmountPaid = 0;
+      nextOnlineAmountPaid = 0;
+    } else if (Array.isArray(editingInHouseGuest.payments) && editingInHouseGuest.payments.length > 1) {
+      effectiveSummaryMethod = editingInHouseGuest.payments
+        .filter(p => p && Number(p.amount) > 0)
+        .map(p => `${p.paymentMethod} ₹${Number(p.amount)}`)
+        .join(' + ');
     }
-    const newPendingAmount = Math.max(0, newTotalAmount - advanceTotal - alreadyPaid);
+
+    const newPendingAmount = Math.max(0, r2(newTotalAmount - totalPaidFinal));
 
     const updatedCheckin: GuestCheckIn = {
       ...editingInHouseGuest,
@@ -1672,12 +2374,23 @@ export default function FrontDeskView({
       hasExtraBed: editGuestHasExtraBed,
       extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
       extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
+      extraBedNights: effectiveExtraBedNights,
+      extraBedTotal: extraBedTotal,
+      hasExtraPerson: editGuestHasExtraPerson,
+      extraPersonCount: editGuestHasExtraPerson ? Math.max(1, Number(editGuestExtraPersonCount) || 1) : 0,
+      extraPersonRate: Math.max(0, Number(editGuestExtraPersonRate) || 0),
+      extraPersonNights: effectiveExtraPersonNights,
+      extraPersonChargeApplied: editExtraPersonApplied,
+      extraCharges: editGuestExtraCharges,
       discount: discountVal,
+      discountAmount: discountVal,
       paymentMethod: effectiveMethod,
       payments: nextPayments,
       totalAmount: newTotalAmount,
       finalAmount: newTotalAmount,
-      advanceAmount: advanceTotal,
+      advanceAmount: nextAdvanceAmount,
+      cashAmountPaid: nextCashAmountPaid,
+      onlineAmountPaid: nextOnlineAmountPaid,
       pendingAmount: newPendingAmount,
       bookedRooms:
         editingInHouseGuest.bookedRooms && editingInHouseGuest.bookedRooms.length > 0
@@ -1692,6 +2405,7 @@ export default function FrontDeskView({
                     hasExtraBed: editGuestHasExtraBed,
                     extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
                     extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
+                    extraBedTotal: extraBedTotal,
                     totalRoomAmount: newTotalAmount
                   }
                 : br
@@ -1705,13 +2419,14 @@ export default function FrontDeskView({
               hasExtraBed: editGuestHasExtraBed,
               extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
               extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
+              extraBedTotal: extraBedTotal,
               totalRoomAmount: newTotalAmount
             }]
     };
 
     onUpdateCheckins(checkins.map(c => (c.id === editingInHouseGuest.id ? updatedCheckin : c)));
 
-    // Sync matching Booking record if exists
+    // Sync matching Booking record if exists (preserving existing payments when payment was not edited)
     let matchedBookingObj: Booking | null = null;
     const updatedBookings = bookings.map(b => {
       if (b.id === editingInHouseGuest.id || (b.roomNumber === prevRoomNo && !b.isCompleted && b.guestName === editingInHouseGuest.guestName)) {
@@ -1725,7 +2440,21 @@ export default function FrontDeskView({
           roomNumber: editGuestRoomNo,
           roomType: (targetRoomObj?.category || b.roomType) as any,
           bookedRooms: b.bookedRooms && b.bookedRooms.length > 0
-            ? b.bookedRooms.map((br, idx) => idx === 0 ? { ...br, roomNumber: editGuestRoomNo, category: (targetRoomObj?.category || br.category) as any } : br)
+            ? b.bookedRooms.map((br, idx) =>
+                idx === 0
+                  ? {
+                      ...br,
+                      roomNumber: editGuestRoomNo,
+                      category: (targetRoomObj?.category || br.category) as any,
+                      rate: Number(editGuestRoomRate) || br.rate,
+                      hasExtraBed: editGuestHasExtraBed,
+                      extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
+                      extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
+                      extraBedTotal: extraBedTotal,
+                      totalRoomAmount: newTotalAmount,
+                    }
+                  : br
+              )
             : [{
                 roomNumber: editGuestRoomNo,
                 category: (targetRoomObj?.category || b.roomType || 'Standard') as any,
@@ -1734,7 +2463,7 @@ export default function FrontDeskView({
                 discountAmountOfRoom: 0,
                 guestsCount: Number(editGuestNumGuests) || b.adults || 1,
                 extraGuestsCount: 0,
-                extraPersonChargeApplied: 0,
+                extraPersonChargeApplied: Number(b.extraPersonChargeApplied || 0),
                 totalRoomAmount: newTotalAmount
               }],
           checkInDate: editGuestCheckInDate,
@@ -1744,12 +2473,33 @@ export default function FrontDeskView({
           hasExtraBed: editGuestHasExtraBed,
           extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
           extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
-          paymentMethod: effectiveMethod,
+          extraBedNights: effectiveExtraBedNights,
+          extraBedTotal: extraBedTotal,
+          hasExtraPerson: editGuestHasExtraPerson,
+          extraPersonCount: editGuestHasExtraPerson ? Math.max(1, Number(editGuestExtraPersonCount) || 1) : 0,
+          extraPersonRate: Math.max(0, Number(editGuestExtraPersonRate) || 0),
+          extraPersonNights: effectiveExtraPersonNights,
+          extraPersonChargeApplied: editExtraPersonApplied,
+          roomSubtotal: roomRentTotal,
+          bookingAmount: roomRentTotal,
+          ...({ discount: discountVal } as any),
           roomRateIncludesGst: isInclusive,
           isWithoutGst: editGuestGstMode === 'non_gst',
           gstRate: dynamicGstPercent,
-          bookingAmount: newTotalAmount,
-          advanceAmount: advanceTotal + alreadyPaid
+          gstAmount: gstTax,
+          totalAmount: newTotalAmount,
+          dueAmount: newPendingAmount,
+          ...(editPaymentDirty
+            ? {
+                paymentMethod: effectiveMethod,
+                advanceAmount: totalPaidFinal,
+                amountPaid: totalPaidFinal,
+                payments: (nextPayments || []).map(p => ({
+                  ...p,
+                  bookingId: b.id,
+                })) as any,
+              }
+            : {}),
         };
         matchedBookingObj = syncedB;
         return syncedB;
@@ -1758,66 +2508,82 @@ export default function FrontDeskView({
     });
     onUpdateBookings(updatedBookings);
 
-    // Sync any existing invoice linked to this stay
-    const hasLinkedInvoice = invoices.some(inv => inv.bookingId === editingInHouseGuest.id);
-    if (hasLinkedInvoice) {
+    // Sync ONLY active provisional (non-finalized) stay invoice using centralized buildStayBill() output.
+    // Historical / finalized / superseded invoices are strictly immutable and NEVER silently modified!
+    const hasMutableStayInvoice = invoices.some(
+      inv =>
+        (inv.bookingId === editingInHouseGuest.id || inv.checkInId === editingInHouseGuest.id) &&
+        !inv.isFinalInvoice &&
+        !inv.isSuperseded &&
+        !inv.isSeparateInvoice &&
+        inv.invoiceStatus !== 'Finalized'
+    );
+    if (hasMutableStayInvoice) {
       const updatedInvoices = invoices.map(inv => {
-        if (inv.bookingId === editingInHouseGuest.id) {
-          const food = Number(inv.foodCharges || 0);
-          const water = Number(inv.waterCharges || 0);
-          const other = Number(inv.otherCharges || 0);
-          const sub = roomRentTotal + extraBedTotal + food + water + other;
+        if (
+          (inv.bookingId === editingInHouseGuest.id || inv.checkInId === editingInHouseGuest.id) &&
+          !inv.isFinalInvoice &&
+          !inv.isSuperseded &&
+          !inv.isSeparateInvoice &&
+          inv.invoiceStatus !== 'Finalized'
+        ) {
           const isInvWithoutGst = editGuestGstMode === 'non_gst';
-          const invGstRate = isInvWithoutGst ? 0 : dynamicGstPercent;
-          const netTaxable = Math.max(0, sub - discountVal);
-          let invGst = 0;
-          let invFinal = 0;
-          if (isInclusive && invGstRate > 0) {
-            invFinal = parseFloat(netTaxable.toFixed(2));
-            const baseAmt = parseFloat((netTaxable / (1 + invGstRate / 100)).toFixed(2));
-            invGst = parseFloat((netTaxable - baseAmt).toFixed(2));
-          } else if (invGstRate > 0) {
-            invGst = parseFloat(((netTaxable * invGstRate) / 100).toFixed(2));
-            invFinal = parseFloat((netTaxable + invGst).toFixed(2));
-          } else {
-            invGst = 0;
-            invFinal = parseFloat(netTaxable.toFixed(2));
-          }
-          const invAdv = advanceTotal + alreadyPaid;
-          const invPending = Math.max(0, parseFloat((invFinal - invAdv).toFixed(2)));
+          const invPending = Math.max(0, r2(editBill.grandTotal - totalPaidFinal));
           return {
             ...inv,
             isWithoutGst: isInvWithoutGst,
-            gstRate: invGstRate,
+            gstRate: dynamicGstPercent,
             roomRateIncludesGst: isInclusive,
-            invoiceType: isInvWithoutGst ? 'Bill of Supply' : 'Tax Invoice',
+            invoiceType: isInvWithoutGst ? 'Bill of Supply' : 'Booking Invoice',
             guestName: editGuestName.trim(),
             guestMobile: editGuestMobile.trim(),
             roomNumber: editGuestRoomNo,
             roomNumbers: [editGuestRoomNo],
             checkInDate: editGuestCheckInDate,
             checkOutDate: editGuestCheckOutDate,
-            roomCharges: roomRentTotal,
-            extraBedCharges: extraBedTotal,
+            nights: stayNights,
+            roomCharges: editBill.legacy.roomCharges,
+            extraBedCharges: editBill.legacy.extraBedCharges,
             extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
             extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
-            discount: discountVal,
-            subtotal: sub,
-            gst: invGst,
-            finalAmount: invFinal,
-            advancePaid: invAdv,
+            extraPersonCharges: editBill.legacy.extraPersonCharges,
+            earlyCheckInCharges: editBill.legacy.earlyCheckInCharges,
+            lateCheckOutCharges: editBill.legacy.lateCheckOutCharges,
+            foodCharges: editBill.legacy.foodCharges,
+            waterCharges: editBill.legacy.waterCharges,
+            laundryCharges: editBill.legacy.laundryCharges,
+            serviceCharges: editBill.legacy.serviceCharges,
+            otherCharges: editBill.legacy.otherCharges,
+            fineCharges: editBill.legacy.fineCharges,
+            discount: editBill.discount,
+            subtotal: editBill.subtotal,
+            taxableAmount: editBill.taxableAmount,
+            gst: editBill.totalTax,
+            cgst: editBill.cgst,
+            sgst: editBill.sgst,
+            taxAmount: editBill.totalTax,
+            taxRows: editBill.taxRows,
+            finalAmount: editBill.grandTotal,
+            totalAmount: editBill.grandTotal,
+            advancePaid: totalPaidFinal,
+            paidAmount: totalPaidFinal,
+            amountPaid: totalPaidFinal,
             pendingAmount: invPending,
+            outstandingAmount: invPending,
             isPaid: invPending <= 0,
-            paymentMethod: effectiveSummaryMethod as any,
-            ...(Array.isArray(nextPayments) && nextPayments.length > 1
+            paymentStatus: invPending <= 0 ? 'Paid' : totalPaidFinal > 0 ? 'Partially Paid' : 'Unpaid',
+            ledgerLines: editBill.lines,
+            amountInWords: editBill.amountInWords,
+            ...(editPaymentDirty
               ? {
-                  paymentHistory: nextPayments
+                  paymentMethod: effectiveSummaryMethod as any,
+                  paymentHistory: (nextPayments || [])
                     .filter(p => p && Number(p.amount) > 0)
                     .map(p => ({
                       id: p.id,
                       amount: Number(p.amount),
                       paymentMethod: String(p.paymentMethod || 'Cash') as any,
-                      date: String(p.dateTime || editGuestCheckInDate || '').slice(0, 10),
+                      date: String((p as any).date || p.dateTime || editGuestCheckInDate || '').slice(0, 10),
                       notes: p.notes,
                     })),
                 }
@@ -1859,7 +2625,7 @@ export default function FrontDeskView({
       checkOutDate: editGuestCheckOutDate,
       nights: stayNights,
       bookingAmount: newTotalAmount,
-      advanceAmount: advanceTotal + alreadyPaid,
+      advanceAmount: totalPaidFinal,
       hasExtraBed: editGuestHasExtraBed,
       extraBedCount: editGuestHasExtraBed ? Math.max(1, Number(editGuestExtraBedCount) || 1) : 0,
       extraBedRate: Math.max(0, Number(editGuestExtraBedRate) || 0),
@@ -1878,6 +2644,27 @@ export default function FrontDeskView({
     e.preventDefault();
     applyEditInHouseGuestChanges(false);
   };
+
+  // Auto-open Edit Checked-In Guest modal when routed from BookingDetailsDrawer -> Edit Details (UI-BUG-03 Part B)
+  useEffect(() => {
+    if (currentSubTab !== 'inhouse') return;
+    try {
+      const targetId = sessionStorage.getItem('pms_open_edit_guest_id');
+      if (!targetId) return;
+      const targetGuest = checkins.find(
+        (c) => c.id === targetId || (c as any).bookingId === targetId
+      );
+      if (targetGuest && !targetGuest.checkedOutDateTime) {
+        sessionStorage.removeItem('pms_open_edit_guest_id');
+        handleOpenGuestOnCheckInForm(targetGuest, false);
+      } else if (targetGuest) {
+        // Guest is already checked out: clear pending edit trigger so user lands cleanly on Checked-Out History
+        sessionStorage.removeItem('pms_open_edit_guest_id');
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [currentSubTab, checkins]);
   
   // Find water bottle product in inventory for current hotel (declared before state hooks that read it)
   const waterBottleInventoryProduct = inventoryProducts.find(
@@ -2105,8 +2892,46 @@ export default function FrontDeskView({
   const [allocateServiceReqId, setAllocateServiceReqId] = useState('');
   const allocatingServiceLockRef = useRef(false);
 
-  // Active checkins (not yet checked out)
-  const activeCheckins = checkins.filter(c => !c.checkedOutDateTime);
+  // Active checkins (not yet checked out) + fallback for any Checked-In booking without a checkin mirror
+  const activeCheckins = React.useMemo(() => {
+    const activeFromCheckins = checkins.filter(
+      c => !c.checkedOutDateTime && String(c.status || '').toLowerCase() !== 'checked out' && String(c.status || '').toLowerCase() !== 'checked-out'
+    );
+    const existingBookingIds = new Set(activeFromCheckins.map(c => String(c.bookingId || c.id || '').trim()));
+    const fallbackFromBookings: GuestCheckIn[] = bookings
+      .filter(b => {
+        const st = String(b.status || '').toLowerCase().replace(/[-\s]+/g, '');
+        const isCheckedInState = Boolean(b.isCheckedIn) || st === 'checkedin';
+        const isDone = Boolean(b.isCompleted) || st === 'checkedout' || st === 'cancelled' || st === 'noshow';
+        return isCheckedInState && !isDone && !existingBookingIds.has(String(b.id || '').trim());
+      })
+      .map(b => ({
+        id: b.id,
+        bookingId: b.id,
+        hotelId: b.hotelId,
+        guestName: b.guestName,
+        mobile: b.mobile,
+        email: b.email,
+        aadhaarNumber: b.aadhaarNumber || '',
+        address: b.address || '',
+        roomNumber: b.roomNumber,
+        roomType: b.roomType,
+        tariff: Number(b.tariff || b.totalAmount || 0),
+        checkInDate: b.checkInDate,
+        checkOutDate: b.checkOutDate,
+        checkInDateTime: b.createdAt || `${b.checkInDate} 12:00`,
+        nights: b.nights || 1,
+        adults: b.adults || 1,
+        children: b.children || 0,
+        advanceAmount: Number(b.advanceAmount || 0),
+        paymentMethod: b.paymentMethod || 'Cash',
+        bookingSource: b.bookingSource || 'Direct',
+        status: 'Checked In',
+        payments: Array.isArray(b.payments) ? b.payments : [],
+        bookedRooms: b.bookedRooms,
+      } as unknown as GuestCheckIn));
+    return [...activeFromCheckins, ...fallbackFromBookings];
+  }, [checkins, bookings]);
 
   // Segregated records from waterBottles array
   const waterOnlyRecords = waterBottles.filter(w => !w.recordType || w.recordType === 'water');
@@ -3629,6 +4454,17 @@ export default function FrontDeskView({
           loggedInUser={loggedInUser}
           travelAgents={travelAgents}
           onUpdateTravelAgents={onUpdateTravelAgents}
+          initialEditCheckIn={checkInFormTargetGuest}
+          initialViewOnly={checkInFormReadOnly}
+          onClearInitialEditCheckIn={() => {
+            setCheckInFormTargetGuest(null);
+            setCheckInFormReadOnly(false);
+          }}
+          onBackToInHouse={() => {
+            setCheckInFormTargetGuest(null);
+            setCheckInFormReadOnly(false);
+            onSelectSubTab('inhouse');
+          }}
         />
       )}
 
@@ -3854,15 +4690,22 @@ export default function FrontDeskView({
                           <td className="p-3.5 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-2 flex-nowrap">
                               <button
+                                onClick={() => handleOpenGuestOnCheckInForm(guest, true)}
+                                title="View All Stay Details on Check-In Form (Read-Only)"
+                                className="px-3 py-1.5 bg-[#EFF6FF] hover:bg-[#DBEAFE] text-[#1E40AF] border border-[#BFDBFE] font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-[#2563EB]" /> View
+                              </button>
+                              <button
                                 onClick={() => handleOpenEditInHouseGuest(guest)}
                                 title="Room Transfer / Move to another room"
-                                className="px-2.5 py-1.5 bg-[#EFF6FF] hover:bg-[#DBEAFE] text-[#1E40AF] border border-[#BFDBFE] font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
+                                className="px-2.5 py-1.5 bg-[#F4F6F9] hover:bg-[#E6EBF2] text-[#263449] border border-[#C2CDD9] font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
                               >
                                 <ArrowRightLeft className="w-3.5 h-3.5 text-[#2563EB]" /> Transfer Room
                               </button>
                               <button
-                                onClick={() => handleOpenEditInHouseGuest(guest)}
-                                title="Edit Walk-In / Stay Details"
+                                onClick={() => handleOpenGuestOnCheckInForm(guest, false)}
+                                title="Edit Stay Details on Check-In Form (Auto-Filled)"
                                 className="px-3 py-1.5 bg-[#C49A3A] hover:bg-[#A8812B] text-[#17120F] font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
                               >
                                 <RefreshCw className="w-3.5 h-3.5" /> Edit
@@ -4031,7 +4874,23 @@ export default function FrontDeskView({
                                 ac.roomNumber === g.roomNumber &&
                                 isSameGuestPerson(ac, g)
                             );
-                          const pendingDue = Math.max(0, Number(g.pendingAmount || 0));
+                          const activeStayInvForHistory = invoices.find(
+                            (inv) =>
+                              inv &&
+                              !inv.isSeparateInvoice &&
+                              !inv.isSuperseded &&
+                              !(inv as any).isCreditNote &&
+                              inv.invoiceType !== 'Credit Note' &&
+                              inv.invoiceStatus !== 'Superseded' &&
+                              inv.invoiceStatus !== 'Cancelled' &&
+                              (inv.bookingId === g.id || inv.checkInId === g.id)
+                          );
+                          const displayFinalBill = activeStayInvForHistory
+                            ? r2(Number(activeStayInvForHistory.finalAmount ?? activeStayInvForHistory.totalAmount ?? g.totalAmount ?? 0))
+                            : r2(Number(g.totalAmount || 0));
+                          const pendingDue = activeStayInvForHistory
+                            ? Math.max(0, r2(Number(activeStayInvForHistory.pendingAmount ?? activeStayInvForHistory.outstandingAmount ?? g.pendingAmount ?? 0)))
+                            : Math.max(0, r2(Number(g.pendingAmount || 0)));
                           return (
                             <tr key={g.id} className="hover:bg-[#FDF8ED] transition-colors">
                               <td className="p-3 whitespace-nowrap font-mono font-bold text-[#263449]">
@@ -4039,9 +4898,16 @@ export default function FrontDeskView({
                               </td>
                               <td className="p-3 whitespace-nowrap">
                                 <div className="font-serif font-bold text-sm text-[#263449] leading-tight">{g.guestName}</div>
-                                <span className="inline-block mt-0.5 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px]">
-                                  Checked-Out
-                                </span>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className="inline-block px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px]">
+                                    Checked-Out
+                                  </span>
+                                  {activeStayInvForHistory?.invoiceNumber && (
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-[#FDF8ED] border border-[#C49A3A]/40 text-[#8B691E] font-mono font-bold text-[9.5px]">
+                                      {activeStayInvForHistory.invoiceNumber}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className="p-3 whitespace-nowrap font-mono font-semibold text-[#263449]">{g.mobile}</td>
                               <td className="p-3 whitespace-nowrap font-mono text-slate-700">
@@ -4056,7 +4922,7 @@ export default function FrontDeskView({
                                 ) : null}
                               </td>
                               <td className="p-3 whitespace-nowrap font-mono font-bold text-[#15805D]">
-                                ₹{Number(g.totalAmount || 0).toLocaleString('en-IN')}
+                                ₹{displayFinalBill.toLocaleString('en-IN')}
                               </td>
                               <td className="p-3 whitespace-nowrap font-mono font-bold">
                                 {pendingDue > 0 ? (
@@ -5406,15 +6272,58 @@ export default function FrontDeskView({
             }))
         ];
 
+        const grcMatchedBooking =
+          bookings.find(
+            b =>
+              b.id === liveGrc.id ||
+              ((liveGrc as any).bookingId && b.id === (liveGrc as any).bookingId)
+          ) || null;
+        const grcRoomObj = rooms.find(r => r.number === liveGrc.roomNumber);
+        const grcBillSettings = normalizeBillSettings(hotelSettings);
+        const grcTermsList = Array.isArray(hotelSettings?.grcTerms)
+          ? hotelSettings.grcTerms.filter(t => String(t || '').trim().length > 0)
+          : undefined;
+        const officialGrcRegNo =
+          String((liveGrc as any).grcNumber || (grcMatchedBooking as any)?.grcNumber || '').trim() ||
+          'PENDING (Assigned by Server)';
+        const officialGrcHtml = renderGrcHtml(
+          toGrcPrintData({
+            hotel: hotelSettings,
+            regNo: officialGrcRegNo,
+            booking: grcMatchedBooking,
+            checkin: liveGrc,
+            roomRate: Number(liveGrc.roomRate) || grcRoomObj?.rate,
+            roomType: liveGrc.roomType || grcRoomObj?.category,
+            settings: grcBillSettings,
+            terms: grcTermsList && grcTermsList.length > 0 ? grcTermsList : defaultGrcTerms(),
+          })
+        );
+
         return (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-            <div className="bg-white text-gray-900 rounded-2xl p-6 max-w-xl w-full space-y-4 shadow-2xl relative border-2 border-luxury-gold-500 max-h-[90vh] overflow-y-auto">
+            <div className="bg-white text-gray-900 rounded-2xl p-6 max-w-4xl w-full space-y-4 shadow-2xl relative border-2 border-luxury-gold-500 max-h-[92vh] overflow-y-auto">
               <button onClick={() => setViewingGrc(null)} className="absolute top-4 right-4 text-gray-500 hover:text-black cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
-              <div className="border-b pb-3">
-                <h3 className="text-lg font-serif font-bold text-luxury-brown-950">GUEST REGISTRATION SLIP (GRC)</h3>
-                <p className="text-xs text-gray-500 font-mono">Ref No: {liveGrc.id}</p>
+              <div className="border-b pb-3 flex flex-wrap items-center justify-between gap-2 pr-8">
+                <div>
+                  <h3 className="text-lg font-serif font-bold text-luxury-brown-950">GUEST REGISTRATION CARD (GRC)</h3>
+                  <p className="text-xs text-gray-500 font-mono">
+                    REG No: <strong className="text-amber-800">{officialGrcRegNo}</strong> • Booking Ref: {liveGrc.id}
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 font-mono text-xs font-bold">
+                  {officialGrcRegNo}
+                </span>
+              </div>
+
+              {/* Official Rendered GRC Document Preview (Exact Print/PDF Replica) */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-100">
+                <iframe
+                  srcDoc={officialGrcHtml}
+                  title={`Official GRC ${officialGrcRegNo}`}
+                  className="w-full h-[54vh] bg-white border-0"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-xs">
@@ -5711,7 +6620,17 @@ export default function FrontDeskView({
                     max={10}
                     value={editGuestNumGuests}
                     onWheel={(e) => e.currentTarget.blur()}
-                    onChange={e => setEditGuestNumGuests(Number(e.target.value))}
+                    onChange={e => {
+                      const nextCount = Math.max(1, Number(e.target.value) || 1);
+                      setEditGuestNumGuests(nextCount);
+                      const rmObj = rooms.find(r => r.number === editGuestRoomNo);
+                      const epCalc = computeExtraPersonForOccupancy(nextCount, rmObj, editGuestExtraPersonRate || 500);
+                      setEditGuestHasExtraPerson(epCalc.hasExtraPerson);
+                      setEditGuestExtraPersonCount(epCalc.extraPersonCount);
+                      if (epCalc.hasExtraPerson) {
+                        setEditGuestExtraPersonRate(epCalc.extraPersonRate);
+                      }
+                    }}
                     className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-[#263449] font-mono"
                   />
                 </div>
@@ -5829,6 +6748,162 @@ export default function FrontDeskView({
                   )}
                 </div>
 
+                {/* Extra Person Row (Auto-synced with Room Base Occupancy + Manual Override) */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-luxury-brown-200/60">
+                  <label className="inline-flex items-center gap-2 font-bold text-[#263449] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editGuestHasExtraPerson}
+                      onChange={e => {
+                        const on = e.target.checked;
+                        setEditGuestHasExtraPerson(on);
+                        if (on && editGuestExtraPersonCount <= 0) {
+                          setEditGuestExtraPersonCount(1);
+                        }
+                        if (!on) {
+                          setEditGuestExtraPersonCount(0);
+                        }
+                      }}
+                      className="rounded border-luxury-brown-300 text-[#C49A3A] focus:ring-[#C49A3A]"
+                    />
+                    <span>Extra Person Charges</span>
+                    <span className="text-[10px] font-normal text-slate-500">
+                      (Base Occ: {Math.max(1, Number(rooms.find(r => r.number === editGuestRoomNo)?.baseOccupancy) || 2)})
+                    </span>
+                  </label>
+                  {editGuestHasExtraPerson && (
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-slate-500">Persons:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={6}
+                          value={editGuestExtraPersonCount}
+                          onWheel={(e) => e.currentTarget.blur()}
+                          onChange={e => setEditGuestExtraPersonCount(Math.max(1, Number(e.target.value) || 1))}
+                          className="w-14 px-2 py-1 bg-white border border-luxury-brown-200 rounded font-mono font-bold text-[#263449]"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-slate-500">Rate/Night (₹):</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={editGuestExtraPersonRate}
+                          onWheel={(e) => e.currentTarget.blur()}
+                          onChange={e => setEditGuestExtraPersonRate(Math.max(0, Number(e.target.value) || 0))}
+                          className="w-20 px-2 py-1 bg-white border border-luxury-brown-200 rounded font-mono font-bold text-[#C49A3A]"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Extra Services (Water, Laundry, Other) Editing */}
+                <div className="pt-2 border-t border-luxury-brown-200/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono uppercase font-bold text-[#263449]">
+                      Extra Service Charges ({editGuestExtraCharges.length})
+                    </span>
+                  </div>
+                  {editGuestExtraCharges.length > 0 && (
+                    <div className="space-y-1.5">
+                      {editGuestExtraCharges.map((ec, idx) => (
+                        <div key={ec.id || idx} className="grid grid-cols-12 gap-1.5 items-center">
+                          <input
+                            type="text"
+                            value={ec.description}
+                            onChange={e => {
+                              setEditExtraChargesDirty(true);
+                              const val = e.target.value;
+                              setEditGuestExtraCharges(prev =>
+                                prev.map((item, i) => (i === idx ? { ...item, description: val } : item))
+                              );
+                            }}
+                            className="col-span-7 px-2 py-1 bg-white border border-luxury-brown-200 rounded text-xs text-[#263449]"
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            value={ec.amount}
+                            onWheel={(e) => e.currentTarget.blur()}
+                            onChange={e => {
+                              setEditExtraChargesDirty(true);
+                              const amt = Math.max(0, Number(e.target.value) || 0);
+                              setEditGuestExtraCharges(prev =>
+                                prev.map((item, i) => (i === idx ? { ...item, amount: amt } : item))
+                              );
+                            }}
+                            className="col-span-3 px-2 py-1 bg-white border border-luxury-brown-200 rounded font-mono font-bold text-xs text-[#263449] text-right"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditExtraChargesDirty(true);
+                              setEditGuestExtraCharges(prev => prev.filter((_, i) => i !== idx));
+                            }}
+                            className="col-span-2 px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-[10px] font-bold cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-12 gap-1.5 items-center">
+                    <select
+                      value={editNewSvcCategory}
+                      onChange={e => setEditNewSvcCategory(e.target.value as ExtraCharge['category'])}
+                      className="col-span-3 px-2 py-1 bg-white border border-luxury-brown-200 rounded text-[11px] text-[#263449]"
+                    >
+                      <option value="Water Bottle">Water Bottle</option>
+                      <option value="Laundry">Laundry</option>
+                      <option value="Food">Food</option>
+                      <option value="Other">Other</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={editNewSvcDesc}
+                      onChange={e => setEditNewSvcDesc(e.target.value)}
+                      placeholder="Service description"
+                      className="col-span-5 px-2 py-1 bg-white border border-luxury-brown-200 rounded text-xs text-[#263449]"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      value={editNewSvcAmount}
+                      onWheel={(e) => e.currentTarget.blur()}
+                      onChange={e => setEditNewSvcAmount(e.target.value)}
+                      placeholder="₹"
+                      className="col-span-2 px-2 py-1 bg-white border border-luxury-brown-200 rounded font-mono text-xs text-[#263449]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const amt = r2(Math.max(0, Number(editNewSvcAmount) || 0));
+                        if (amt <= 0) return;
+                        setEditExtraChargesDirty(true);
+                        setEditGuestExtraCharges(prev => [
+                          ...prev,
+                          {
+                            id: `ec-edit-${Date.now()}-${prev.length}`,
+                            category: editNewSvcCategory,
+                            description: editNewSvcDesc.trim() || editNewSvcCategory,
+                            amount: amt,
+                            dateTime: editGuestCheckInDate || new Date().toISOString().slice(0, 10),
+                          },
+                        ]);
+                        setEditNewSvcDesc('');
+                        setEditNewSvcAmount('');
+                      }}
+                      className="col-span-2 px-2 py-1 bg-[#FDF8ED] hover:bg-[#FBF4E0] text-[#8B691E] border border-[#C49A3A]/60 rounded text-[11px] font-bold cursor-pointer"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-luxury-brown-200/60">
                   <div>
                     <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">Discount (₹)</label>
@@ -5851,7 +6926,10 @@ export default function FrontDeskView({
                       value={editHybridPay ? editSplitTotal : editGuestAdvance}
                       readOnly={editHybridPay}
                       onWheel={(e) => e.currentTarget.blur()}
-                      onChange={e => setEditGuestAdvance(Math.max(0, Number(e.target.value) || 0))}
+                      onChange={e => {
+                        setEditPaymentDirty(true);
+                        setEditGuestAdvance(Math.max(0, Number(e.target.value) || 0));
+                      }}
                       className={`w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-emerald-700 font-mono font-bold ${
                         editHybridPay ? 'bg-emerald-50 cursor-not-allowed' : 'bg-white'
                       }`}
@@ -5867,7 +6945,10 @@ export default function FrontDeskView({
                       <div className="space-y-1.5">
                         <select
                           value={editGuestPaymentMethod}
-                          onChange={e => setEditGuestPaymentMethod(e.target.value as any)}
+                          onChange={e => {
+                            setEditPaymentDirty(true);
+                            setEditGuestPaymentMethod(e.target.value as any);
+                          }}
                           className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-[#263449] font-bold"
                         >
                           <option value="UPI">UPI / QR Scan</option>
@@ -5880,7 +6961,10 @@ export default function FrontDeskView({
                           <input
                             type="text"
                             value={editCustomPayLabel}
-                            onChange={e => setEditCustomPayLabel(e.target.value)}
+                            onChange={e => {
+                              setEditPaymentDirty(true);
+                              setEditCustomPayLabel(e.target.value);
+                            }}
                             placeholder="Type how guest paid (e.g. Paytm, Cheque, Wallet)"
                             className="w-full px-3 py-1.5 bg-white border border-[#C49A3A] rounded-lg text-xs text-[#263449] font-semibold"
                           />
@@ -5904,13 +6988,12 @@ export default function FrontDeskView({
 
                     {editHybridPay && (() => {
                       const grand = getEditGrandTotal();
-                      const alreadyPaidDesk = (editingInHouseGuest.cashAmountPaid || 0) + (editingInHouseGuest.onlineAmountPaid || 0);
-                      const remaining = Math.max(0, grand - alreadyPaidDesk - editSplitTotal);
-                      const over = editSplitTotal + alreadyPaidDesk > grand;
+                      const remaining = Math.max(0, r2(grand - editSplitTotal));
+                      const over = editSplitTotal > grand;
                       return (
                         <div className="p-3 bg-[#FDF8ED] border border-[#C49A3A]/60 rounded-xl space-y-2.5">
                           <p className="text-[11px] text-slate-600">
-                            Enter the exact amount collected from the guest across Cash, UPI, Card, Bank, or Custom payment modes below:
+                            Enter the exact total amount collected from the guest across Cash, UPI, Card, Bank, or Custom payment modes below:
                           </p>
                           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                             {SPLIT_MODES.map(m => (
@@ -5923,12 +7006,13 @@ export default function FrontDeskView({
                                   min={0}
                                   value={editSplit[m]}
                                   placeholder="0"
-                                  onChange={e =>
+                                  onChange={e => {
+                                    setEditPaymentDirty(true);
                                     setEditSplit(prev => ({
                                       ...prev,
                                       [m]: e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0),
-                                    }))
-                                  }
+                                    }));
+                                  }}
                                   className="w-full px-2.5 py-2 bg-white border border-luxury-brown-200 rounded-lg font-mono font-bold text-[#263449]"
                                 />
                               </div>
@@ -5941,7 +7025,10 @@ export default function FrontDeskView({
                             <input
                               type="text"
                               value={editSplitOtherLabel}
-                              onChange={e => setEditSplitOtherLabel(e.target.value)}
+                              onChange={e => {
+                                setEditPaymentDirty(true);
+                                setEditSplitOtherLabel(e.target.value);
+                              }}
                               placeholder="e.g. Paytm QR / Cheque / Company Transfer..."
                               className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-[#263449]"
                             />
@@ -5961,7 +7048,7 @@ export default function FrontDeskView({
                             </span>
                             <span className={`font-bold ${over ? 'text-rose-700' : remaining > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
                               {over
-                                ? `Paid is ₹${(editSplitTotal + alreadyPaidDesk - grand).toLocaleString('en-IN')} more than the bill`
+                                ? `Paid is ₹${r2(editSplitTotal - grand).toLocaleString('en-IN')} more than the bill`
                                 : remaining > 0
                                 ? `Remaining: ₹${remaining.toLocaleString('en-IN')}`
                                 : 'Fully paid'}
@@ -5974,9 +7061,10 @@ export default function FrontDeskView({
                                 <button
                                   key={m}
                                   type="button"
-                                  onClick={() =>
-                                    setEditSplit(prev => ({ ...prev, [m]: (Number(prev[m]) || 0) + remaining }))
-                                  }
+                                  onClick={() => {
+                                    setEditPaymentDirty(true);
+                                    setEditSplit(prev => ({ ...prev, [m]: (Number(prev[m]) || 0) + remaining }));
+                                  }}
                                   className="px-2.5 py-1 bg-white hover:bg-[#FBF4E0] border border-[#C49A3A]/60 rounded-lg text-[11px] font-bold text-[#263449] cursor-pointer"
                                 >
                                   + {m === 'Bank' ? 'Bank / Online' : m}
@@ -6001,59 +7089,44 @@ export default function FrontDeskView({
                 />
               </div>
 
-              {/* Live Recalculated Stay Summary (Crisp Light Luxury Card) */}
+              {/* Live Recalculated Stay Summary (Centralized buildStayBill — All Charges Included!) */}
               {(() => {
-                const d1 = new Date(editGuestCheckInDate);
-                const d2 = new Date(editGuestCheckOutDate);
-                const nights = Math.max(1, Math.ceil(Math.abs(d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)) || 1);
-                const roomRent = Math.max(0, Number(editGuestRoomRate) || 0) * nights;
-                const extraBed = editGuestHasExtraBed
-                  ? Math.max(1, Number(editGuestExtraBedCount) || 1) * Math.max(0, Number(editGuestExtraBedRate) || 0) * nights
-                  : 0;
-                const disc = Math.max(0, Number(editGuestDiscount) || 0);
-                const sub = Math.max(0, roomRent + extraBed - disc);
-                const defaultRate = Number(hotelSettings?.defaultGstRate ?? 5) || 5;
-                const gstPct = editGuestGstMode === 'non_gst' ? 0 : defaultRate;
-                let gstAmt = 0;
-                let grandTotal = 0;
-                if (editGuestGstMode === 'including_gst' && gstPct > 0) {
-                  grandTotal = sub;
-                  const baseAmt = Math.round((sub / (1 + gstPct / 100)) * 100) / 100;
-                  gstAmt = Math.round((sub - baseAmt) * 100) / 100;
-                } else if (editGuestGstMode === 'gst_extra' && gstPct > 0) {
-                  gstAmt = Math.round((sub * gstPct) / 100);
-                  grandTotal = sub + gstAmt;
-                } else {
-                  gstAmt = 0;
-                  grandTotal = sub;
-                }
-                const alreadyPaid = (editingInHouseGuest.cashAmountPaid || 0) + (editingInHouseGuest.onlineAmountPaid || 0);
-                const totalPaid = (editHybridPay ? editSplitTotal : Math.max(0, Number(editGuestAdvance) || 0)) + alreadyPaid;
-                const netDue = Math.max(0, grandTotal - totalPaid);
-
+                const calc = computeEditGuestBill();
+                if (!calc) return null;
                 return (
                   <div className="bg-[#FFFDF7] text-[#263449] p-3.5 rounded-xl font-mono text-[11px] space-y-2 border-2 border-[#E6D9B3]">
                     <div className="flex justify-between items-center border-b border-[#E6D9B3] pb-1.5">
-                      <span className="text-[#8B691E] font-bold uppercase">Live Updated Stay Summary ({nights} Night{nights > 1 ? 's' : ''})</span>
-                      <span className="text-[#263449] font-bold bg-[#FBF4E0] px-2 py-0.5 rounded border border-[#E6D9B3]">Room {editGuestRoomNo}</span>
+                      <span className="text-[#8B691E] font-bold uppercase">
+                        Live Updated Stay Summary ({calc.nights} Night{calc.nights > 1 ? 's' : ''})
+                      </span>
+                      <span className="text-[#263449] font-bold bg-[#FBF4E0] px-2 py-0.5 rounded border border-[#E6D9B3]">
+                        Room {editGuestRoomNo}
+                      </span>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                       <div>
                         <span className="text-[#5A6B82] block text-[9px] uppercase font-semibold">Room + Extra Bed</span>
-                        <span className="font-bold text-[#17120F]">₹{(roomRent + extraBed).toLocaleString()}</span>
+                        <span className="font-bold text-[#17120F]">₹{calc.roomAndBed.toLocaleString('en-IN')}</span>
                       </div>
                       <div>
-                        <span className="text-[#5A6B82] block text-[9px] uppercase font-semibold">Discount / GST ({gstPct}%)</span>
-                        <span className="font-bold text-[#8B691E]">-₹{disc} / +₹{gstAmt}</span>
+                        <span className="text-[#5A6B82] block text-[9px] uppercase font-semibold">Other Stay Charges</span>
+                        <span className="font-bold text-[#263449]">₹{calc.otherStayCharges.toLocaleString('en-IN')}</span>
+                      </div>
+                      <div>
+                        <span className="text-[#5A6B82] block text-[9px] uppercase font-semibold">Discount / GST ({calc.gstRate}%)</span>
+                        <span className="font-bold text-[#8B691E]">-₹{calc.discountVal.toLocaleString('en-IN')} / +₹{calc.gstAmt.toLocaleString('en-IN')}</span>
                       </div>
                       <div>
                         <span className="text-[#5A6B82] block text-[9px] uppercase font-semibold">Grand Total</span>
-                        <span className="font-extrabold text-[#17120F] text-xs">₹{grandTotal.toLocaleString()}</span>
+                        <span className="font-extrabold text-[#17120F] text-xs">₹{calc.grandTotal.toLocaleString('en-IN')}</span>
                       </div>
                       <div>
-                        <span className="text-[#5A6B82] block text-[9px] uppercase font-semibold">Balance Due</span>
-                        <span className={`font-extrabold text-xs ${netDue > 0 ? 'text-[#D92D4B]' : 'text-[#15805D]'}`}>
-                          {netDue > 0 ? `₹${netDue.toLocaleString()} Due` : '₹0 (Paid)'}
+                        <span className="text-[#5A6B82] block text-[9px] uppercase font-semibold">Paid / Balance Due</span>
+                        <span className={`font-extrabold text-xs block ${calc.netDue > 0 ? 'text-[#D92D4B]' : 'text-[#15805D]'}`}>
+                          {calc.netDue > 0 ? `₹${calc.netDue.toLocaleString('en-IN')} Due` : '₹0 (Paid)'}
+                        </span>
+                        <span className="text-[9.5px] text-emerald-700 font-bold">
+                          Paid: ₹{calc.totalPaid.toLocaleString('en-IN')}
                         </span>
                       </div>
                     </div>
@@ -6432,6 +7505,70 @@ export default function FrontDeskView({
                             </div>
                           ))}
                       </div>
+                    </div>
+                  )}
+                  {/* Lost & Found Quick Registration during Checkout */}
+                  {onUpdateLostAndFoundItems && (
+                    <div className="pt-2 border-t border-slate-200/70 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-amber-950">
+                          🧳 Item Left Behind in Room {checkoutConfirmGuest.roomNumber}?
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setCoLfOpen((v) => !v)}
+                          className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold text-[10.5px] cursor-pointer"
+                        >
+                          {coLfOpen ? 'Hide Form' : '+ Register Found Item'}
+                        </button>
+                      </div>
+                      {coLfOpen && (
+                        <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2 text-xs">
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                            <input
+                              type="text"
+                              value={coLfItemName}
+                              onChange={(e) => setCoLfItemName(e.target.value)}
+                              placeholder="Item Name (e.g., Charger, Watch)"
+                              className="sm:col-span-4 px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white text-xs"
+                            />
+                            <select
+                              value={coLfCategory}
+                              onChange={(e) => setCoLfCategory(e.target.value)}
+                              className="sm:col-span-3 px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white text-xs font-semibold"
+                            >
+                              <option value="Electronics">Electronics</option>
+                              <option value="Documents/Wallet">Documents/Wallet</option>
+                              <option value="Jewelry">Jewelry</option>
+                              <option value="Clothing">Clothing</option>
+                              <option value="Bags & Luggage">Bags &amp; Luggage</option>
+                              <option value="Keys & Cards">Keys &amp; Cards</option>
+                              <option value="Others">Others</option>
+                            </select>
+                            <input
+                              type="text"
+                              value={coLfStorage}
+                              onChange={(e) => setCoLfStorage(e.target.value)}
+                              placeholder="Storage Location"
+                              className="sm:col-span-3 px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleLogFoundItemAtCheckout(checkoutConfirmGuest)}
+                              className="sm:col-span-2 px-2.5 py-1.5 rounded-lg bg-luxury-brown-950 hover:bg-luxury-brown-900 text-luxury-gold-400 font-bold text-xs cursor-pointer"
+                            >
+                              + Save
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            value={coLfNotes}
+                            onChange={(e) => setCoLfNotes(e.target.value)}
+                            placeholder="Optional notes (where found, color, brand...)"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white text-xs"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

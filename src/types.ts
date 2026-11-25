@@ -19,16 +19,34 @@ export interface PackageModulePermissions {
 
 export interface SaaSPackage {
   id: string;
-  name: string;               // e.g., "Starter / Basic", "Growth Standard", "Premium Luxury", "Enterprise Scale"
+  code?: string;
+  name: string;               // e.g., "Full PMS", "PMS + Channel Manager Starter", "PMS + Channel Manager Growth"
   tagline?: string;
-  priceMonthly: number;       // e.g. 999 INR
-  priceYearly: number;        // e.g. 9999 INR
-  maxRooms: number;           // Max number of rooms allowed (e.g. 15, 30, 50, 100, 999 for Unlimited)
-  roomTierLabel?: string;     // e.g. "Up to 15 Rooms Capacity"
-  badge?: string;             // e.g., "Popular", "Starter", "Best Value", "Enterprise"
-  billingCycle?: 'Monthly' | 'Yearly' | 'Both';
+  priceMonthly: number;       // e.g. 599 INR
+  priceYearly: number;        // e.g. 5999 INR
+  regularPriceYearly?: number;
+  discountPercent?: number;
+  discountLabel?: string;
+  gstRate?: number;           // Default 18 (% extra)
+  durationDays?: number;      // e.g. 365 for yearly, 30 for monthly
+  maxRooms: number;           // Max number of rooms allowed (e.g. 10, 50, 999 for Unlimited)
+  roomTierLabel?: string;     // e.g. "Unlimited Rooms" or "Up to 10 Rooms (OTA Sync)"
+  otaLimit?: number;          // Max rooms / channels for OTA sync (0 = no OTA, 10 = up to 10 rooms, 999 = Growth/Unlimited)
+  otaLimitLabel?: string;
+  badge?: string;             // e.g., "Popular", "Best Value", "Full PMS", "Growth"
+  billingCycle?: 'Monthly' | 'HalfYearly' | 'Yearly' | 'Both';
   modules: PackageModulePermissions;
+  features?: string[];
   description?: string;
+  trialEnabled?: boolean;
+  trialDays?: number;
+  renewalGraceDays?: number;
+  autoReminderDaysBefore?: number;
+  renewalRulesText?: string;
+  isActive?: boolean;         // Default true; inactive packages remain linked to historical subscribers
+  isPopular?: boolean;
+  sortOrder?: number;
+  buttonText?: string;
 }
 
 export interface SubscriptionRenewalRequest {
@@ -39,14 +57,53 @@ export interface SubscriptionRenewalRequest {
   requestedPackageName: string;
   requestedPlan: 'Trial' | 'Monthly' | 'HalfYearly' | 'Yearly';
   requestedAmount: number;
+  baseAmount?: number;
+  gstRate?: number;
+  gstAmount?: number;
+  cgstAmount?: number;
+  sgstAmount?: number;
+  totalAmount?: number;
   paymentMethod: string;
+  upiIdUsed?: string;
   transactionReference?: string;
   notes?: string;
-  status: 'Pending' | 'Approved' | 'Rejected';
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Failed';
+  paymentVerificationStatus?: 'Pending Verification' | 'Verified' | 'Rejected' | 'Failed';
+  rejectionReason?: string;
+  isUpgrade?: boolean;
+  previousPackageName?: string;
   requestedAt: string;
   requestedBy?: string;
   approvedAt?: string;
   approvedBy?: string;
+}
+
+export interface SubscriptionPaymentRecord {
+  id: string;
+  hotelId: string;
+  hotelName: string;
+  packageId?: string;
+  packageName: string;
+  plan: 'Trial' | 'Monthly' | 'HalfYearly' | 'Yearly' | string;
+  baseAmount: number;
+  gstRate: number;
+  gstAmount: number;
+  cgstAmount: number;
+  sgstAmount: number;
+  totalAmount: number;
+  paymentMethod: string;
+  utrNumber?: string;
+  upiIdUsed?: string;
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Failed';
+  isUpgrade?: boolean;
+  previousPackageName?: string;
+  invoiceId?: string;
+  invoiceNumber?: string;
+  receiptNumber?: string;
+  createdAt: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  notes?: string;
 }
 
 export interface SubscriptionInvoice {
@@ -145,10 +202,13 @@ export interface Hotel {
   ownerPassword?: string;
   renewalRequest?: SubscriptionRenewalRequest;
   subscriptionInvoices?: SubscriptionInvoice[];
+  subscriptionPayments?: SubscriptionPaymentRecord[];
+  subscriptionActivatedAt?: string;
   paymentModes?: any[];
   whatsappTemplates?: Record<string, string>;
   shiftSettings?: any;
   coupons?: PosCoupon[];
+  customFloors?: string[];
 }
 
 export interface Room {
@@ -644,11 +704,22 @@ export interface RoomVerification {
   notes?: string;
 }
 
+export interface GranularModuleAccess {
+  view?: boolean;
+  create?: boolean;
+  edit?: boolean;
+  delete?: boolean;
+  approve?: boolean;
+  manage?: boolean;
+}
+
 export interface RolePermission {
   id: string;
   hotelId: string;
   roleName: string; // e.g., 'Manager', 'Receptionist', 'Cashier', 'Accountant', 'Housekeeping', 'Kitchen', 'Security', 'Maintenance', or custom names
+  description?: string;
   isCustom?: boolean;
+  isSystemRole?: boolean;
   canManageBookings: boolean;
   canManageRooms: boolean;
   canManageStaff: boolean;
@@ -657,14 +728,17 @@ export interface RolePermission {
   canViewReports: boolean;
   canManageOta: boolean;
   canManagePolicies: boolean;
+  modulePermissions?: Record<string, GranularModuleAccess>;
+  allowedModules?: string[];
 }
 
 export type Department = 'Reception' | 'Housekeeping' | 'Accounts' | 'Manager' | 'Admin' | 'Kitchen' | 'Security' | 'Maintenance' | 'Other';
-export type StaffStatus = 'Active' | 'Inactive';
+export type StaffStatus = 'Active' | 'Inactive' | 'On Leave' | 'Suspended';
 
 export interface Staff {
   id: string;
   hotelId?: string;
+  employeeId?: string;
   name: string;
   mobile: string;
   phone?: string;
@@ -673,10 +747,15 @@ export interface Staff {
   department: Department;
   designation: string;
   role?: string; // staff role mapped to roleName in RolePermission
+  roleId?: string;
   allowedModules?: string[]; // explicit list of PMS module IDs this staff member can access
   joiningDate: string;
   joinDate?: string;
   shift?: string;
+  shiftStartTime?: string; // e.g. '09:00'
+  shiftEndTime?: string;   // e.g. '18:00'
+  workingHours?: number;   // e.g. 9
+  workingDays?: string[];  // e.g. ['Mon','Tue','Wed','Thu','Fri','Sat']
   username: string;
   password?: string;
   plainPassword?: string;
@@ -692,6 +771,36 @@ export interface Staff {
   roomsCleanedCount?: number;
   bookingsCreatedCount?: number;
   revenueGeneratedSum?: number;
+}
+
+export interface StaffLeaveRequest {
+  id: string;
+  hotelId?: string;
+  staffId: string;
+  staffName: string;
+  employeeId?: string;
+  department?: string;
+  designation?: string;
+  role?: string;
+  leaveType: 'Casual Leave' | 'Sick Leave' | 'Earned Leave' | 'Emergency Leave' | 'Unpaid Leave' | string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+  days: number;
+  reason: string;
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Cancelled';
+  appliedAt: string;
+  appliedBy?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  rejectionReason?: string;
+  approvalNotes?: string;
+  auditHistory?: Array<{
+    action: string;
+    status: string;
+    performedBy: string;
+    dateTime: string;
+    notes?: string;
+  }>;
 }
 
 export interface AuditLog {
@@ -768,6 +877,7 @@ export interface Invoice {
   bookedRooms?: BookedRoom[];
   subtotal: number;
   gst: number; // calculated total GST
+  taxAmount?: number;
   roomGst?: number;
   foodGst?: number;
   otherGst?: number;
@@ -797,7 +907,8 @@ export interface Invoice {
   outstandingAmount?: number;
   pendingAmount?: number;
   paymentMethod?: string;
-  invoiceType?: 'Booking Invoice' | 'Stay Checkout Invoice' | 'Proforma Invoice' | 'Tax Invoice' | 'Bill of Supply';
+  invoiceType?: 'Booking Invoice' | 'Stay Checkout Invoice' | 'Proforma Invoice' | 'Tax Invoice' | 'Bill of Supply' | 'Credit Note';
+  isCreditNote?: boolean;
   isWithoutGst?: boolean;
   isSeparateInvoice?: boolean;
   parentInvoiceId?: string;
@@ -1047,6 +1158,7 @@ export interface HotelSettings {
   whatsappTemplates?: Record<string, string>;
   shiftSettings?: any;
   coupons?: PosCoupon[];
+  customFloors?: string[];
 }
 
 export interface Testimonial {
@@ -1057,16 +1169,93 @@ export interface Testimonial {
   rating: number;
 }
 
+export interface SeoMetaConfig {
+  seoTitle?: string;
+  metaDescription?: string;
+  canonicalUrl?: string;
+  focusKeyword?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  ogImage?: string;
+  imageAlt?: string;
+  robotsIndex?: 'index' | 'noindex';
+  robotsFollow?: 'follow' | 'nofollow';
+  schemaType?: 'WebPage' | 'SoftwareApplication' | 'FAQPage' | 'Article';
+}
+
+export interface SeoRedirectRule {
+  id: string;
+  fromPath: string;
+  toPath: string;
+  statusCode: 301 | 302;
+  isActive: boolean;
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface WebsiteNavItem {
+  id: string;
+  label: string;
+  href: string;
+  isExternal?: boolean;
+  isVisible?: boolean;
+}
+
+export interface SaaSPaymentSettings {
+  upiId?: string;
+  upiPayeeName?: string;
+  merchantDisplayName?: string;
+  gstNumber?: string;
+  sacCode?: string;
+  defaultGstRate?: number;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  bankIfsc?: string;
+  bankName?: string;
+  renewalReminderDays?: number[];
+  whatsappRenewalTemplate?: string;
+  whatsappConfirmationTemplate?: string;
+  supportGatewayNote?: string;
+}
+
+export interface SaaSSeoSettings {
+  siteUrl?: string;
+  defaultTitle?: string;
+  defaultDescription?: string;
+  defaultOgImage?: string;
+  googleSiteVerification?: string;
+  googleAnalyticsId?: string;
+  robotsTxt?: string;
+  sitemapEnabled?: boolean;
+  redirects?: SeoRedirectRule[];
+  organizationName?: string;
+  organizationLogo?: string;
+  organizationPhone?: string;
+  organizationEmail?: string;
+  faqSchemaItems?: Array<{ q: string; a: string }>;
+  pageSeoOverrides?: Record<string, SeoMetaConfig>;
+}
+
 export interface CustomPage {
   id: string;
   title: string;
   slug: string;
   content: string;
   imageUrl?: string;
+  featuredImageUrl?: string;
+  featuredImageAlt?: string;
   linkUrl?: string;
   linkText?: string;
+  category?: string;
+  tags?: string[];
+  status?: 'draft' | 'scheduled' | 'published';
+  scheduledAt?: string;
   published: boolean;
+  showInHeader?: boolean;
+  showInFooter?: boolean;
+  seo?: SeoMetaConfig;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface WebsiteHeroPillar {
@@ -1124,13 +1313,19 @@ export interface WebsiteBlogPost {
   title: string;
   slug?: string;
   category: string;
+  tags?: string[];
   author?: string;
   publishedAt: string;
+  scheduledAt?: string;
+  status?: 'draft' | 'scheduled' | 'published';
   readTime?: string;
   imageUrl?: string;
+  featuredImageAlt?: string;
   summary: string;
   content: string;
   published: boolean;
+  seo?: SeoMetaConfig;
+  updatedAt?: string;
 }
 
 export interface SystemWebsiteConfig {
@@ -1196,6 +1391,12 @@ export interface SystemWebsiteConfig {
   footerGstDisclaimer?: string;
   // Custom Dynamic Sections
   customSections?: WebsiteCustomSection[];
+  // Navigation, Dynamic Pricing, Payment & Complete SEO Settings
+  headerNavLinks?: WebsiteNavItem[];
+  footerNavLinks?: WebsiteNavItem[];
+  useDynamicPackagesOnPricing?: boolean;
+  paymentSettings?: SaaSPaymentSettings;
+  seoSettings?: SaaSSeoSettings;
 }
 
 export interface ExtraCharge {
@@ -1379,6 +1580,23 @@ export interface PosCategory {
   description?: string;
   hotelId?: string;
   subcategories?: string[];
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export interface PosTableRecord {
+  id: string;
+  hotelId?: string;
+  number: string;
+  name?: string;
+  floor: string;
+  zone?: string;
+  capacity: number;
+  status: 'Available' | 'Occupied' | 'Reserved' | 'Blocked' | 'Inactive' | string;
+  isActive?: boolean;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface PosCoupon {
@@ -1666,22 +1884,73 @@ export interface LaundryOrder {
   inventoryQtyUsed?: number;
 }
 
+export type LostAndFoundStatus =
+  | 'Lost – Reported'
+  | 'Found – Registered'
+  | 'Matching – In Progress'
+  | 'Matched'
+  | 'Stored'
+  | 'Returned to Guest'
+  | 'Closed'
+  // Legacy compatibility statuses
+  | 'Registered'
+  | 'Claimed'
+  | 'Disposed';
+
+export interface LostAndFoundAuditEntry {
+  id?: string;
+  action: string;
+  fromStatus?: string;
+  toStatus?: string;
+  performedBy: string;
+  dateTime: string;
+  notes?: string;
+}
+
 export interface LostAndFoundItem {
   id: string;
   hotelId?: string;
+  recordType?: 'found' | 'lost'; // defaults to 'found' for legacy records
   itemName: string;
-  category: 'Electronics' | 'Clothing' | 'Documents/Wallet' | 'Jewelry' | 'Toiletries' | 'Others';
+  category: 'Electronics' | 'Clothing' | 'Documents/Wallet' | 'Jewelry' | 'Toiletries' | 'Bags & Luggage' | 'Keys & Cards' | 'Others' | string;
+  description?: string;
   roomNumber?: string;
+  bookingId?: string;
+  checkInId?: string;
+  source?: 'Register' | 'Checkout' | 'Housekeeping' | 'Front Desk' | string;
+  // Found Item Fields
   locationFound: string;
   foundByStaff: string;
   dateFound: string;
-  status: 'Registered' | 'Claimed' | 'Disposed';
-  description?: string;
+  storageLocation?: string;
+  // Lost Item (Guest Reported) Fields
+  guestName?: string;
+  guestMobile?: string;
+  guestEmail?: string;
+  dateReported?: string;
+  lastSeenLocation?: string;
+  reportedByStaff?: string;
+  // Matching Fields
+  matchedItemId?: string;
+  matchedItemName?: string;
+  matchedBy?: string;
+  matchedAt?: string;
+  matchNotes?: string;
+  // Status & Return Fields
+  status: LostAndFoundStatus;
   imagePath?: string;
   claimedByGuest?: string;
   claimGuestMobile?: string;
+  claimIdProof?: string;
   claimDate?: string;
+  returnedBy?: string;
   returnNotes?: string;
+  closedAt?: string;
+  closedBy?: string;
+  closedReason?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  auditHistory?: LostAndFoundAuditEntry[];
 }
 
 export interface HousekeepingCleaningLog {
@@ -1783,9 +2052,22 @@ export interface AgentCommissionPayment {
   bookingIds?: string[];
 }
 
+export interface FoodAdvancePaymentEntry {
+  id: string;
+  method: 'Cash' | 'UPI' | 'Card' | 'Bank' | 'Bank Transfer' | 'Voucher' | string;
+  amount: number;
+  reference?: string;
+  date: string; // YYYY-MM-DD
+  time?: string;
+  recordedBy?: string;
+  paymentType?: 'Advance' | 'Balance Settlement' | 'Refund';
+  notes?: string;
+}
+
 export interface FoodAdvanceBooking {
   id: string;
   bookingNumber: string;
+  receiptNumber?: string;
   hotelId?: string;
   bookingDate: string;
   guestOrGroupName: string;
@@ -1801,15 +2083,26 @@ export interface FoodAdvanceBooking {
   mealTypes: Array<'Veg' | 'Non-Veg'>;
   ratePerPax: number;
   focPax: number;
+  subtotal?: number;
+  gstEnabled?: boolean;
+  gstRate?: number;
+  gstAmount?: number;
+  cgst?: number;
+  sgst?: number;
+  discount?: number;
   totalAmount: number;
   advanceAmount: number;
   balanceAmount: number;
-  paymentMethod: 'Cash' | 'UPI' | 'Card' | 'Bank' | 'Voucher' | string;
+  paymentMethod: 'Cash' | 'UPI' | 'Card' | 'Bank' | 'Voucher' | 'Split Payment' | string;
+  paymentStatus?: 'Unpaid' | 'Partially Paid' | 'Paid' | 'Refunded';
+  payments?: FoodAdvancePaymentEntry[];
   status: 'Advance' | 'In Process' | 'Confirmed' | 'Completed' | 'Cancelled' | 'No-Show';
   specialRequest?: string;
   confirmedBy?: string;
   convertedPosOrderId?: string;
+  convertedAt?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 

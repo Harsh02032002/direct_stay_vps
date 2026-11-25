@@ -41,7 +41,8 @@ import {
   Utensils,
 } from 'lucide-react';
 import { openStandalonePosInNewTab } from '../utils/posConfigHelpers';
-import { UserRole, Hotel, Staff } from '../types';
+import { UserRole, Hotel, Staff, RolePermission } from '../types';
+import { deriveAllowedSidebarTabsFromRolePerm } from './hrm/RolePermissionsView';
 import type { HotelOwnerSubTab } from './HotelOwnerView';
 import {
   useRbacMatrix,
@@ -97,6 +98,7 @@ interface SidebarProps {
   unreadNotificationsCount?: number;
   onOpenPublicWebsite?: () => void;
   staff?: Staff[];
+  rolePermissions?: RolePermission[];
 }
 
 function renderSidebarIcon(iconKey: string, isActive: boolean): React.ReactNode {
@@ -203,6 +205,7 @@ export default function Sidebar({
   loggedInUser,
   unreadNotificationsCount = 0,
   staff = [],
+  rolePermissions = [],
 }: SidebarProps) {
   const [rbacMatrix] = useRbacMatrix();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -224,12 +227,18 @@ export default function Sidebar({
   });
 
   const matchedLoggedInStaff = useMemo(
-    () =>
-      staff.find(
+    () => {
+      const storedStaffUser =
+        typeof window !== 'undefined'
+          ? String(sessionStorage.getItem('pms_staff_username') || '').trim().toLowerCase()
+          : '';
+      return staff.find(
         (s) =>
+          (storedStaffUser && s.username && s.username.toLowerCase() === storedStaffUser) ||
           (s.username && s.username.toLowerCase() === (loggedInUser || '').toLowerCase()) ||
           (s.name && s.name.toLowerCase() === (loggedInUser || '').toLowerCase())
-      ),
+      );
+    },
     [staff, loggedInUser]
   );
 
@@ -237,13 +246,50 @@ export default function Sidebar({
   const staffUserKey = matchedLoggedInStaff?.username || null;
 
   const allowedTabsSet = useMemo(() => {
-    if (!normalizeRbacRole(effectiveRoleForRbac)) return null; // Full access (Admin / Owner / SuperAdmin)
-    return new Set(getAllowedSidebarTabsForRole(rbacMatrix, effectiveRoleForRbac, staffUserKey));
-  }, [rbacMatrix, effectiveRoleForRbac, staffUserKey]);
+    const roleLower = String(effectiveRoleForRbac || '').trim().toLowerCase();
+    // Admin, Owner, SuperAdmin retain full access
+    if (
+      !roleLower ||
+      roleLower === 'admin' ||
+      roleLower === 'owner' ||
+      roleLower === 'superadmin' ||
+      roleLower === 'hoteladmin'
+    ) {
+      return null;
+    }
+    const matchedRolePerm = rolePermissions.find(
+      (rp) => String(rp.roleName || '').trim().toLowerCase() === roleLower
+    );
+    const tabsFromRolePerm = matchedRolePerm
+      ? deriveAllowedSidebarTabsFromRolePerm(matchedRolePerm)
+      : [];
+    const tabsFromStaff =
+      Array.isArray(matchedLoggedInStaff?.allowedModules) && matchedLoggedInStaff.allowedModules.length > 0
+        ? matchedLoggedInStaff.allowedModules
+        : [];
+    const tabsFromMatrix = normalizeRbacRole(effectiveRoleForRbac)
+      ? getAllowedSidebarTabsForRole(rbacMatrix, effectiveRoleForRbac, staffUserKey)
+      : [];
+
+    // Prefer explicit HRM RolePermission matrix when configured; intersect/union cleanly with staff overrides
+    if (tabsFromRolePerm.length > 0) {
+      const combined = new Set<string>(tabsFromRolePerm);
+      if (tabsFromStaff.length > 0) {
+        tabsFromStaff.forEach((t) => combined.add(t));
+      }
+      return combined;
+    }
+    if (tabsFromStaff.length > 0) {
+      return new Set<string>(tabsFromStaff);
+    }
+    if (tabsFromMatrix.length > 0) {
+      return new Set<string>(tabsFromMatrix);
+    }
+    return new Set<string>(['dashboard']);
+  }, [rbacMatrix, rolePermissions, effectiveRoleForRbac, staffUserKey, matchedLoggedInStaff]);
 
   const canAccessRbacTab = (rbacTab: string): boolean => {
     if (!allowedTabsSet) return true;
-    if (rbacTab === 'profile' || rbacTab === 'userList' || rbacTab === 'bookingEngine') return true;
     return allowedTabsSet.has(rbacTab);
   };
 

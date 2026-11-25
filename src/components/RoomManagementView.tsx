@@ -98,6 +98,9 @@ export default function RoomManagementView({
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [statusFilter, setStatusFilter] = useState<string>('All');
+  const [floorFilter, setFloorFilter] = useState<string>('All');
+  const [blockedViewFilter, setBlockedViewFilter] = useState<'all_blocked_occupied' | 'Blocked' | 'Occupied'>('all_blocked_occupied');
+  const [inlineNewFloor, setInlineNewFloor] = useState('');
   
   // Room Form Modal State
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -160,20 +163,50 @@ export default function RoomManagementView({
   };
 
   const knownFloorOptions = useMemo(() => {
-    const defaults = [
-      'Ground Floor',
-      '1st Floor',
-      '2nd Floor',
-      '3rd Floor',
-      '4th Floor',
-      '5th Floor',
-      '6th Floor',
-      'Executive Floor',
-      'Penthouse',
-    ];
+    const savedCustom = Array.isArray(hotelSettings?.customFloors) && hotelSettings.customFloors.length > 0
+      ? hotelSettings.customFloors.map((f) => String(f || '').trim()).filter(Boolean)
+      : [
+          'Ground Floor',
+          '1st Floor',
+          '2nd Floor',
+          '3rd Floor',
+          '4th Floor',
+          '5th Floor',
+        ];
     const fromRooms = rooms.map(r => String(r.floor || '').trim()).filter(Boolean);
-    return Array.from(new Set([...defaults, ...fromRooms]));
-  }, [rooms]);
+    return Array.from(new Set([...savedCustom, ...fromRooms]));
+  }, [rooms, hotelSettings?.customFloors]);
+
+  const handlePersistCustomFloors = (nextFloors: string[]) => {
+    const cleaned = Array.from(new Set(nextFloors.map((f) => String(f || '').trim()).filter(Boolean)));
+    if (cleaned.length === 0) return;
+    if (onUpdateHotelSettings && hotelSettings) {
+      onUpdateHotelSettings({
+        ...hotelSettings,
+        customFloors: cleaned,
+      });
+    }
+    if (onAddAuditLog) {
+      onAddAuditLog('Custom Floors Updated', `Configured hotel floors: ${cleaned.join(', ')}`);
+    }
+  };
+
+  const handleQuickAddCustomFloor = (rawLabel: string) => {
+    const clean = String(rawLabel || '').trim();
+    if (!clean) {
+      showToast('Enter a floor name (e.g., Basement, Mezzanine, 6th Floor, Terrace).', 'warning');
+      return;
+    }
+    if (knownFloorOptions.some((f) => f.toLowerCase() === clean.toLowerCase())) {
+      setFloor(clean);
+      setInlineNewFloor('');
+      return;
+    }
+    handlePersistCustomFloors([...knownFloorOptions, clean]);
+    setFloor(clean);
+    setInlineNewFloor('');
+    showToast(`Added "${clean}" to custom floors.`, 'success');
+  };
 
   const generateRangeDraftRows = (
     startStr = rangeStartNum,
@@ -267,7 +300,7 @@ export default function RoomManagementView({
   };
 
   // Extract Hotel ID for isolated persistence
-  const activeHotelId = rooms[0]?.hotelId || 'default_property';
+  const activeHotelId = rooms[0]?.hotelId || hotelSettings?.id || 'hotel-1';
 
   // Master Amenities Library State (starts empty; derived from hotel rooms or added by admin)
   const [customAmenities, setCustomAmenities] = useState<AmenityItem[]>([]);
@@ -346,14 +379,14 @@ export default function RoomManagementView({
   // Room Module Settings State
   const [defaultCheckInTime, setDefaultCheckInTime] = useState(hotelSettings?.checkInTime || '12:00 PM');
   const [defaultCheckOutTime, setDefaultCheckOutTime] = useState(hotelSettings?.checkOutTime || '11:00 AM');
-  const [earlyCheckInEnabled, setEarlyCheckInEnabled] = useState<boolean>(hotelSettings?.earlyCheckInEnabled ?? true);
+  const [earlyCheckInEnabled, setEarlyCheckInEnabled] = useState<boolean>(hotelSettings?.earlyCheckInEnabled === true);
   const [earlyCheckInType, setEarlyCheckInType] = useState<'hourly' | 'fixed'>(hotelSettings?.earlyCheckInType || 'hourly');
   const [earlyCheckInHourlyRate, setEarlyCheckInHourlyRate] = useState<number>(Number(hotelSettings?.earlyCheckInHourlyRate) || 0);
   const [earlyCheckInFixedRate, setEarlyCheckInFixedRate] = useState<number>(Number(hotelSettings?.earlyCheckInFixedRate) || 0);
   const [autoMarkDirtyOnCheckout, setAutoMarkDirtyOnCheckout] = useState(true);
   const [requireInspectionToClean, setRequireInspectionToClean] = useState(true);
   const [overbookingLimitPercent, setOverbookingLimitPercent] = useState(0);
-  const [allowBackDatedCheckIn, setAllowBackDatedCheckIn] = useState(hotelSettings?.allowBackDatedCheckIn ?? true);
+  const [allowBackDatedCheckIn, setAllowBackDatedCheckIn] = useState(hotelSettings?.allowBackDatedCheckIn ?? false);
   const [allowBackDatedFoodBill, setAllowBackDatedFoodBill] = useState(hotelSettings?.allowBackDatedFoodBill ?? true);
 
   useEffect(() => {
@@ -569,18 +602,39 @@ export default function RoomManagementView({
       }
       const existingSet = new Set(rooms.map(r => String(r.number).trim()));
       const seenInBatch = new Set<string>();
-      const validRoomsToAdd: Room[] = [];
-      let skippedDuplicates = 0;
-
+      const dupInBatch: string[] = [];
       for (const row of bulkDraftRows) {
         const cleanNum = String(row.number || '').replace(/\D/g, '').trim();
         if (!cleanNum) {
           setFormError('Every row in the preview list must have a valid numeric Room Number (or remove blank rows).');
           return;
         }
-        if (existingSet.has(cleanNum) || seenInBatch.has(cleanNum)) {
+        if (!existingSet.has(cleanNum)) {
+          if (seenInBatch.has(cleanNum)) {
+            dupInBatch.push(cleanNum);
+          } else {
+            seenInBatch.add(cleanNum);
+          }
+        }
+      }
+      if (dupInBatch.length > 0) {
+        setFormError(`Duplicate room number(s) found in preview list: ${Array.from(new Set(dupInBatch)).join(', ')}. Please edit or remove duplicate rows before creating.`);
+        return;
+      }
+
+      const validRoomsToAdd: Room[] = [];
+      let skippedDuplicates = 0;
+
+      for (const row of bulkDraftRows) {
+        const cleanNum = String(row.number || '').replace(/\D/g, '').trim();
+        if (existingSet.has(cleanNum)) {
           skippedDuplicates += 1;
           continue;
+        }
+        const rowFloor = String(row.floor || '').trim();
+        if (!rowFloor) {
+          setFormError(`Room ${cleanNum} is missing a Floor.`);
+          return;
         }
         const rowCat = (row.category || category || 'Standard').trim();
         const rowRate = Number(row.rate) > 0 ? Number(row.rate) : Number(rate) || 0;
@@ -592,7 +646,6 @@ export default function RoomManagementView({
           setFormError(`Room ${cleanNum} must have a positive Base Price (₹).`);
           return;
         }
-        seenInBatch.add(cleanNum);
         validRoomsToAdd.push({
           id: `${activeHotelId}-${cleanNum}`,
           hotelId: activeHotelId,
@@ -604,12 +657,12 @@ export default function RoomManagementView({
           baseOccupancy,
           maxOccupancy,
           extraPersonCharge,
-          floor: (row.floor || floor || '1st Floor').trim(),
+          floor: rowFloor,
           bedType,
           allowExtraBed,
           amenities: selectedRoomAmenities,
           images: roomImages ? [roomImages] : [],
-          outOfOrderReason: status === 'Out of Order' || status === 'Maintenance' ? outOfOrderReason : ''
+          outOfOrderReason: status === 'Out of Order' || status === 'Maintenance' || status === 'Blocked' ? outOfOrderReason : ''
         });
       }
 
@@ -696,7 +749,7 @@ export default function RoomManagementView({
         allowExtraBed,
         amenities: selectedRoomAmenities,
         images: [roomImages],
-        outOfOrderReason: status === 'Out of Order' || status === 'Maintenance' ? outOfOrderReason : ''
+        outOfOrderReason: status === 'Out of Order' || status === 'Maintenance' || status === 'Blocked' ? outOfOrderReason : ''
       };
       onUpdateRooms([...rooms, newRoom]);
       if (onAddAuditLog) onAddAuditLog('Add Room Entity', `Registered Room ${roomNumber} (${category})`);
@@ -923,8 +976,31 @@ export default function RoomManagementView({
                           String(room.floor || '').toLowerCase().includes(q);
     const matchesCategory = categoryFilter === 'All' || room.category === categoryFilter;
     const matchesStatus = statusFilter === 'All' || room.status === statusFilter;
-    return matchesSearch && matchesCategory && matchesStatus;
+    const matchesFloor = floorFilter === 'All' || String(room.floor || '').trim() === floorFilter;
+    return matchesSearch && matchesCategory && matchesStatus && matchesFloor;
   });
+
+  // Strictly Blocked / Occupied rooms for the "Blocked Rooms" view (excludes Available, Clean, Dirty, Maintenance, Inspection, OOO, OOS, Reserved)
+  const blockedAndOccupiedRooms = useMemo(() => {
+    const q = String(search || '').toLowerCase().trim();
+    return rooms.filter(room => {
+      const isBlockedOrOccupied = room.status === 'Blocked' || room.status === 'Occupied';
+      if (!isBlockedOrOccupied) return false;
+      if (blockedViewFilter === 'Blocked' && room.status !== 'Blocked') return false;
+      if (blockedViewFilter === 'Occupied' && room.status !== 'Occupied') return false;
+      if (floorFilter !== 'All' && String(room.floor || '').trim() !== floorFilter) return false;
+      if (categoryFilter !== 'All' && room.category !== categoryFilter) return false;
+      if (q) {
+        const match =
+          String(room.number || '').toLowerCase().includes(q) ||
+          String(room.category || '').toLowerCase().includes(q) ||
+          String(room.floor || '').toLowerCase().includes(q) ||
+          String(room.outOfOrderReason || '').toLowerCase().includes(q);
+        if (!match) return false;
+      }
+      return true;
+    });
+  }, [rooms, blockedViewFilter, floorFilter, categoryFilter, search]);
 
   const roomCategories = useMemo(() => {
     const unique = Array.from(
@@ -1452,6 +1528,11 @@ export default function RoomManagementView({
           rooms={rooms}
           onUpdateRooms={onUpdateRooms}
           hotelName={hotelSettings?.name}
+          hotelId={activeHotelId}
+          customFloorLabels={knownFloorOptions}
+          onUpdateCustomFloors={handlePersistCustomFloors}
+          categories={categories.map(c => ({ name: c.name, rate: c.rate }))}
+          onAddAuditLog={onAddAuditLog}
         />
       )}
 
@@ -1789,8 +1870,129 @@ export default function RoomManagementView({
         </div>
       )}
 
-      {/* --- SUB-TAB 6: ROOM STATUS --- */}
-      {(activeSubTab === 'status' || activeSubTab === 'blockAssets') && (
+      {/* --- SUB-TAB 6A: BLOCKED & OCCUPIED ROOMS (STRICT FILTER) --- */}
+      {activeSubTab === 'blockAssets' && (
+        <div className="space-y-6">
+          <div className="bg-white border border-luxury-brown-200/60 rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-luxury-brown-100 pb-4">
+              <div>
+                <h3 className="text-lg font-serif font-bold text-luxury-brown-950 flex items-center gap-2">
+                  <Lock className="w-5 h-5 text-luxury-gold-600" /> Blocked &amp; Occupied Rooms
+                </h3>
+                <p className="text-xs text-luxury-brown-500">
+                  Displaying only truly <strong>Blocked</strong> and <strong>Occupied</strong> rooms. Available, Clean, Dirty, Inspection, and Maintenance rooms are excluded.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center bg-luxury-beige-50 border border-luxury-brown-200 rounded-xl p-1 text-xs font-bold">
+                  {(
+                    [
+                      { id: 'all_blocked_occupied', label: `All (${rooms.filter(r => r.status === 'Blocked' || r.status === 'Occupied').length})` },
+                      { id: 'Blocked', label: `Blocked (${rooms.filter(r => r.status === 'Blocked').length})` },
+                      { id: 'Occupied', label: `Occupied (${rooms.filter(r => r.status === 'Occupied').length})` },
+                    ] as const
+                  ).map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setBlockedViewFilter(opt.id)}
+                      className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                        blockedViewFilter === opt.id
+                          ? 'bg-luxury-brown-950 text-luxury-gold-400 shadow-xs'
+                          : 'text-luxury-brown-600 hover:text-luxury-brown-950'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <select
+                  value={floorFilter}
+                  onChange={e => setFloorFilter(e.target.value)}
+                  className="bg-luxury-beige-50 border border-luxury-brown-200 rounded-xl px-3 py-2 text-xs text-luxury-brown-900 font-serif"
+                >
+                  <option value="All">All Floors</option>
+                  {knownFloorOptions.map(fl => (
+                    <option key={fl} value={fl}>{fl}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {blockedAndOccupiedRooms.length === 0 ? (
+              <div className="p-10 text-center rounded-2xl bg-luxury-beige-50/50 border border-dashed border-luxury-brown-200 space-y-2">
+                <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+                <p className="text-sm font-serif font-bold text-luxury-brown-900">
+                  No Blocked or Occupied Rooms Match This Filter
+                </p>
+                <p className="text-xs text-luxury-brown-500">
+                  Rooms marked Available, Clean, Dirty, Maintenance, or Inspection are intentionally hidden from Blocked Rooms.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {blockedAndOccupiedRooms.map(room => (
+                  <div
+                    key={room.id}
+                    className={`bg-white border rounded-2xl p-4 shadow-xs space-y-3 transition-all ${
+                      room.status === 'Blocked' ? 'border-zinc-400 hover:border-zinc-700' : 'border-rose-200 hover:border-rose-400'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-serif font-bold text-luxury-brown-950 text-base">Room {room.number}</h4>
+                        <span className="text-[10px] uppercase font-mono text-luxury-brown-500">
+                          {room.category} • {room.floor || '1st Floor'}
+                        </span>
+                      </div>
+                      <span className={`text-[9px] font-mono font-bold px-2.5 py-1 border rounded-full uppercase tracking-wide ${getStatusBadge(room.status)}`}>
+                        {room.status}
+                      </span>
+                    </div>
+
+                    <div className="bg-luxury-beige-50 p-2.5 rounded-xl text-xs space-y-1 border border-luxury-brown-100">
+                      <div className="flex justify-between text-[10px] font-mono">
+                        <span className="text-luxury-brown-500">TARIFF:</span>
+                        <strong className="text-luxury-gold-700">₹{Number(room.rate || 0).toLocaleString()}/N</strong>
+                      </div>
+                      <div className="flex justify-between text-[10px] font-mono">
+                        <span className="text-luxury-brown-500">HOUSEKEEPING:</span>
+                        <strong className={room.cleaningStatus === 'Clean' ? 'text-emerald-700' : 'text-amber-700'}>
+                          {room.cleaningStatus || 'Clean'}
+                        </strong>
+                      </div>
+                      {room.outOfOrderReason && (
+                        <div className="text-[10px] text-rose-800 font-mono italic pt-1 border-t border-luxury-brown-100">
+                          Reason: {room.outOfOrderReason}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      <button
+                        onClick={() => setViewRoomDetails(room)}
+                        className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-slate-600 shrink-0" /> View
+                      </button>
+                      <button
+                        onClick={() => setSelectedRoomForStatus(room)}
+                        className="py-1.5 px-2 bg-luxury-brown-900 hover:bg-black text-luxury-gold-300 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Edit2 className="w-3.5 h-3.5 shrink-0" /> {room.status === 'Blocked' ? 'Unblock' : 'Status'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* --- SUB-TAB 6B: ROOM STATUS --- */}
+      {activeSubTab === 'status' && (
         <div className="space-y-6">
           <div className="bg-white border border-luxury-brown-200/60 rounded-2xl p-6 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-luxury-brown-100 pb-4">
@@ -1801,7 +2003,17 @@ export default function RoomManagementView({
                 <p className="text-xs text-luxury-brown-500">Live operational status: Available, Occupied, Reserved, Dirty, Clean, Inspection, Out of Order, Out of Service, Maintenance.</p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={floorFilter}
+                  onChange={e => setFloorFilter(e.target.value)}
+                  className="bg-luxury-beige-50 border border-luxury-brown-200 rounded-xl px-3 py-2 text-xs text-luxury-brown-900 font-serif"
+                >
+                  <option value="All">All Floors</option>
+                  {knownFloorOptions.map(fl => (
+                    <option key={fl} value={fl}>{fl}</option>
+                  ))}
+                </select>
                 <select
                   value={statusFilter}
                   onChange={e => setStatusFilter(e.target.value)}
@@ -2026,7 +2238,7 @@ export default function RoomManagementView({
                           type="text"
                           inputMode="numeric"
                           value={earlyCheckInHourlyRate === 0 ? '' : String(earlyCheckInHourlyRate)}
-                          placeholder="e.g. 200"
+                          placeholder="0"
                           onFocus={e => e.currentTarget.select()}
                           onChange={e => {
                             const d = e.target.value.replace(/[^0-9]/g, '');
@@ -2035,7 +2247,7 @@ export default function RoomManagementView({
                           className="w-full px-3 py-2 bg-white border border-[#DFC07A] rounded-xl text-xs font-mono font-extrabold text-[#1F2937] focus:outline-none focus:border-[#C49A3A]"
                         />
                         <span className="text-[10px] text-slate-500 block">
-                          Example: 2 hrs early @ ₹{earlyCheckInHourlyRate || 200}/hr = ₹{((earlyCheckInHourlyRate || 200) * 2).toLocaleString('en-IN')} (editable at check-in)
+                          Default ₹0 • Current rate: ₹{earlyCheckInHourlyRate.toLocaleString('en-IN')}/hr (editable at check-in)
                         </span>
                       </div>
                     ) : (
@@ -2047,7 +2259,7 @@ export default function RoomManagementView({
                           type="text"
                           inputMode="numeric"
                           value={earlyCheckInFixedRate === 0 ? '' : String(earlyCheckInFixedRate)}
-                          placeholder="e.g. 500"
+                          placeholder="0"
                           onFocus={e => e.currentTarget.select()}
                           onChange={e => {
                             const d = e.target.value.replace(/[^0-9]/g, '');
@@ -2056,7 +2268,7 @@ export default function RoomManagementView({
                           className="w-full px-3 py-2 bg-white border border-[#DFC07A] rounded-xl text-xs font-mono font-extrabold text-[#1F2937] focus:outline-none focus:border-[#C49A3A]"
                         />
                         <span className="text-[10px] text-slate-500 block">
-                          Flat ₹{(earlyCheckInFixedRate || 500).toLocaleString('en-IN')} surcharge for early arrival (editable at check-in)
+                          Default ₹0 • Flat ₹{earlyCheckInFixedRate.toLocaleString('en-IN')} surcharge for early arrival (editable at check-in)
                         </span>
                       </div>
                     )}
@@ -2248,9 +2460,9 @@ export default function RoomManagementView({
                         onClick={() => {
                           setAddCreationMode(tab.id);
                           setFormError('');
-                          if (tab.id === 'range' && bulkDraftRows.length === 0) {
+                          if (tab.id === 'range') {
                             generateRangeDraftRows(rangeStartNum, rangeEndNum, floor, category, rate);
-                          } else if (tab.id === 'bulk' && bulkDraftRows.length === 0) {
+                          } else if (tab.id === 'bulk') {
                             generateMultiFloorDraftRows(
                               bulkStartRoomNum,
                               bulkNumFloors,
@@ -2330,22 +2542,46 @@ export default function RoomManagementView({
                     </div>
                   </div>
                   {!isRestrictedRole && (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[10px] font-mono text-slate-400 font-bold uppercase mr-0.5">Quick Floor:</span>
-                      {['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor', '4th Floor', '5th Floor'].map(fl => (
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-slate-400 font-bold uppercase mr-0.5">Floors:</span>
+                        {knownFloorOptions.map(fl => (
+                          <button
+                            key={fl}
+                            type="button"
+                            onClick={() => setFloor(fl)}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold border transition-colors cursor-pointer ${
+                              floor === fl
+                                ? 'bg-[#FDF6E3] border-[#C49A3A] text-[#7A5915]'
+                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                            }`}
+                          >
+                            {fl}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1.5 pt-0.5">
+                        <input
+                          type="text"
+                          value={inlineNewFloor}
+                          onChange={e => setInlineNewFloor(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleQuickAddCustomFloor(inlineNewFloor);
+                            }
+                          }}
+                          placeholder="Add custom floor (e.g. Basement, Mezzanine, 6th Floor, Terrace)"
+                          className="flex-1 px-2.5 py-1 border border-dashed border-luxury-brown-300 rounded-lg text-[11px] bg-white"
+                        />
                         <button
-                          key={fl}
                           type="button"
-                          onClick={() => setFloor(fl)}
-                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold border transition-colors cursor-pointer ${
-                            floor === fl
-                              ? 'bg-[#FDF6E3] border-[#C49A3A] text-[#7A5915]'
-                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                          }`}
+                          onClick={() => handleQuickAddCustomFloor(inlineNewFloor)}
+                          className="px-2.5 py-1 rounded-lg bg-[#FDF6E3] hover:bg-[#F7E8C4] border border-[#DFC07A] text-[#7A5915] text-[10.5px] font-bold cursor-pointer shrink-0"
                         >
-                          {fl}
+                          + Save Floor
                         </button>
-                      ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -2536,21 +2772,67 @@ export default function RoomManagementView({
                   const k = String(r.number || '').trim();
                   if (k) batchCounts.set(k, (batchCounts.get(k) || 0) + 1);
                 });
+                const existingSkipCount = bulkDraftRows.filter(r => {
+                  const k = String(r.number || '').trim();
+                  return Boolean(k && existingNums.has(k));
+                }).length;
+                const batchDupCount = bulkDraftRows.filter(r => {
+                  const k = String(r.number || '').trim();
+                  return Boolean(k && !existingNums.has(k) && (batchCounts.get(k) || 0) > 1);
+                }).length;
+                const invalidCount = bulkDraftRows.filter(r => {
+                  const k = String(r.number || '').trim();
+                  const isSkipped = Boolean(k && existingNums.has(k));
+                  if (isSkipped) return false;
+                  return !k || !String(r.floor || '').trim() || !String(r.category || '').trim() || Number(r.rate) <= 0;
+                }).length;
                 const readyCount = bulkDraftRows.filter(r => {
                   const k = String(r.number || '').trim();
-                  return k && !existingNums.has(k) && (batchCounts.get(k) || 0) === 1;
+                  return (
+                    k &&
+                    !existingNums.has(k) &&
+                    (batchCounts.get(k) || 0) === 1 &&
+                    Boolean(String(r.floor || '').trim()) &&
+                    Boolean(String(r.category || '').trim()) &&
+                    Number(r.rate) > 0
+                  );
                 }).length;
+                const allCategoryChoices = Array.from(
+                  new Set([
+                    ...categories.map(c => c.name),
+                    ...bulkDraftRows.map(r => String(r.category || '').trim()).filter(Boolean),
+                    'Standard',
+                    'Deluxe',
+                    'Executive',
+                    'Suite',
+                  ])
+                );
 
                 return (
                   <div className="rounded-2xl border border-[#E5D2A6] bg-white overflow-hidden shadow-2xs">
                     <div className="px-4 py-2.5 bg-[#FBF6E9] border-b border-[#E5D2A6] flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-serif font-bold text-[#263449]">
                           Generated Rooms Preview ({bulkDraftRows.length})
                         </span>
                         <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-mono font-bold">
-                          {readyCount} Ready to Create
+                          {readyCount} Ready
                         </span>
+                        {existingSkipCount > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-mono font-bold">
+                            {existingSkipCount} Existing (Skip)
+                          </span>
+                        )}
+                        {batchDupCount > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-mono font-bold">
+                            {batchDupCount} Duplicate
+                          </span>
+                        )}
+                        {invalidCount > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-[10px] font-mono font-bold">
+                            {invalidCount} Incomplete
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5">
                         <button
@@ -2559,13 +2841,14 @@ export default function RoomManagementView({
                             setBulkDraftRows(prev =>
                               prev.map(r => ({
                                 ...r,
+                                floor: addCreationMode === 'range' && floor.trim() ? floor.trim() : r.floor,
                                 category: category.trim() || r.category,
                                 rate: Number(rate) > 0 ? Number(rate) : r.rate,
                               }))
                             )
                           }
                           className="px-2.5 py-1 rounded-lg bg-white hover:bg-[#FDF6E3] border border-[#DFC07A] text-[#7A5915] text-[10.5px] font-bold cursor-pointer"
-                          title="Apply selected Category & Base Price below to every row"
+                          title="Explicitly apply default Category, Base Price (and Floor in Range mode) to all preview rows"
                         >
                           Apply Defaults to All
                         </button>
@@ -2579,7 +2862,7 @@ export default function RoomManagementView({
                               {
                                 draftId: `man-${Date.now()}-${prev.length}`,
                                 number: nextNum,
-                                floor: last?.floor || floor || '1st Floor',
+                                floor: last?.floor || floor || knownFloorOptions[0] || '1st Floor',
                                 category: category.trim() || categories[0]?.name || 'Standard',
                                 rate: Number(rate) || categories[0]?.rate || 2000,
                               },
@@ -2597,23 +2880,28 @@ export default function RoomManagementView({
                         Enter your range or floor counts above and click <strong>Generate List ↓</strong> to preview, edit, or remove rooms.
                       </div>
                     ) : (
-                      <div className="max-h-60 overflow-y-auto divide-y divide-slate-100">
+                      <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
                         <div className="grid grid-cols-12 gap-2 px-3 py-1.5 bg-slate-50 text-[10px] font-mono font-bold uppercase text-slate-500 sticky top-0 z-10 border-b border-slate-200">
                           <span className="col-span-2">Room No.</span>
                           <span className="col-span-3">Floor</span>
-                          <span className="col-span-3">Category</span>
-                          <span className="col-span-2 text-right">Rate (₹)</span>
-                          <span className="col-span-2 text-center">Remove</span>
+                          <span className="col-span-3">Category / Type</span>
+                          <span className="col-span-3 text-right">Base Price (₹)</span>
+                          <span className="col-span-1 text-center">Del</span>
                         </div>
                         {bulkDraftRows.map(row => {
                           const cleanN = String(row.number || '').trim();
                           const isExistingDup = Boolean(cleanN && existingNums.has(cleanN));
                           const isBatchDup = Boolean(cleanN && (batchCounts.get(cleanN) || 0) > 1);
+                          const isInvalidRow = !isExistingDup && (!cleanN || !String(row.floor || '').trim() || !String(row.category || '').trim() || Number(row.rate) <= 0);
                           return (
                             <div
                               key={row.draftId}
                               className={`grid grid-cols-12 gap-2 px-3 py-1.5 items-center text-xs ${
-                                isExistingDup || isBatchDup ? 'bg-rose-50/70' : 'hover:bg-[#FFFDF7]'
+                                isExistingDup
+                                  ? 'bg-amber-50/70'
+                                  : isBatchDup || isInvalidRow
+                                  ? 'bg-rose-50/70'
+                                  : 'hover:bg-[#FFFDF7]'
                               }`}
                             >
                               <div className="col-span-2">
@@ -2631,19 +2919,24 @@ export default function RoomManagementView({
                                     );
                                   }}
                                   className={`w-full px-2 py-1 border rounded-lg font-mono font-bold text-xs bg-white ${
-                                    isExistingDup || isBatchDup
+                                    isExistingDup || isBatchDup || !cleanN
                                       ? 'border-rose-400 text-rose-800'
                                       : 'border-slate-200 text-[#1F2937]'
                                   }`}
                                 />
                                 {isExistingDup && (
-                                  <span className="text-[9px] text-rose-600 font-bold block leading-tight mt-0.5">
+                                  <span className="text-[9px] text-amber-700 font-bold block leading-tight mt-0.5">
                                     Exists (skip)
                                   </span>
                                 )}
                                 {!isExistingDup && isBatchDup && (
-                                  <span className="text-[9px] text-amber-700 font-bold block leading-tight mt-0.5">
+                                  <span className="text-[9px] text-rose-700 font-bold block leading-tight mt-0.5">
                                     Duplicate
+                                  </span>
+                                )}
+                                {!cleanN && (
+                                  <span className="text-[9px] text-rose-600 font-bold block leading-tight mt-0.5">
+                                    Required
                                   </span>
                                 )}
                               </div>
@@ -2653,32 +2946,47 @@ export default function RoomManagementView({
                                   list="directstay-floor-presets"
                                   value={row.floor}
                                   placeholder="e.g. 1st Floor"
-                                  onChange={e =>
+                                  onChange={e => {
+                                    const val = e.target.value;
                                     setBulkDraftRows(prev =>
                                       prev.map(item =>
-                                        item.draftId === row.draftId ? { ...item, floor: e.target.value } : item
+                                        item.draftId === row.draftId ? { ...item, floor: val } : item
                                       )
-                                    )
-                                  }
-                                  className="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs bg-white text-[#1F2937]"
+                                    );
+                                  }}
+                                  className={`w-full px-2 py-1 border rounded-lg text-xs bg-white text-[#1F2937] ${
+                                    !String(row.floor || '').trim() ? 'border-rose-400' : 'border-slate-200'
+                                  }`}
                                 />
                               </div>
                               <div className="col-span-3">
-                                <input
-                                  type="text"
+                                <select
                                   value={row.category}
-                                  placeholder="e.g. Deluxe"
-                                  onChange={e =>
+                                  onChange={e => {
+                                    const nextCat = e.target.value;
+                                    const matchedCat = categories.find(c => c.name === nextCat);
                                     setBulkDraftRows(prev =>
                                       prev.map(item =>
-                                        item.draftId === row.draftId ? { ...item, category: e.target.value } : item
+                                        item.draftId === row.draftId
+                                          ? {
+                                              ...item,
+                                              category: nextCat,
+                                              rate: matchedCat && matchedCat.rate > 0 ? matchedCat.rate : item.rate,
+                                            }
+                                          : item
                                       )
-                                    )
-                                  }
-                                  className="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs bg-white text-[#1F2937]"
-                                />
+                                    );
+                                  }}
+                                  className={`w-full px-2 py-1 border rounded-lg text-xs bg-white text-[#1F2937] font-medium ${
+                                    !String(row.category || '').trim() ? 'border-rose-400' : 'border-slate-200'
+                                  }`}
+                                >
+                                  {allCategoryChoices.map(catOpt => (
+                                    <option key={catOpt} value={catOpt}>{catOpt}</option>
+                                  ))}
+                                </select>
                               </div>
-                              <div className="col-span-2">
+                              <div className="col-span-3">
                                 <input
                                   type="text"
                                   inputMode="numeric"
@@ -2694,16 +3002,18 @@ export default function RoomManagementView({
                                       )
                                     );
                                   }}
-                                  className="w-full px-2 py-1 border border-slate-200 rounded-lg font-mono font-bold text-xs text-right bg-white text-[#1F2937]"
+                                  className={`w-full px-2 py-1 border rounded-lg font-mono font-bold text-xs text-right bg-white text-[#1F2937] ${
+                                    Number(row.rate) <= 0 ? 'border-rose-400 text-rose-700' : 'border-slate-200'
+                                  }`}
                                 />
                               </div>
-                              <div className="col-span-2 flex justify-center">
+                              <div className="col-span-1 flex justify-center">
                                 <button
                                   type="button"
                                   onClick={() =>
                                     setBulkDraftRows(prev => prev.filter(item => item.draftId !== row.draftId))
                                   }
-                                  className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 cursor-pointer"
+                                  className="p-1 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 cursor-pointer"
                                   title={`Remove Room ${row.number || ''} from batch`}
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -3051,9 +3361,22 @@ export default function RoomManagementView({
                   type="submit"
                   className="px-5 py-2.5 bg-gradient-to-r from-[#D4A745] to-[#BE8F2E] hover:from-[#C49837] hover:to-[#A87D24] text-white font-extrabold text-xs rounded-xl shadow-sm cursor-pointer"
                 >
-                  {formMode === 'add' && (addCreationMode === 'range' || addCreationMode === 'bulk')
-                    ? `Create ${bulkDraftRows.length} Room${bulkDraftRows.length === 1 ? '' : 's'}`
-                    : 'Save Room Entity'}
+                  {(() => {
+                    if (formMode === 'add' && (addCreationMode === 'range' || addCreationMode === 'bulk')) {
+                      const existingSet = new Set(rooms.map(r => String(r.number).trim()));
+                      const counts = new Map<string, number>();
+                      bulkDraftRows.forEach(r => {
+                        const k = String(r.number || '').trim();
+                        if (k) counts.set(k, (counts.get(k) || 0) + 1);
+                      });
+                      const validCnt = bulkDraftRows.filter(r => {
+                        const k = String(r.number || '').trim();
+                        return k && !existingSet.has(k) && (counts.get(k) || 0) === 1 && Number(r.rate) > 0;
+                      }).length;
+                      return `Create ${validCnt} Valid Room${validCnt === 1 ? '' : 's'}`;
+                    }
+                    return 'Save Room Entity';
+                  })()}
                 </button>
               </div>
             </form>

@@ -201,6 +201,41 @@ export function parseMenuPairText(raw: string): { id: string; name: string; pric
 }
 
 /**
+ * Checks whether any configured variant already matches the menu item's configured base price.
+ */
+export function findVariantMatchingBasePrice<T extends { name: string; price: number }>(
+  item: { price: number; variants?: T[] }
+): T | undefined {
+  const base = r2(Number(item.price) || 0);
+  if (base <= 0 || !Array.isArray(item.variants) || item.variants.length === 0) return undefined;
+  return item.variants.find((v) => Math.abs(r2(Number(v.price) || 0) - base) < 0.005);
+}
+
+/**
+ * Resolves the initial portion/variant when adding a menu item without an explicit variant click.
+ * - Always respects configured base price (`item.price`): if a variant matches `item.price` (e.g. Full ₹280),
+ *   returns that variant; otherwise returns `undefined` so Base Price (`item.price`, e.g. ₹280) is used
+ *   rather than accidentally auto-selecting a smaller variant like `Half ₹180`.
+ * - Falls back to `variants[0]` ONLY when `item.price <= 0` (purely variant-priced items).
+ */
+export function resolveDefaultVariantForItem<T extends { name: string; price: number }>(
+  item: { price: number; variants?: T[] },
+  explicitVariantName?: string
+): T | undefined {
+  const variants = Array.isArray(item.variants) ? item.variants : [];
+  if (explicitVariantName !== undefined) {
+    const clean = String(explicitVariantName || '').trim();
+    if (!clean) return undefined;
+    return variants.find((v) => String(v.name || '').trim().toLowerCase() === clean.toLowerCase());
+  }
+  const base = r2(Number(item.price) || 0);
+  if (base > 0) {
+    return findVariantMatchingBasePrice(item);
+  }
+  return variants.length > 0 ? variants[0] : undefined;
+}
+
+/**
  * Compute configured selling price for a menu item given its selected portion (variant) and optional add-ons.
  * Predefined portion prices (e.g. Half ₹180 vs Full ₹280) are configured prices — NEVER manual price overrides.
  */

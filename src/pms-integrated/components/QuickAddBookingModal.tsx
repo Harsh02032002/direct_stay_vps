@@ -13,6 +13,7 @@ interface QuickAddBookingModalProps {
   preselectedRoom?: RoomAsset | null;
   initialBookingMode?: 'reservations' | 'walkin';
   billSettings?: BillSettings;
+  allowBackDatedCheckIn?: boolean;
   onProceedBooking: (step1Data: {
     checkInDate: string;
     checkOutDate: string;
@@ -39,6 +40,7 @@ export default function QuickAddBookingModal({
   preselectedRoom,
   initialBookingMode = 'reservations',
   billSettings,
+  allowBackDatedCheckIn = false,
   onProceedBooking,
 }: QuickAddBookingModalProps) {
   const [taxSettings] = useHotelTaxSettings();
@@ -333,9 +335,15 @@ export default function QuickAddBookingModal({
                 </div>
                 <input
                   type="date"
+                  min={allowBackDatedCheckIn ? undefined : new Date().toISOString().slice(0, 10)}
                   value={checkInDate}
                   onChange={(e) => {
                     const val = e.target.value;
+                    const todayIso = new Date().toISOString().slice(0, 10);
+                    if (!allowBackDatedCheckIn && val && val < todayIso) {
+                      setCheckInDate(todayIso);
+                      return;
+                    }
                     setCheckInDate(val);
                     if (val >= checkOutDate) {
                       const d = new Date(`${val}T00:00:00`);

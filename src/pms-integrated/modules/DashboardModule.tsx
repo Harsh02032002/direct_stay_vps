@@ -1362,6 +1362,8 @@ export const DashboardModule: React.FC<DashboardModuleProps> = ({
                             className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                               row.status === 'Checked In'
                                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : row.status === 'Checked Out'
+                                ? 'bg-slate-100 text-slate-600 border-slate-200'
                                 : row.status === 'VIP'
                                 ? 'bg-purple-50 text-purple-700 border-purple-200'
                                 : row.status === 'Pending'

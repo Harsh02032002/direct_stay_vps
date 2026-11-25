@@ -358,6 +358,8 @@ export function evaluateAndBuildInvoice(rawInput: EvaluateInvoiceInput): Evaluat
             inv &&
             !inv.isSeparateInvoice &&
             !inv.isSuperseded &&
+            !(inv as any).isCreditNote &&
+            inv.invoiceType !== 'Credit Note' &&
             inv.invoiceStatus !== 'Superseded' &&
             inv.invoiceStatus !== 'Cancelled' &&
             (!inv.hotelId || !effectiveHotelId || inv.hotelId === effectiveHotelId) &&
@@ -951,22 +953,30 @@ export function evaluateAndBuildInvoice(rawInput: EvaluateInvoiceInput): Evaluat
   });
 
   // Record Condition 7 result
-  const isAlreadyFinalized =
+  // Strictly finalized invoices (isFinalInvoice === true or invoiceStatus === 'Finalized') are IMMUTABLE.
+  // Provisional / draft invoices (invoiceStatus === 'Generated' && !isFinalInvoice) may be upgraded to Finalized on checkout.
+  const isStrictlyFinalized =
     Boolean(existingFinalInv) &&
-    (existingFinalInv!.invoiceStatus === 'Finalized' ||
-      existingFinalInv!.isFinalInvoice === true ||
-      existingFinalInv!.invoiceType === 'Tax Invoice' ||
-      existingFinalInv!.invoiceType === 'Stay Checkout Invoice');
+    (existingFinalInv!.isFinalInvoice === true ||
+      existingFinalInv!.invoiceStatus === 'Finalized');
+
+  const isAlreadyFinalized =
+    isStrictlyFinalized ||
+    (Boolean(existingFinalInv) &&
+      (existingFinalInv!.invoiceType === 'Tax Invoice' ||
+        existingFinalInv!.invoiceType === 'Stay Checkout Invoice'));
 
   conditionResults.push({
     conditionNumber: 7,
     conditionName: 'Duplicate Invoice Prevention',
     passed: true,
     reason:
-      config.preventDuplicateFinalInvoice && isAlreadyFinalized && !input.allowUpdateExistingFinalOnCheckout
+      isStrictlyFinalized && !input.createSeparateInvoice
+        ? `Finalized invoice ${existingFinalInv!.invoiceNumber} is immutable and cannot be overwritten. Use a separate adjustment/credit invoice workflow for authorized corrections.`
+        : config.preventDuplicateFinalInvoice && isAlreadyFinalized && !input.allowUpdateExistingFinalOnCheckout
         ? `Final invoice ${existingFinalInv!.invoiceNumber} already exists for booking/stay ${targetBookingId}. Returning existing invoice without creating a duplicate.`
         : existingAnyInv
-        ? `Existing invoice ${existingAnyInv.invoiceNumber} will be updated in-place to prevent duplicate invoices for booking/stay ${targetBookingId}.`
+        ? `Existing provisional invoice ${existingAnyInv.invoiceNumber} will be updated in-place to prevent duplicate invoices for booking/stay ${targetBookingId}.`
         : `No existing invoice found for booking/stay ${targetBookingId || 'direct'}; safe to create single invoice.`,
   });
 
@@ -987,6 +997,21 @@ export function evaluateAndBuildInvoice(rawInput: EvaluateInvoiceInput): Evaluat
     sgstAmount: sgst,
     totalTax: gst,
   };
+
+  // HARD IMMUTABILITY GUARD: Strictly finalized invoices can NEVER be overwritten in-place,
+  // even if allowUpdateExistingFinalOnCheckout is passed. Authorized corrections must use createSeparateInvoice.
+  if (isStrictlyFinalized && existingFinalInv && !input.createSeparateInvoice) {
+    return {
+      allowed: true,
+      duplicatePrevented: true,
+      updatedExistingInvoice: false,
+      blockingReasons: [],
+      conditionResults,
+      taxBreakdown,
+      invoice: existingFinalInv,
+      existingInvoice: existingFinalInv,
+    };
+  }
 
   // If a final invoice already exists and duplicate prevention is enabled, return the existing invoice
   if (
@@ -1028,10 +1053,12 @@ export function evaluateAndBuildInvoice(rawInput: EvaluateInvoiceInput): Evaluat
   const invoiceNumber =
     (!input.createSeparateInvoice && existingAnyInv?.invoiceNumber) ||
     allocated.invoiceNumber;
+  const baseStayInvoiceId = targetBookingId ? `INV-STAY-${targetBookingId}` : `INV-${Date.now()}`;
+  const baseIdAlreadyExists = existingInvoices.some((inv) => inv && inv.id === baseStayInvoiceId);
   const invoiceId = input.createSeparateInvoice
     ? `INV-SEP-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`
     : existingAnyInv?.id ||
-      (targetBookingId ? `INV-STAY-${targetBookingId}` : `INV-${Date.now()}`);
+      (baseIdAlreadyExists ? `${baseStayInvoiceId}-R${Date.now()}` : baseStayInvoiceId);
 
   const isWithoutGst = !finalBill.isGstInvoice;
   const resolvedInvoiceType =
@@ -1146,12 +1173,15 @@ export function deduplicateInvoicesByBooking(invoices: Invoice[] = []): Invoice[
     const hId = String(inv.hotelId || 'hotel-1').trim();
     const isSupersededOrCancelled =
       Boolean(inv.isSuperseded) ||
+      Boolean((inv as any).isCreditNote) ||
+      inv.invoiceType === 'Credit Note' ||
       inv.invoiceStatus === 'Superseded' ||
       inv.invoiceStatus === 'Cancelled';
     const isSep =
       isSupersededOrCancelled ||
       Boolean(inv.isSeparateInvoice) ||
-      String(inv.id).startsWith('INV-SEP-');
+      String(inv.id).startsWith('INV-SEP-') ||
+      String(inv.id).startsWith('CN-');
     let key = isSep || !bId ? `${hId}::id::${inv.id}` : `${hId}::booking::${bId}`;
 
     if (byKey.has(key)) {

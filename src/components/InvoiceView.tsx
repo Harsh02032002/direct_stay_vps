@@ -14,7 +14,7 @@ import {
   normalizeBillSettings,
   r2,
 } from '../utils/billCalculator';
-import { buildInvoiceRecord, buildStayBill } from '../utils/stayBilling';
+import { buildInvoiceRecord, buildStayBill, isActiveInvoice, resolveConsistentInvoiceTotals } from '../utils/stayBilling';
 import InvoiceConditionsModal from './InvoiceConditionsModal';
 import { 
   FileText, Plus, Search, Mail, Phone, Printer, Download, Landmark, 
@@ -127,15 +127,19 @@ export default function InvoiceView({
       const matchedInvoice =
         invoices.find(
           inv =>
-            inv.bookingId === selectedBookingForInvoice.id ||
-            inv.id === selectedBookingForInvoice.id
+            isActiveInvoice(inv) &&
+            (inv.bookingId === selectedBookingForInvoice.id ||
+              inv.id === selectedBookingForInvoice.id)
         ) ||
         invoices.find(
           inv =>
+            isActiveInvoice(inv) &&
             inv.roomNumber === selectedBookingForInvoice.roomNumber &&
             inv.guestName === selectedBookingForInvoice.guestName
         ) ||
-        invoices.find(inv => inv.guestName === selectedBookingForInvoice.guestName);
+        invoices.find(
+          inv => isActiveInvoice(inv) && inv.guestName === selectedBookingForInvoice.guestName
+        );
 
       const matchedCheckin =
         checkins.find(c => c.id === selectedBookingForInvoice.id && !c.checkedOutDateTime) ||
@@ -165,40 +169,46 @@ export default function InvoiceView({
         setChargeDescription('');
         setCheckoutNotes('');
         if (!matchedInvoice) {
-          const activeConditions = normalizeInvoiceConditions(hotelSettings?.invoiceConditions, {
-            isGstEnabled: hotelSettings?.isGstEnabled ?? true,
-            defaultGstRate: configuredDefaultGst
-          });
           const matchedBooking = bookings.find(b => b.id === matchedCheckin.id) || null;
-          const totalPaidNow = Number(matchedCheckin.advanceAmount || 0) + Number(matchedCheckin.cashAmountPaid || 0) + Number(matchedCheckin.onlineAmountPaid || 0);
-          const evalResult = evaluateAndBuildInvoice({
-            hotelId: matchedCheckin.hotelId || hotelSettings?.id,
-            booking: matchedBooking,
+          const liveStay = buildStayBill({
+            booking: matchedBooking || selectedBookingForInvoice,
             checkin: matchedCheckin,
             rooms,
-            existingInvoices: invoices,
-            conditions: activeConditions,
-            isManualAction: true,
-            triggerContext: 'checkin',
-            invoiceType: 'Booking Invoice',
-            overrideAdvancePaid: totalPaidNow,
-            overridePaymentMethod: matchedCheckin.paymentMethod || 'UPI'
+            settings: billSettings,
           });
-          if (evalResult.invoice) {
-            const newInv: Invoice = {
-              ...evalResult.invoice,
-              hotelId: matchedCheckin.hotelId || hotelSettings?.id,
-              advancePaid: totalPaidNow,
-              amountPaid: totalPaidNow,
-              pendingAmount: Math.max(0, Number(evalResult.invoice.finalAmount || 0) - totalPaidNow),
-              isPaid: totalPaidNow >= Number(evalResult.invoice.finalAmount || 0),
-              paymentStatus: totalPaidNow >= Number(evalResult.invoice.finalAmount || 0) ? 'Paid' : totalPaidNow > 0 ? 'Partially Paid' : 'Unpaid'
-            };
-            onUpdateInvoices([...invoices.filter(i => i.bookingId !== matchedCheckin.id && i.id !== newInv.id), newInv]);
-            setSelectedInvoice(newInv);
-            setInvoiceCategoryFilter('All');
-            setSearch('');
-          }
+          const liveFolioInvoice = buildInvoiceRecord({
+            id: `FOLIO-${matchedCheckin.id}`,
+            invoiceNumber: `FOLIO/${String(matchedCheckin.id).replace(/^#/, '')}`,
+            hotelId: matchedCheckin.hotelId || hotelSettings?.id,
+            bookingId: matchedCheckin.id,
+            checkInId: matchedCheckin.id,
+            guestName: matchedCheckin.guestName || selectedBookingForInvoice.guestName || 'Guest',
+            guestMobile: matchedCheckin.mobile || selectedBookingForInvoice.mobile,
+            guestAddress: matchedCheckin.address,
+            companyName: matchedCheckin.companyName,
+            guestGstNumber: matchedCheckin.gstNumber,
+            roomNumbers: liveStay.folio.roomNumbers.length > 0 ? liveStay.folio.roomNumbers : [matchedCheckin.roomNumber],
+            checkInDate: liveStay.folio.checkInDate || matchedCheckin.checkInDate,
+            checkOutDate: liveStay.folio.checkOutDate || matchedCheckin.checkOutDate || matchedCheckin.checkInDate,
+            nights: liveStay.folio.nights,
+            bill: liveStay.bill,
+            paymentMethod: liveStay.bill.paymentItems?.map(p => `${p.method} ₹${p.amount}`).join(' + ') || matchedCheckin.paymentMethod || 'Cash',
+            invoiceStatus: 'Active Folio',
+            extra: {
+              invoiceType: 'Active Folio',
+              grcNumber: matchedCheckin.grcNumber,
+              paymentHistory: (liveStay.bill.paymentItems || []).map((p, idx) => ({
+                id: p.id || `folio-pay-${idx}`,
+                amount: p.amount,
+                paymentMethod: p.method,
+                date: p.date || matchedCheckin.checkInDate,
+                notes: p.note,
+              })),
+            },
+          }) as Invoice;
+          setSelectedInvoice(liveFolioInvoice);
+          setInvoiceCategoryFilter('All');
+          setSearch('');
           setIsCheckoutFormOpen(false);
         }
       }
@@ -212,6 +222,7 @@ export default function InvoiceView({
   // Keep selectedInvoice synced if its data changed, or clear it if removed (do NOT auto-open first invoice)
   useEffect(() => {
     if (!selectedInvoice) return;
+    if (String(selectedInvoice.id || '').startsWith('FOLIO-')) return;
     const latest = invoices.find(i => i.id === selectedInvoice.id);
     if (!latest) {
       setSelectedInvoice(null);
@@ -232,7 +243,9 @@ export default function InvoiceView({
       return;
     }
 
-    const existingBookingIds = new Set(invoices.map(inv => inv.bookingId).filter(Boolean));
+    const existingBookingIds = new Set(
+      invoices.filter(isActiveInvoice).map(inv => inv.bookingId).filter(Boolean)
+    );
     const newlySynced: Invoice[] = [];
     let runningInvoices = [...invoices];
 
@@ -355,6 +368,7 @@ export default function InvoiceView({
 
     const existingStayInv = invoices.find(
       inv =>
+        isActiveInvoice(inv) &&
         !inv.isSeparateInvoice &&
         (inv.bookingId === cProfile.id || inv.checkInId === cProfile.id)
     );
@@ -1472,17 +1486,22 @@ export default function InvoiceView({
       }
     }
 
+    const isCn = Boolean(
+      (inv as any).isCreditNote ||
+        inv.invoiceType === 'Credit Note' ||
+        String(inv.invoiceNumber || '').toUpperCase().startsWith('CN/')
+    );
     if (invoiceCategoryFilter === 'Booking') {
-      return inv.invoiceType === 'Booking Invoice' && !inv.isSuperseded && inv.invoiceStatus !== 'Superseded';
+      return !isCn && inv.invoiceType === 'Booking Invoice' && !inv.isSuperseded && inv.invoiceStatus !== 'Superseded';
     }
     if (invoiceCategoryFilter === 'Checkout') {
-      return inv.invoiceType !== 'Booking Invoice' && !inv.isSuperseded && inv.invoiceStatus !== 'Superseded';
+      return !isCn && inv.invoiceType !== 'Booking Invoice' && !inv.isSuperseded && inv.invoiceStatus !== 'Superseded';
     }
     if (invoiceCategoryFilter === 'Due') {
-      return !inv.isPaid && !inv.isSuperseded && inv.invoiceStatus !== 'Superseded';
+      return !isCn && !inv.isPaid && !inv.isSuperseded && inv.invoiceStatus !== 'Superseded';
     }
     if (invoiceCategoryFilter === 'Superseded') {
-      return Boolean(inv.isSuperseded) || inv.invoiceStatus === 'Superseded';
+      return isCn || Boolean(inv.isSuperseded) || inv.invoiceStatus === 'Superseded';
     }
     return true;
   });
@@ -1529,19 +1548,42 @@ export default function InvoiceView({
                 </p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-sm font-extrabold uppercase text-black tracking-wider mb-1">
-                BOOKING CONFIRMATION &amp; INVOICE
-              </p>
-              <p className="text-xs text-[#222] font-semibold">
-                Conf #: <span className="font-mono">{selectedInvoice.grcNumber || selectedInvoice.bookingId || selectedInvoice.invoiceNumber}</span> | Date: {selectedInvoice.dateCreated}
-              </p>
-              <p className="text-xs font-bold text-black mt-0.5">
-                Status: <span className="uppercase">{selectedInvoice.isPaid ? 'CONFIRMED (PAID)' : 'CONFIRMED'}</span>
-              </p>
-            </div>
+            {(() => {
+              const selTotals = resolveConsistentInvoiceTotals(selectedInvoice, configuredDefaultGst);
+              return (
+                <div className="text-right">
+                  <p className={`text-sm font-extrabold uppercase tracking-wider mb-1 ${selTotals.isCreditNote || selTotals.isSuperseded ? 'text-rose-700' : 'text-black'}`}>
+                    {selTotals.isCreditNote ? 'CREDIT NOTE / CHECKOUT REVERSAL' : 'BOOKING CONFIRMATION & INVOICE'}
+                  </p>
+                  <p className="text-xs text-[#222] font-semibold">
+                    Conf #: <span className="font-mono">{selectedInvoice.grcNumber || selectedInvoice.bookingId || selectedInvoice.invoiceNumber}</span> | Date: {selectedInvoice.dateCreated}
+                  </p>
+                  <p className={`text-xs font-bold mt-0.5 ${selTotals.isCreditNote || selTotals.isSuperseded ? 'text-rose-700' : 'text-black'}`}>
+                    Status:{' '}
+                    <span className="uppercase">
+                      {selTotals.isCreditNote
+                        ? 'CREDIT NOTE — REVERSAL ISSUED'
+                        : selTotals.isSuperseded
+                        ? `SUPERSEDED (REVERSED${(selectedInvoice as any).supersededByInvoiceNumber ? ` BY ${(selectedInvoice as any).supersededByInvoiceNumber}` : ''})`
+                        : selTotals.balance <= 0 && selTotals.grandTotal > 0
+                        ? 'CONFIRMED (PAID)'
+                        : 'CONFIRMED'}
+                    </span>
+                  </p>
+                </div>
+              );
+            })()}
           </div>
           <div className="border-b-2 border-black my-3"></div>
+          {(selectedInvoice.isSuperseded || selectedInvoice.invoiceStatus === 'Superseded') && !(selectedInvoice as any).isCreditNote && (
+            <div className="mb-3 px-3 py-2 rounded-lg bg-rose-50 border-2 border-rose-400 text-rose-800 text-xs font-extrabold">
+              SUPERSEDED — REVERSED
+              {(selectedInvoice as any).supersededByInvoiceNumber
+                ? ` BY ${(selectedInvoice as any).supersededByInvoiceNumber}`
+                : ''}{' '}
+              | Historical audit record only. Excluded from active revenue &amp; daily collection.
+            </div>
+          )}
 
           <div className="space-y-4 text-xs font-sans">
             {(() => {
@@ -1666,51 +1708,61 @@ export default function InvoiceView({
                   </tr>
                 )}
                 {(() => {
-                  const totalGstVal = Number(selectedInvoice.gst || 0);
-                  if (totalGstVal <= 0) return null;
-                  const slab = selectedInvoice.gstRate ?? configuredDefaultGst;
+                  const selTotals = resolveConsistentInvoiceTotals(selectedInvoice, configuredDefaultGst);
+                  const slab = selTotals.headlineGstRate || configuredDefaultGst;
                   const cgstRate = (slab / 2).toFixed(1).replace(/\.0$/, '');
                   const sgstRate = (slab / 2).toFixed(1).replace(/\.0$/, '');
-                  const halfGstVal = parseFloat((totalGstVal / 2).toFixed(2));
                   return (
                     <>
-                      <tr>
-                        <td className="p-3 text-left text-slate-600 font-mono">Add: CGST ({cgstRate}%)</td>
-                        <td className="p-3 text-right text-slate-700 font-mono font-semibold">₹{halfGstVal.toLocaleString('en-IN')}</td>
+                      {Math.abs(selTotals.totalTax) > 0 && (
+                        <>
+                          <tr>
+                            <td className="p-3 text-left text-slate-600 font-mono">Add: CGST ({cgstRate}%)</td>
+                            <td className="p-3 text-right text-slate-700 font-mono font-semibold">₹{selTotals.cgst.toLocaleString('en-IN')}</td>
+                          </tr>
+                          <tr>
+                            <td className="p-3 text-left text-slate-600 font-mono">Add: SGST ({sgstRate}%)</td>
+                            <td className="p-3 text-right text-slate-700 font-mono font-semibold">₹{selTotals.sgst.toLocaleString('en-IN')}</td>
+                          </tr>
+                          <tr className="bg-amber-50/40 font-semibold">
+                            <td className="p-3 text-left text-[#8B691E] font-mono">Total GST ({slab}% = CGST + SGST)</td>
+                            <td className="p-3 text-right text-[#8B691E] font-mono font-bold">₹{selTotals.totalTax.toLocaleString('en-IN')}</td>
+                          </tr>
+                        </>
+                      )}
+                      <tr className="font-bold text-slate-900 bg-slate-100 text-sm">
+                        <td className="p-3 text-left uppercase tracking-wider">
+                          {selTotals.isCreditNote ? 'TOTAL CREDIT NOTE REVERSAL (₹)' : 'GRAND TOTAL BILL (₹)'}
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold text-base">₹{selTotals.grandTotal.toLocaleString('en-IN')}</td>
                       </tr>
-                      <tr>
-                        <td className="p-3 text-left text-slate-600 font-mono">Add: SGST ({sgstRate}%)</td>
-                        <td className="p-3 text-right text-slate-700 font-mono font-semibold">₹{halfGstVal.toLocaleString('en-IN')}</td>
+                      <tr className="text-emerald-700 font-semibold">
+                        <td className="p-3 text-left">
+                          {selTotals.isCreditNote ? 'New Payment Collected' : 'Less: Advance / Amount Paid'}
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold">
+                          {selTotals.isCreditNote ? '₹0' : `-₹${selTotals.receipts.toLocaleString('en-IN')}`}
+                        </td>
                       </tr>
-                      <tr className="bg-amber-50/40 font-semibold">
-                        <td className="p-3 text-left text-[#8B691E] font-mono">Total GST ({slab}% = CGST + SGST)</td>
-                        <td className="p-3 text-right text-[#8B691E] font-mono font-bold">₹{totalGstVal.toLocaleString('en-IN')}</td>
+                      {selTotals.refundDue > 0 && (
+                        <tr className="text-amber-800 bg-amber-50 font-bold">
+                          <td className="p-3 text-left uppercase font-mono">Refund Due / Payable to Guest</td>
+                          <td className="p-3 text-right font-mono font-bold">₹{selTotals.refundDue.toLocaleString('en-IN')}</td>
+                        </tr>
+                      )}
+                      <tr className="font-bold text-slate-900 bg-amber-50/70 text-xs">
+                        <td className="p-3 text-left uppercase font-mono">NET BALANCE DUE (₹)</td>
+                        <td className="p-3 text-right font-mono font-bold">
+                          {selTotals.isCreditNote
+                            ? '₹0 (REVERSAL ISSUED)'
+                            : selTotals.balance <= 0
+                            ? '₹0 (PAID IN FULL)'
+                            : `₹${selTotals.balance.toLocaleString('en-IN')} DUE`}
+                        </td>
                       </tr>
                     </>
                   );
                 })()}
-                <tr className="font-bold text-slate-900 bg-slate-100 text-sm">
-                  <td className="p-3 text-left uppercase tracking-wider">GRAND TOTAL BILL (₹)</td>
-                  <td className="p-3 text-right font-mono font-bold text-base">₹{Number(selectedInvoice.finalAmount || 0).toLocaleString()}</td>
-                </tr>
-                <tr className="text-emerald-700 font-semibold">
-                  <td className="p-3 text-left">Less: Advance / Amount Paid</td>
-                  <td className="p-3 text-right font-mono font-bold">-₹{Number(selectedInvoice.advancePaid ?? (selectedInvoice.isPaid ? selectedInvoice.finalAmount : 0) ?? 0).toLocaleString()}</td>
-                </tr>
-                {Number(selectedInvoice.refundDue ?? (selectedInvoice as any).refundAmount ?? 0) > 0 && (
-                  <tr className="text-amber-800 bg-amber-50 font-bold">
-                    <td className="p-3 text-left uppercase font-mono">Refund Due / Payable to Guest</td>
-                    <td className="p-3 text-right font-mono font-bold">₹{Number(selectedInvoice.refundDue ?? (selectedInvoice as any).refundAmount ?? 0).toLocaleString()}</td>
-                  </tr>
-                )}
-                <tr className="font-bold text-slate-900 bg-amber-50/70 text-xs">
-                  <td className="p-3 text-left uppercase font-mono">NET BALANCE DUE (₹)</td>
-                  <td className="p-3 text-right font-mono font-bold">
-                    {selectedInvoice.isPaid
-                      ? '₹0 (PAID IN FULL)'
-                      : `₹${Number(selectedInvoice.pendingAmount ?? Math.max(0, Number(selectedInvoice.finalAmount || 0) - Number(selectedInvoice.advancePaid || 0))).toLocaleString()} DUE`}
-                  </td>
-                </tr>
               </tbody>
             </table>
 
@@ -1967,11 +2019,34 @@ export default function InvoiceView({
                         </span>
                       </td>
                       <td className="p-3.5 text-right font-mono font-bold text-[#263449] text-sm whitespace-nowrap">
-                        ₹{Number(inv.finalAmount || 0).toLocaleString()}
+                        {(() => {
+                          const rt = resolveConsistentInvoiceTotals(inv, configuredDefaultGst);
+                          return (
+                            <div>
+                              <div>₹{rt.grandTotal.toLocaleString('en-IN')}</div>
+                              {!rt.isCreditNote && (
+                                <div className="text-[10px] font-mono text-slate-500 font-normal">
+                                  Paid: ₹{rt.receipts.toLocaleString('en-IN')} • Due: ₹{rt.balance.toLocaleString('en-IN')}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="p-3.5 text-center whitespace-nowrap">
                         <div className="flex flex-col items-center gap-1">
-                          {inv.isSuperseded || inv.invoiceStatus === 'Superseded' ? (
+                          {(inv as any).isCreditNote ||
+                          inv.invoiceType === 'Credit Note' ||
+                          String(inv.invoiceNumber || '').toUpperCase().startsWith('CN/') ? (
+                            <>
+                              <span className="inline-flex items-center px-2 py-0.5 border font-mono rounded-full text-[9px] font-bold uppercase whitespace-nowrap bg-rose-50 text-rose-800 border-rose-300">
+                                CREDIT NOTE
+                              </span>
+                              <span className="text-[9px] font-mono text-slate-500 block">
+                                Reversal (Non-Revenue)
+                              </span>
+                            </>
+                          ) : inv.isSuperseded || inv.invoiceStatus === 'Superseded' ? (
                             <>
                               <span className="inline-flex items-center px-2 py-0.5 border font-mono rounded-full text-[9px] font-bold uppercase whitespace-nowrap bg-rose-50 text-rose-700 border-rose-300">
                                 SUPERSEDED
@@ -2079,19 +2154,26 @@ export default function InvoiceView({
                       ? 'SUPERSEDED'
                       : (selectedInvoice.invoiceStatus || (selectedInvoice.invoiceType === 'Tax Invoice' ? 'Finalized' : 'Generated'))}
                   </span>
-                  <span className={`px-2.5 py-1 border text-[10px] font-mono leading-none rounded-full font-bold whitespace-nowrap ${
-                    selectedInvoice.paymentStatus === 'Paid' || selectedInvoice.isPaid
-                      ? 'bg-emerald-50 !text-[#15805D] border-emerald-200'
-                      : selectedInvoice.paymentStatus === 'Partially Paid' || (Number(selectedInvoice.advancePaid || 0) > 0 && !selectedInvoice.isPaid)
-                      ? 'bg-amber-50 !text-amber-800 border-amber-200'
-                      : 'bg-rose-50 !text-[#D92D4B] border-rose-200'
-                  }`}>
-                    {selectedInvoice.paymentStatus === 'Paid' || selectedInvoice.isPaid
-                      ? 'PAID IN FULL'
-                      : selectedInvoice.paymentStatus === 'Partially Paid' || Number(selectedInvoice.advancePaid || 0) > 0
-                      ? 'PARTIALLY PAID'
-                      : 'UNPAID / DUE'}
-                  </span>
+                  {(() => {
+                    const rtSel = resolveConsistentInvoiceTotals(selectedInvoice, configuredDefaultGst);
+                    return (
+                      <span className={`px-2.5 py-1 border text-[10px] font-mono leading-none rounded-full font-bold whitespace-nowrap ${
+                        rtSel.paymentStatus === 'Paid'
+                          ? 'bg-emerald-50 !text-[#15805D] border-emerald-200'
+                          : rtSel.paymentStatus === 'Partially Paid'
+                          ? 'bg-amber-50 !text-amber-800 border-amber-200'
+                          : 'bg-rose-50 !text-[#D92D4B] border-rose-200'
+                      }`}>
+                        {rtSel.isCreditNote
+                          ? 'CREDIT NOTE'
+                          : rtSel.paymentStatus === 'Paid'
+                          ? 'PAID IN FULL'
+                          : rtSel.paymentStatus === 'Partially Paid'
+                          ? 'PARTIALLY PAID'
+                          : 'UNPAID / DUE'}
+                      </span>
+                    );
+                  })()}
                   <button
                     type="button"
                     onClick={() => setSelectedInvoice(null)}
@@ -2105,19 +2187,19 @@ export default function InvoiceView({
 
               {/* Superseded Warning Banner if applicable */}
               {(selectedInvoice.isSuperseded || selectedInvoice.invoiceStatus === 'Superseded') && (
-                <div className="p-3.5 bg-rose-50 border-2 border-rose-300 rounded-xl text-rose-950 text-xs space-y-1.5">
-                  <div className="font-bold flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-rose-700 font-mono uppercase">
-                      ⚠️ Audit Notice: Invoice Superseded
+                <div className="p-3.5 bg-rose-50 border-2 border-rose-400 rounded-xl text-rose-950 text-xs space-y-1.5">
+                  <div className="font-bold flex items-center justify-between flex-wrap gap-1.5">
+                    <span className="flex items-center gap-1.5 text-rose-800 font-mono uppercase font-extrabold">
+                      ⚠️ SUPERSEDED — REVERSED{selectedInvoice.supersededByInvoiceNumber ? ` BY ${selectedInvoice.supersededByInvoiceNumber}` : ''}
                     </span>
                     {selectedInvoice.supersededByInvoiceNumber && (
                       <span className="font-mono text-[11px] bg-white px-2 py-0.5 rounded border border-rose-300 text-rose-800">
-                        Active: {selectedInvoice.supersededByInvoiceNumber}
+                        Ref: {selectedInvoice.supersededByInvoiceNumber}
                       </span>
                     )}
                   </div>
                   <p className="text-[11px] text-rose-800 leading-relaxed">
-                    This invoice was superseded when a replacement invoice was generated for this stay. It is preserved strictly for accounting audit trail and GSTR record-keeping. Its financial totals are excluded from active hotel revenue.
+                    This historical invoice has been superseded and reversed. It is preserved immutably for accounting audit trail and excluded from active hotel revenue &amp; daily collection.
                   </p>
                 </div>
               )}
@@ -2164,7 +2246,8 @@ export default function InvoiceView({
                   modeTotalsMap.set(m, r2((modeTotalsMap.get(m) || 0) + Number(r.amount || 0)));
                 });
                 const totalReceived = r2(currentPayRows.reduce((s, r) => s + Number(r.amount || 0), 0));
-                const billDue = Math.max(0, r2(Number(selectedInvoice.finalAmount || 0) - totalReceived));
+                const selTotalsPay = resolveConsistentInvoiceTotals(selectedInvoice, configuredDefaultGst);
+                const billDue = Math.max(0, r2(selTotalsPay.grandTotal - totalReceived));
                 return (
                   <div className="p-3.5 bg-[#FDF8ED] border border-[#C49A3A]/50 rounded-xl space-y-2.5 text-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E6DCCF] pb-2">

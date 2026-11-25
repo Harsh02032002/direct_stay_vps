@@ -1002,19 +1002,9 @@ export default function FrontWebsite({
     Array.isArray(systemWebsite.featureCards) && systemWebsite.featureCards.length > 0
       ? systemWebsite.featureCards
       : INITIAL_SYSTEM_WEBSITE.featureCards || [];
-  const hasLegacyPricingCards =
-    Array.isArray(systemWebsite.pricingCards) &&
-    systemWebsite.pricingCards.some(
-      (c) =>
-        String(c?.priceText || '').includes('7,999') ||
-        String(c?.priceText || '').includes('14,000') ||
-        String(c?.title || '').includes('6 Month') ||
-        String(c?.gstText || '').includes('18% GST')
-    );
   const pricingCards =
     Array.isArray(systemWebsite.pricingCards) &&
-    systemWebsite.pricingCards.length > 0 &&
-    !hasLegacyPricingCards
+    systemWebsite.pricingCards.length > 0
       ? systemWebsite.pricingCards
       : INITIAL_SYSTEM_WEBSITE.pricingCards || [];
   const visionPillars =

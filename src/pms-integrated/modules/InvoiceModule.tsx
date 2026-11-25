@@ -1004,14 +1004,47 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                       const effectiveGrandTotal = r2(inv.grandTotal || 0);
                       const effectiveBalanceDue = r2(inv.balanceDue || 0);
                       const displayScope = resolveInvoiceScope(inv);
-                      const isRowSuperseded = !isFolioRow && !isActiveInvoice(inv);
+                      const isRowCreditNote = Boolean(
+                        !isFolioRow &&
+                          (inv.isCreditNote ||
+                            String(inv.invoiceType || '').toLowerCase() === 'credit note' ||
+                            String(inv.invoiceNumber || '').toUpperCase().startsWith('CN/'))
+                      );
+                      const isRowSuperseded = !isFolioRow && !isRowCreditNote && !isActiveInvoice(inv);
                       const serviceList = isFolioRow ? linkedBooking?.otherServices || [] : [];
 
                       return (
-                        <tr key={inv.id} className={isRowSuperseded ? 'bg-slate-50/70 opacity-65' : 'hover:bg-slate-50'}>
+                        <tr
+                          key={inv.id}
+                          className={
+                            isRowCreditNote
+                              ? 'bg-rose-50/40 hover:bg-rose-50/70'
+                              : isRowSuperseded
+                              ? 'bg-slate-50/70 opacity-65'
+                              : 'hover:bg-slate-50'
+                          }
+                        >
                           <td className="py-3.5 px-4 font-extrabold text-slate-900">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className={isRowSuperseded ? 'line-through text-slate-500' : ''}>{inv.invoiceNumber}</span>
+                              <span
+                                className={
+                                  isRowCreditNote
+                                    ? 'text-rose-800'
+                                    : isRowSuperseded
+                                    ? 'line-through text-slate-500'
+                                    : ''
+                                }
+                              >
+                                {inv.invoiceNumber}
+                              </span>
+                              {isRowCreditNote && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-200 text-[9px] font-bold"
+                                  title="Checkout Reversal Credit Note (Non-Revenue Audit Document)"
+                                >
+                                  CREDIT NOTE
+                                </span>
+                              )}
                               {isRowSuperseded && (
                                 <span
                                   className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 text-[9px] font-bold"
@@ -1024,7 +1057,7 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                   SUPERSEDED{inv.supersededByInvoiceNumber ? ` → ${inv.supersededByInvoiceNumber}` : ''}
                                 </span>
                               )}
-                              {!isRowSuperseded && inv.isSeparateInvoice && (
+                              {!isRowSuperseded && !isRowCreditNote && inv.isSeparateInvoice && (
                                 <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[9px] font-bold">
                                   SPLIT SCOPE
                                 </span>

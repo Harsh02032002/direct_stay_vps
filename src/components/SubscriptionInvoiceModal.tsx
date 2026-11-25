@@ -1,5 +1,5 @@
-import React from 'react';
-import { Printer, Download, X, CheckCircle2, Crown, ShieldCheck, Building2, Calendar, CreditCard, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import { Printer, Download, X, CheckCircle2, Crown, ShieldCheck, Building2, Calendar, CreditCard, Sparkles, Receipt } from 'lucide-react';
 import { SubscriptionInvoice } from '../types';
 import { downloadSubscriptionInvoicePdf } from '../utils/pdfDownload';
 
@@ -9,6 +9,8 @@ interface SubscriptionInvoiceModalProps {
   businessName?: string;
   supportPhone?: string;
   supportEmail?: string;
+  gstNumber?: string;
+  sacCode?: string;
 }
 
 export default function SubscriptionInvoiceModal({
@@ -17,8 +19,15 @@ export default function SubscriptionInvoiceModal({
   businessName = 'DirectStay SaaS Hub',
   supportPhone = '+91 7978563771',
   supportEmail = 'contact@directstay.online',
+  gstNumber = '21AABCU9603R1ZM',
+  sacCode = '998315',
 }: SubscriptionInvoiceModalProps) {
+  const [docMode, setDocMode] = useState<'invoice' | 'receipt'>('invoice');
   if (!invoice) return null;
+
+  const receiptNumber =
+    (invoice as any).receiptNumber ||
+    String(invoice.invoiceNumber || 'RCPT').replace(/^DS-SUB/i, 'RCPT');
 
   const handlePrint = () => {
     window.print();
@@ -47,7 +56,27 @@ export default function SubscriptionInvoiceModal({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="inline-flex rounded-xl bg-white/10 p-0.5 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => setDocMode('invoice')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  docMode === 'invoice' ? 'bg-luxury-gold-500 text-luxury-brown-950' : 'text-white/80 hover:text-white'
+                }`}
+              >
+                GST Invoice
+              </button>
+              <button
+                type="button"
+                onClick={() => setDocMode('receipt')}
+                className={`px-3 py-1.5 rounded-lg inline-flex items-center gap-1 transition-all cursor-pointer ${
+                  docMode === 'receipt' ? 'bg-luxury-gold-500 text-luxury-brown-950' : 'text-white/80 hover:text-white'
+                }`}
+              >
+                <Receipt className="w-3.5 h-3.5" /> Payment Receipt
+              </button>
+            </div>
             <button
               type="button"
               onClick={handleDownloadPdf}
@@ -80,7 +109,8 @@ export default function SubscriptionInvoiceModal({
           <div className="flex flex-col sm:flex-row justify-between items-start gap-6 pb-6 border-b-2 border-luxury-brown-900">
             <div className="space-y-1.5">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-luxury-beige-100 border border-luxury-gold-500/40 text-luxury-brown-900 text-[10px] font-mono uppercase tracking-widest font-bold">
-                <Sparkles className="w-3 h-3 text-luxury-gold-600" /> Official SaaS License Tax Invoice
+                <Sparkles className="w-3 h-3 text-luxury-gold-600" />{' '}
+                {docMode === 'receipt' ? 'Official Payment Receipt' : 'Official SaaS License Tax Invoice'}
               </div>
               <h1 className="text-2xl md:text-3xl font-serif font-bold text-luxury-brown-950 tracking-tight">
                 {businessName}
@@ -89,7 +119,7 @@ export default function SubscriptionInvoiceModal({
                 Enterprise Hospitality Cloud & Multi-Property PMS Platform
               </p>
               <div className="text-[11px] font-mono text-luxury-brown-600 pt-1 space-y-0.5">
-                <p>GSTIN: <strong className="text-luxury-brown-950">21AABCU9603R1ZM</strong> • SAC Code: <strong className="text-luxury-brown-950">998315</strong> (Cloud SaaS License)</p>
+                <p>GSTIN: <strong className="text-luxury-brown-950">{gstNumber}</strong> • SAC Code: <strong className="text-luxury-brown-950">{sacCode}</strong> (Cloud SaaS License)</p>
                 <p>Support: {supportPhone} • {supportEmail}</p>
               </div>
             </div>
@@ -102,11 +132,23 @@ export default function SubscriptionInvoiceModal({
                 </span>
               </div>
               <div>
-                <span className="text-[10px] font-mono uppercase text-luxury-brown-500 block">Invoice Number</span>
-                <span className="font-mono font-bold text-base text-luxury-brown-950">{invoice.invoiceNumber}</span>
+                <span className="text-[10px] font-mono uppercase text-luxury-brown-500 block">
+                  {docMode === 'receipt' ? 'Payment Receipt No' : 'Invoice Number'}
+                </span>
+                <span className="font-mono font-bold text-base text-luxury-brown-950">
+                  {docMode === 'receipt' ? receiptNumber : invoice.invoiceNumber}
+                </span>
               </div>
+              {docMode === 'receipt' && (
+                <div>
+                  <span className="text-[10px] font-mono uppercase text-luxury-brown-500 block">Linked Tax Invoice</span>
+                  <span className="font-mono font-semibold text-xs text-luxury-brown-800">{invoice.invoiceNumber}</span>
+                </div>
+              )}
               <div>
-                <span className="text-[10px] font-mono uppercase text-luxury-brown-500 block">Invoice Date</span>
+                <span className="text-[10px] font-mono uppercase text-luxury-brown-500 block">
+                  {docMode === 'receipt' ? 'Payment Date' : 'Invoice Date'}
+                </span>
                 <span className="font-mono font-semibold text-xs text-luxury-brown-800">{invoice.createdAt}</span>
               </div>
             </div>

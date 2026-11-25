@@ -41,7 +41,9 @@ import {
   TravelAgent,
   AgentCommissionPayment,
   FoodAdvanceBooking,
-  PosCategory
+  PosCategory,
+  PosTableRecord,
+  StaffLeaveRequest
 } from '../types';
 import { syncAllToSupabase } from './supabaseClient';
 
@@ -574,6 +576,8 @@ export const getPmsData = () => {
   const rawAgentCommissionPayments = checkAndGet<AgentCommissionPayment[]>('GP_PMS_AGENT_COMMISSION_PAYMENTS', []);
   const rawPosAdvanceBookings = checkAndGet<FoodAdvanceBooking[]>('GP_PMS_POS_ADVANCE_BOOKINGS', []);
   const rawPosCategories = checkAndGet<PosCategory[]>('GP_PMS_POS_CATEGORIES', []);
+  const rawPosTables = checkAndGet<PosTableRecord[]>('GP_PMS_POS_TABLES', []);
+  const rawLeaveRequests = checkAndGet<StaffLeaveRequest[]>('GP_PMS_LEAVE_REQUESTS', []);
 
   return {
     hotels: rawHotels || [],
@@ -595,6 +599,8 @@ export const getPmsData = () => {
     agentCommissionPayments: rawAgentCommissionPayments || [],
     posAdvanceBookings: rawPosAdvanceBookings || [],
     posCategories: rawPosCategories || [],
+    posTables: rawPosTables || [],
+    leaveRequests: rawLeaveRequests || [],
     rolePermissions: rawRolePermissions || [],
     inventoryProducts: rawInventoryProducts || [],
     inventoryCategories: rawInventoryCategories || [],
@@ -663,6 +669,8 @@ export const savePmsData = (
     agentCommissionPayments?: AgentCommissionPayment[];
     posAdvanceBookings?: FoodAdvanceBooking[];
     posCategories?: PosCategory[];
+    posTables?: PosTableRecord[];
+    leaveRequests?: StaffLeaveRequest[];
   },
   skipCloudSync = false
 ) => {
@@ -739,6 +747,8 @@ export const savePmsData = (
   if (data.agentCommissionPayments !== undefined) safeSetStorageItem('GP_PMS_AGENT_COMMISSION_PAYMENTS', data.agentCommissionPayments);
   if (data.posAdvanceBookings !== undefined) safeSetStorageItem('GP_PMS_POS_ADVANCE_BOOKINGS', data.posAdvanceBookings);
   if (data.posCategories !== undefined) safeSetStorageItem('GP_PMS_POS_CATEGORIES', data.posCategories);
+  if (data.posTables !== undefined) safeSetStorageItem('GP_PMS_POS_TABLES', data.posTables);
+  if (data.leaveRequests !== undefined) safeSetStorageItem('GP_PMS_LEAVE_REQUESTS', data.leaveRequests);
 
   if (skipCloudSync) return;
 

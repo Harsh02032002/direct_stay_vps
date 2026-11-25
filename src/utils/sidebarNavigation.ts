@@ -399,6 +399,13 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
         target: { activeTab: 'staff', staffSubTab: 'directory' },
       },
       {
+        id: 'hrm-staff-roles',
+        label: 'Staff Roles & RBAC',
+        iconKey: 'dot',
+        rbacTab: 'staff',
+        target: { activeTab: 'staff', staffSubTab: 'roles' },
+      },
+      {
         id: 'hrm-attendance',
         label: 'Staff Attendance & Daily Logs',
         iconKey: 'dot',
@@ -586,13 +593,6 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
         iconKey: 'dot',
         rbacTab: 'staff',
         target: { activeTab: 'staff', staffSubTab: 'allUsers' },
-      },
-      {
-        id: 'adm-user-roles',
-        label: 'User Roles',
-        iconKey: 'dot',
-        rbacTab: 'staff',
-        target: { activeTab: 'staff', staffSubTab: 'roles' },
       },
       {
         id: 'adm-audit-logs',

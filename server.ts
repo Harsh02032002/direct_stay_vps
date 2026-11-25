@@ -51,7 +51,13 @@ let memStateLoadPromise: Promise<{ _id: string; data: Record<string, any>; updat
 let atlasFlushPending = false;
 let atlasFlushRunning = false;
 
+const IS_LOCAL_READONLY_SANDBOX = process.env.PMS_LOCAL_READONLY_SANDBOX === "true";
+
 function scheduleAtlasStateFlush(rawCol: any) {
+  if (IS_LOCAL_READONLY_SANDBOX) {
+    // Strictly block all Atlas writes in isolated local test sandbox mode
+    return;
+  }
   atlasFlushPending = true;
   if (atlasFlushRunning) return;
   atlasFlushRunning = true;
@@ -117,13 +123,177 @@ async function ensureMemStateLoaded(rawCol: any) {
 function wrapDbWithStateCache(rawDb: Db): Db {
   const rawCollectionFn = rawDb.collection.bind(rawDb);
   let cachedStateColProxy: any = null;
+  const sandboxCols = new Map<string, any>();
+
+  const getSandboxCollection = (name: string) => {
+    if (sandboxCols.has(name)) return sandboxCols.get(name);
+    const docs: any[] = [];
+    const indexDefs: Array<{ key: Record<string, number>; unique?: boolean; name: string }> = [
+      { key: { _id: 1 }, name: "_id_" },
+    ];
+    const matchesFilter = (doc: any, filter: any): boolean => {
+      if (!filter || typeof filter !== "object") return true;
+      for (const [k, v] of Object.entries(filter)) {
+        if (v && typeof v === "object" && "$regex" in (v as any)) {
+          const re = new RegExp((v as any).$regex, (v as any).$options || "");
+          if (!re.test(String(doc?.[k] ?? ""))) return false;
+        } else if (v && typeof v === "object" && "$in" in (v as any)) {
+          if (!Array.isArray((v as any).$in) || !(v as any).$in.includes(doc?.[k])) return false;
+        } else if (doc?.[k] !== v) {
+          return false;
+        }
+      }
+      return true;
+    };
+    const assertUnique = (candidate: any, excludeIdx = -1) => {
+      for (const idx of indexDefs) {
+        if (!idx.unique) continue;
+        const fields = Object.keys(idx.key);
+        const dup = docs.some((d, i) => {
+          if (i === excludeIdx) return false;
+          return fields.every((f) => d?.[f] === candidate?.[f]);
+        });
+        if (dup) {
+          const err: any = new Error(`E11000 duplicate key error on sandbox ${name}.${idx.name}`);
+          err.code = 11000;
+          throw err;
+        }
+      }
+    };
+    const applyUpdate = (doc: any, update: any, isInsert: boolean) => {
+      if (isInsert && update?.$setOnInsert) Object.assign(doc, update.$setOnInsert);
+      if (update?.$set) Object.assign(doc, update.$set);
+      if (update?.$max) {
+        for (const [k, v] of Object.entries(update.$max)) {
+          const cur = Number(doc[k]);
+          if (!Number.isFinite(cur) || Number(v) > cur) doc[k] = v;
+        }
+      }
+      if (update?.$inc) {
+        for (const [k, v] of Object.entries(update.$inc)) {
+          doc[k] = (Number(doc[k]) || 0) + Number(v || 0);
+        }
+      }
+    };
+    const col: any = {
+      async createIndex(key: Record<string, number>, opts?: any) {
+        const idxName = opts?.name || Object.keys(key).join("_");
+        if (!indexDefs.some((x) => x.name === idxName)) {
+          indexDefs.push({ key, unique: Boolean(opts?.unique), name: idxName });
+        }
+        return idxName;
+      },
+      async indexes() {
+        return indexDefs.map((x) => ({ v: 2, ...x }));
+      },
+      async findOne(filter?: any) {
+        const found = docs.find((d) => matchesFilter(d, filter));
+        return found ? { ...found } : null;
+      },
+      find(filter?: any) {
+        let list = docs.filter((d) => matchesFilter(d, filter)).map((d) => ({ ...d }));
+        const cursor: any = {
+          sort() { return cursor; },
+          limit(n: number) { list = list.slice(0, n); return cursor; },
+          async toArray() { return list; },
+        };
+        return cursor;
+      },
+      async insertOne(doc: any) {
+        const copy = { _id: doc._id ?? `sb-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, ...doc };
+        assertUnique(copy);
+        docs.push(copy);
+        return { acknowledged: true, insertedId: copy._id };
+      },
+      async insertMany(arr: any[]) {
+        for (const d of arr || []) await col.insertOne(d);
+        return { acknowledged: true, insertedCount: (arr || []).length };
+      },
+      async updateOne(filter: any, update: any, opts?: any) {
+        const idx = docs.findIndex((d) => matchesFilter(d, filter));
+        if (idx >= 0) {
+          const next = { ...docs[idx] };
+          applyUpdate(next, update, false);
+          assertUnique(next, idx);
+          docs[idx] = next;
+          return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0 };
+        }
+        if (opts?.upsert) {
+          const created: any = { ...(filter || {}) };
+          applyUpdate(created, update, true);
+          assertUnique(created);
+          docs.push(created);
+          return { acknowledged: true, matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
+        }
+        return { acknowledged: true, matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
+      },
+      async findOneAndUpdate(filter: any, update: any, opts?: any) {
+        const idx = docs.findIndex((d) => matchesFilter(d, filter));
+        if (idx >= 0) {
+          const next = { ...docs[idx] };
+          applyUpdate(next, update, false);
+          assertUnique(next, idx);
+          docs[idx] = next;
+          return { ...next };
+        }
+        if (opts?.upsert) {
+          const created: any = { ...(filter || {}) };
+          applyUpdate(created, update, true);
+          assertUnique(created);
+          docs.push(created);
+          return { ...created };
+        }
+        return null;
+      },
+      async replaceOne(filter: any, replacement: any, opts?: any) {
+        const idx = docs.findIndex((d) => matchesFilter(d, filter));
+        if (idx >= 0) {
+          docs[idx] = { ...replacement };
+          return { acknowledged: true, matchedCount: 1, modifiedCount: 1 };
+        }
+        if (opts?.upsert) {
+          docs.push({ ...replacement });
+          return { acknowledged: true, matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
+        }
+        return { acknowledged: true, matchedCount: 0, modifiedCount: 0 };
+      },
+      async deleteOne(filter: any) {
+        const idx = docs.findIndex((d) => matchesFilter(d, filter));
+        if (idx >= 0) { docs.splice(idx, 1); return { acknowledged: true, deletedCount: 1 }; }
+        return { acknowledged: true, deletedCount: 0 };
+      },
+      async deleteMany(filter: any) {
+        let count = 0;
+        for (let i = docs.length - 1; i >= 0; i--) {
+          if (matchesFilter(docs[i], filter)) { docs.splice(i, 1); count++; }
+        }
+        return { acknowledged: true, deletedCount: count };
+      },
+      async bulkWrite(ops: any[]) {
+        for (const op of ops || []) {
+          if (op.replaceOne) await col.replaceOne(op.replaceOne.filter, op.replaceOne.replacement, op.replaceOne);
+          else if (op.updateOne) await col.updateOne(op.updateOne.filter, op.updateOne.update, op.updateOne);
+          else if (op.insertOne) await col.insertOne(op.insertOne.document);
+          else if (op.deleteOne) await col.deleteOne(op.deleteOne.filter);
+        }
+        return { ok: 1 };
+      },
+      async countDocuments(filter?: any) {
+        return docs.filter((d) => matchesFilter(d, filter)).length;
+      },
+    };
+    sandboxCols.set(name, col);
+    return col;
+  };
 
   return new Proxy(rawDb, {
     get(target, prop, receiver) {
       if (prop === "collection") {
         return (name: string, options?: any) => {
           const rawCol = rawCollectionFn(name, options);
-          if (name !== "pms_app_state") return rawCol;
+          if (name !== "pms_app_state") {
+            return IS_LOCAL_READONLY_SANDBOX ? getSandboxCollection(name) : rawCol;
+          }
           if (!cachedStateColProxy) {
             cachedStateColProxy = new Proxy(rawCol, {
               get(colTarget, colProp) {
@@ -474,6 +644,7 @@ const DATA_KEY_TO_COLLECTION: Array<[string, string]> = [
   ["travelAgents", "travel_agents"],
   ["agentCommissionPayments", "agent_commission_payments"],
   ["posAdvanceBookings", "pos_advance_bookings"],
+  ["leaveRequests", "staff_leaves"],
 ];
 
 const TENANT_SCOPED_STATE_KEYS: string[] = [
@@ -526,6 +697,7 @@ const TENANT_SCOPED_STATE_KEYS: string[] = [
   "travelAgents",
   "agentCommissionPayments",
   "posAdvanceBookings",
+  "leaveRequests",
 ];
 
 // AES-256-GCM Encryption at rest for OTA API Keys & Secrets
@@ -597,7 +769,7 @@ function sanitizeHotelForResponse(hotel: any): any {
 
 function sanitizeStaffForResponse(staffItem: any): any {
   if (!staffItem || typeof staffItem !== "object") return staffItem;
-  const { password, ...rest } = staffItem;
+  const { password, plainPassword, ...rest } = staffItem;
   return rest;
 }
 
@@ -2489,6 +2661,284 @@ async function startServer() {
     return accepted;
   }
 
+  // ---------------------------------------------------------------------------
+  // Atomic Concurrency-Safe GRC Sequence Generation & DB-Level Unique Registry
+  // ---------------------------------------------------------------------------
+  let grcRegistryIndexPromise: Promise<void> | null = null;
+  const ensureGrcRegistryIndex = async (db: any): Promise<void> => {
+    if (!grcRegistryIndexPromise) {
+      grcRegistryIndexPromise = db
+        .collection("grc_registry")
+        .createIndex(
+          { hotelId: 1, grcNumberUpper: 1 },
+          { unique: true, name: "uniq_hotel_grc_number" }
+        )
+        .then(() => {})
+        .catch((err: any) => {
+          grcRegistryIndexPromise = null;
+          throw err;
+        });
+    }
+    return grcRegistryIndexPromise;
+  };
+
+  const resolveFinancialYearParts = (
+    date: Date = new Date(),
+    explicitFy?: string | null
+  ): { fyLabel: string; fyShortYear: string } => {
+    const rawFy = String(explicitFy || "").trim();
+    if (rawFy) {
+      const m4 = rawFy.match(/^(\d{4})-(\d{2})$/);
+      if (m4) return { fyLabel: rawFy, fyShortYear: m4[1].slice(-2) };
+      const m2 = rawFy.match(/^(\d{2})$/);
+      if (m2) {
+        const y4 = 2000 + Number(m2[1]);
+        return { fyLabel: `${y4}-${String((y4 + 1) % 100).padStart(2, "0")}`, fyShortYear: m2[1] };
+      }
+      return { fyLabel: rawFy, fyShortYear: rawFy };
+    }
+    const y = date.getFullYear();
+    const startYear = date.getMonth() >= 3 ? y : y - 1;
+    const fyShortYear = String(startYear % 100).padStart(2, "0");
+    const nextShort = String((startYear + 1) % 100).padStart(2, "0");
+    return { fyLabel: `${startYear}-${nextShort}`, fyShortYear };
+  };
+
+  const parseGrcSeqNumber = (grc: unknown): number => {
+    const s = String(grc || "").trim();
+    if (!s) return 0;
+    const slash = s.match(/\/(\d+)\/\d{2,4}(?:-\d{2})?$/);
+    const tail = s.match(/(\d+)$/);
+    const v = slash ? Number(slash[1]) : tail ? Number(tail[1]) : 0;
+    return Number.isFinite(v) && v < 100000000 ? v : 0;
+  };
+
+  const allocateAtomicGrcFromDb = async (
+    db: any,
+    opts: {
+      hotelId: string;
+      prefix?: string;
+      financialYear?: string;
+      yr2?: string;
+      existingMaxSeq?: number;
+      minSeq?: number;
+      checkinId?: string | null;
+      bookingId?: string | null;
+      existingUsedSet?: Set<string>;
+    }
+  ): Promise<{ grcNumber: string; sequence: number; financialYear: string }> => {
+    await ensureGrcRegistryIndex(db);
+    const cleanPrefix = String(opts.prefix || "GRC").replace(/[-/\s]+$/, "") || "GRC";
+    const fyParts = resolveFinancialYearParts(new Date(), opts.financialYear || opts.yr2);
+    const fyLabel = fyParts.fyLabel;
+    const yr2 = opts.yr2 ? String(opts.yr2) : fyParts.fyShortYear;
+    const counterId = `${opts.hotelId}:GRC:${fyLabel}`;
+    const floorSeq = Math.max(0, Number(opts.minSeq || 1) - 1, Number(opts.existingMaxSeq || 0));
+
+    // Atomically floor counter at >= floorSeq without ever decreasing an active counter
+    try {
+      await db.collection("grc_counters").updateOne(
+        { _id: counterId as any },
+        {
+          $max: { seq: floorSeq },
+          $setOnInsert: {
+            hotelId: opts.hotelId,
+            prefix: cleanPrefix,
+            financialYear: fyLabel,
+            yr2,
+            createdAt: new Date().toISOString(),
+          },
+        },
+        { upsert: true }
+      );
+    } catch (upsertErr: any) {
+      if (upsertErr?.code === 11000) {
+        await db.collection("grc_counters").updateOne(
+          { _id: counterId as any },
+          { $max: { seq: floorSeq } }
+        );
+      } else {
+        throw upsertErr;
+      }
+    }
+
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const updated = await db.collection("grc_counters").findOneAndUpdate(
+        { _id: counterId as any },
+        {
+          $inc: { seq: 1 },
+          $set: {
+            hotelId: opts.hotelId,
+            prefix: cleanPrefix,
+            financialYear: fyLabel,
+            yr2,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        { upsert: true, returnDocument: "after" }
+      );
+      const seqDoc = updated && typeof updated === "object" && "value" in updated ? (updated as any).value : updated;
+      const seq = Number(seqDoc?.seq || floorSeq + 1);
+      const candidate = `${cleanPrefix}/${seq}/${yr2}`;
+      const upper = candidate.toUpperCase();
+
+      // Server-side duplicate validation against historical records + active registry
+      if (opts.existingUsedSet?.has(upper)) {
+        continue;
+      }
+
+      try {
+        await db.collection("grc_registry").insertOne({
+          hotelId: opts.hotelId,
+          grcNumber: candidate,
+          grcNumberUpper: upper,
+          financialYear: fyLabel,
+          sequence: seq,
+          checkinId: opts.checkinId || null,
+          bookingId: opts.bookingId || null,
+          createdAt: new Date().toISOString(),
+        });
+        opts.existingUsedSet?.add(upper);
+        return { grcNumber: candidate, sequence: seq, financialYear: fyLabel };
+      } catch (insErr: any) {
+        if (insErr?.code === 11000) {
+          // Another concurrent request or historical record claimed this exact GRC — advance atomically
+          opts.existingUsedSet?.add(upper);
+          continue;
+        }
+        throw insErr;
+      }
+    }
+    throw new Error("Unable to allocate unique GRC number after 50 atomic attempts.");
+  };
+
+  // Atomic GRC Number Allocation API (concurrency-safe across simultaneous requests & tabs)
+  app.post("/api/grc/allocate", async (req, res) => {
+    const caller = resolveCallerIdentity(req);
+    if (!caller.authenticated) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized: Valid authentication session required to allocate GRC numbers.",
+      });
+    }
+
+    const body = req.body || {};
+    const requestedHotelId = String(body.hotelId || "").trim();
+    const hotelId =
+      caller.role === "SuperAdmin" && requestedHotelId
+        ? requestedHotelId
+        : String(caller.hotelId || requestedHotelId || "hotel-1");
+
+    if (
+      requestedHotelId &&
+      caller.role !== "SuperAdmin" &&
+      caller.hotelId &&
+      caller.hotelId !== requestedHotelId
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: "Forbidden: Cannot allocate GRC number for another property.",
+      });
+    }
+
+    const checkinId = String(body.checkinId || "").trim() || null;
+    const bookingId = String(body.bookingId || "").trim() || null;
+
+    try {
+      const db = await getMongoDatabase();
+      const stateDoc = await db
+        .collection("pms_app_state")
+        .findOne({ _id: "FULL_PMS_BACKUP" as any });
+      const stateData = stateDoc && stateDoc.data ? stateDoc.data : {};
+
+      const checkinsArr: any[] = Array.isArray(stateData.checkins) ? stateData.checkins : [];
+      const bookingsArr: any[] = Array.isArray(stateData.bookings) ? stateData.bookings : [];
+      const hotelsArr: any[] = Array.isArray(stateData.hotels) ? stateData.hotels : [];
+      const hotelObj = hotelsArr.find((h: any) => h && h.id === hotelId);
+
+      // Idempotency: If this check-in or booking already has an issued GRC, preserve it (never renumber silently)
+      if (checkinId || bookingId) {
+        const existingChk = checkinsArr.find(
+          (c: any) =>
+            c &&
+            String(c.hotelId || "hotel-1") === hotelId &&
+            ((checkinId && String(c.id || "") === checkinId) ||
+              (bookingId && (String(c.id || "") === bookingId || String(c.bookingId || "") === bookingId))) &&
+            String(c.grcNumber || "").trim()
+        );
+        if (existingChk?.grcNumber) {
+          return res.json({
+            success: true,
+            grcNumber: String(existingChk.grcNumber).trim(),
+            sequence: parseGrcSeqNumber(existingChk.grcNumber),
+            alreadyAssigned: true,
+          });
+        }
+        const existingBkg = bookingsArr.find(
+          (b: any) =>
+            b &&
+            String(b.hotelId || "hotel-1") === hotelId &&
+            ((bookingId && String(b.id || "") === bookingId) ||
+              (checkinId && String(b.id || "") === checkinId)) &&
+            String(b.grcNumber || "").trim()
+        );
+        if (existingBkg?.grcNumber) {
+          return res.json({
+            success: true,
+            grcNumber: String(existingBkg.grcNumber).trim(),
+            sequence: parseGrcSeqNumber(existingBkg.grcNumber),
+            alreadyAssigned: true,
+          });
+        }
+      }
+
+      const fyParts = resolveFinancialYearParts(
+        new Date(),
+        body.financialYear || body.year || null
+      );
+      const existingUsedSet = new Set<string>();
+      let existingMaxSeq = 0;
+      const fySuffixRe = new RegExp(`/${fyParts.fyShortYear}(?:-\\d{2})?$`, "i");
+      for (const rec of [...checkinsArr, ...bookingsArr]) {
+        if (!rec || String(rec.hotelId || "hotel-1") !== hotelId) continue;
+        const g = String(rec.grcNumber || "").trim();
+        if (!g) continue;
+        existingUsedSet.add(g.toUpperCase());
+        if (fySuffixRe.test(g)) {
+          const s = parseGrcSeqNumber(g);
+          if (s > existingMaxSeq) existingMaxSeq = s;
+        }
+      }
+
+      const prefix = String(body.prefix || hotelObj?.grcPrefix || "GRC").replace(/[-/\s]+$/, "") || "GRC";
+      const allocated = await allocateAtomicGrcFromDb(db, {
+        hotelId,
+        prefix,
+        financialYear: fyParts.fyLabel,
+        yr2: fyParts.fyShortYear,
+        existingMaxSeq,
+        minSeq: Number(hotelObj?.nextGrcSequence || 1),
+        checkinId,
+        bookingId,
+        existingUsedSet,
+      });
+
+      return res.json({
+        success: true,
+        grcNumber: allocated.grcNumber,
+        sequence: allocated.sequence,
+        financialYear: allocated.financialYear,
+        alreadyAssigned: false,
+      });
+    } catch (err: any) {
+      console.error("[GRC Allocate] Error:", err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || "Failed to allocate GRC number.",
+      });
+    }
+  });
+
   // Sync all PMS state & domain collections to MongoDB Atlas
   app.post("/api/db/sync", async (req, res) => {
     const { data } = req.body || {};
@@ -2777,6 +3227,91 @@ async function startServer() {
           data.rooms = Array.from(roomMap.values());
         }
 
+        // Backend RBAC & Last-Admin Protection for sensitive HRM/Role mutations
+        const callerRoleLower = String(caller.rawRole || callerRole || "").trim().toLowerCase();
+        const isPrivilegedAdmin =
+          isSuperAdminCaller ||
+          callerRoleLower === "admin" ||
+          callerRoleLower === "owner" ||
+          callerRoleLower === "hoteladmin" ||
+          callerRoleLower === "superadmin";
+
+        if (!isPrivilegedAdmin && callerHotelId) {
+          const hotelRoles: any[] = Array.isArray(prevData.rolePermissions)
+            ? prevData.rolePermissions.filter((rp: any) => rp && (!rp.hotelId || rp.hotelId === callerHotelId))
+            : [];
+          const matchedRolePerm = hotelRoles.find(
+            (rp: any) => String(rp.roleName || "").trim().toLowerCase() === callerRoleLower
+          );
+          const canManageStaffOrRoles = Boolean(
+            matchedRolePerm?.canManageStaff ||
+            matchedRolePerm?.modulePermissions?.staff?.manage ||
+            matchedRolePerm?.modulePermissions?.staff?.edit ||
+            matchedRolePerm?.modulePermissions?.roles?.manage ||
+            callerRoleLower === "manager"
+          );
+
+          if (Array.isArray(data.rolePermissions)) {
+            const prevOwnRoles = hotelRoles;
+            const nextOwnRoles = data.rolePermissions.filter((rp: any) => rp && (!rp.hotelId || rp.hotelId === callerHotelId));
+            if (JSON.stringify(prevOwnRoles) !== JSON.stringify(nextOwnRoles) && !canManageStaffOrRoles) {
+              return {
+                status: 403,
+                body: { success: false, error: `Forbidden: Role "${caller.rawRole || callerRole}" does not have permission to modify Staff Roles & Permissions.` },
+              };
+            }
+          }
+
+          if (Array.isArray(data.staff)) {
+            const prevOwnStaff = (Array.isArray(prevData.staff) ? prevData.staff : []).filter((s: any) => s && (!s.hotelId || s.hotelId === callerHotelId));
+            const nextOwnStaff = data.staff.filter((s: any) => s && (!s.hotelId || s.hotelId === callerHotelId));
+            if (prevOwnStaff.length !== nextOwnStaff.length && !canManageStaffOrRoles) {
+              return {
+                status: 403,
+                body: { success: false, error: `Forbidden: Role "${caller.rawRole || callerRole}" does not have permission to add or remove staff accounts.` },
+              };
+            }
+          }
+
+          if (Array.isArray(data.leaveRequests)) {
+            const prevOwnLeaves = (Array.isArray(prevData.leaveRequests) ? prevData.leaveRequests : []).filter((l: any) => l && (!l.hotelId || l.hotelId === callerHotelId));
+            const prevLeaveMap = new Map(prevOwnLeaves.map((l: any) => [String(l.id), l]));
+            const nextOwnLeaves = data.leaveRequests.filter((l: any) => l && (!l.hotelId || l.hotelId === callerHotelId));
+            const attemptedApproval = nextOwnLeaves.some((nl: any) => {
+              const pl: any = prevLeaveMap.get(String(nl.id));
+              const nextStatus = String(nl.status || "");
+              const prevStatus = String(pl?.status || "Pending");
+              return nextStatus !== prevStatus && (nextStatus === "Approved" || nextStatus === "Rejected");
+            });
+            const canApproveLeaves = Boolean(
+              canManageStaffOrRoles ||
+              matchedRolePerm?.modulePermissions?.leaves?.approve ||
+              matchedRolePerm?.modulePermissions?.staff?.approve
+            );
+            if (attemptedApproval && !canApproveLeaves) {
+              return {
+                status: 403,
+                body: { success: false, error: `Forbidden: Role "${caller.rawRole || callerRole}" is not authorized to approve or reject staff leave requests.` },
+              };
+            }
+          }
+        }
+
+        // Last-Admin & In-Use Role Protection on rolePermissions sync
+        if (Array.isArray(data.rolePermissions) && callerHotelId) {
+          const prevOwnRoles = (Array.isArray(prevData.rolePermissions) ? prevData.rolePermissions : [])
+            .filter((rp: any) => rp && (!rp.hotelId || rp.hotelId === callerHotelId));
+          const nextOwnRoles = data.rolePermissions.filter((rp: any) => rp && (!rp.hotelId || rp.hotelId === callerHotelId));
+          const hadAdminRole = prevOwnRoles.some((rp: any) => String(rp.roleName || "").trim().toLowerCase() === "admin");
+          const hasAdminRole = nextOwnRoles.some((rp: any) => String(rp.roleName || "").trim().toLowerCase() === "admin");
+          if (hadAdminRole && !hasAdminRole) {
+            return {
+              status: 400,
+              body: { success: false, error: "Protected System Role: The Admin role cannot be deleted." },
+            };
+          }
+        }
+
         // Super Admin credentials can never be written through the generic state sync
         delete (data as any).superAdminPass;
         delete (data as any).superAdminEmail;
@@ -2785,6 +3320,103 @@ async function startServer() {
           ...prevData,
           ...data,
         };
+
+        // Server-side GRC Number Uniqueness Guard (atomic, backed by MongoDB grc_counters + unique grc_registry)
+        if (Array.isArray(data.checkins) && Array.isArray(mergedStateData.checkins)) {
+          const prevCheckinIds = new Set(
+            (Array.isArray(prevData.checkins) ? prevData.checkins : []).map((c: any) => String(c?.id || ""))
+          );
+          const usedGrcByHotel = new Map<string, Set<string>>();
+          const maxSeqByHotel = new Map<string, number>();
+
+          for (const rec of [
+            ...(Array.isArray(prevData.checkins) ? prevData.checkins : []),
+            ...(Array.isArray(prevData.bookings) ? prevData.bookings : []),
+          ]) {
+            if (!rec) continue;
+            const hId = String(rec.hotelId || "hotel-1");
+            const grc = String(rec.grcNumber || "").trim();
+            if (!usedGrcByHotel.has(hId)) usedGrcByHotel.set(hId, new Set());
+            if (grc) {
+              usedGrcByHotel.get(hId)!.add(grc.toUpperCase());
+              const seq = parseGrcSeqNumber(grc);
+              if (seq > (maxSeqByHotel.get(hId) || 0)) maxSeqByHotel.set(hId, seq);
+            }
+          }
+
+          const hotelsArr: any[] = Array.isArray(mergedStateData.hotels) ? mergedStateData.hotels : [];
+          const normalizedCheckins: any[] = [];
+          for (const c of mergedStateData.checkins) {
+            if (!c || prevCheckinIds.has(String(c.id || ""))) {
+              normalizedCheckins.push(c);
+              continue;
+            }
+            const hId = String(c.hotelId || callerHotelId || "hotel-1");
+            const usedSet = usedGrcByHotel.get(hId) || new Set<string>();
+            usedGrcByHotel.set(hId, usedSet);
+            const rawGrc = String(c.grcNumber || "").trim();
+            const hotelObj = hotelsArr.find((h: any) => h && h.id === hId);
+            const prefix = String(hotelObj?.grcPrefix || "GRC").replace(/[-/\s]+$/, "") || "GRC";
+            const fyParts = resolveFinancialYearParts(new Date());
+            const yr2 = fyParts.fyShortYear;
+
+            if (!rawGrc || usedSet.has(rawGrc.toUpperCase())) {
+              const allocated = await allocateAtomicGrcFromDb(db, {
+                hotelId: hId,
+                prefix,
+                financialYear: fyParts.fyLabel,
+                yr2,
+                existingMaxSeq: maxSeqByHotel.get(hId) || 0,
+                minSeq: Number(hotelObj?.nextGrcSequence || 1),
+                checkinId: String(c.id || "") || null,
+                bookingId: String(c.bookingId || c.id || "") || null,
+                existingUsedSet: usedSet,
+              });
+              usedSet.add(allocated.grcNumber.toUpperCase());
+              if (allocated.sequence > (maxSeqByHotel.get(hId) || 0)) {
+                maxSeqByHotel.set(hId, allocated.sequence);
+              }
+              normalizedCheckins.push({ ...c, grcNumber: allocated.grcNumber });
+            } else {
+              // Valid non-colliding GRC (e.g. pre-allocated via /api/grc/allocate) — ensure counter & registry track it
+              const upper = rawGrc.toUpperCase();
+              usedSet.add(upper);
+              const seq = parseGrcSeqNumber(rawGrc);
+              if (seq > (maxSeqByHotel.get(hId) || 0)) maxSeqByHotel.set(hId, seq);
+              try {
+                await ensureGrcRegistryIndex(db);
+                await db.collection("grc_registry").updateOne(
+                  { hotelId: hId, grcNumberUpper: upper },
+                  {
+                    $setOnInsert: {
+                      hotelId: hId,
+                      grcNumber: rawGrc,
+                      grcNumberUpper: upper,
+                      financialYear: fyParts.fyLabel,
+                      sequence: seq,
+                      checkinId: String(c.id || "") || null,
+                      bookingId: String(c.bookingId || c.id || "") || null,
+                      createdAt: new Date().toISOString(),
+                    },
+                  },
+                  { upsert: true }
+                );
+                if (seq > 0) {
+                  const counterId = `${hId}:GRC:${fyParts.fyLabel}`;
+                  await db.collection("grc_counters").updateOne(
+                    { _id: counterId as any },
+                    { $max: { seq } },
+                    { upsert: true }
+                  );
+                }
+              } catch {
+                // Non-fatal registry sync fallback
+              }
+              normalizedCheckins.push(c);
+            }
+          }
+          mergedStateData.checkins = normalizedCheckins;
+        }
 
         // Enforce authoritative service catalog pricing, complimentary ₹0 rule, and stable sourceId deduplication on checkins
         if (Array.isArray(mergedStateData.checkins)) {
@@ -2896,8 +3528,11 @@ async function startServer() {
           });
         }
 
-        // Enforce GST immutability on existing invoices + preserve separate invoices
+        // Enforce STRICT finalized invoice immutability + GST immutability on existing invoices + preserve separate invoices
         if (Array.isArray(mergedStateData.invoices)) {
+          const isFinalizedInvRecord = (i: any): boolean =>
+            Boolean(i && (i.isFinalInvoice === true || i.invoiceStatus === "Finalized"));
+
           const prevInvoicesById = new Map<string, any>();
           if (Array.isArray(prevData.invoices)) {
             for (const pInv of prevData.invoices) {
@@ -2910,22 +3545,131 @@ async function startServer() {
           const dedupedInvs = deduplicateInvoicesByBooking(mergedStateData.invoices).map((inv: any) => {
             if (!inv) return inv;
             const prevInv = inv.id ? prevInvoicesById.get(String(inv.id)) : undefined;
+
+            // HARD IMMUTABILITY GUARD (BUG-P2-06):
+            // Once an invoice is Finalized (isFinalInvoice === true or invoiceStatus === 'Finalized'),
+            // its amounts, GST, discount, charges, and paymentHistory MUST NEVER be silently modified.
+            // Only an explicit superseding audit link (preserving ALL original financial fields) is permitted.
+            if (prevInv && isFinalizedInvRecord(prevInv)) {
+              if (
+                inv.isSuperseded === true &&
+                inv.supersededByInvoiceId &&
+                inv.supersededByInvoiceNumber &&
+                !prevInv.isSuperseded
+              ) {
+                return {
+                  ...prevInv,
+                  isSuperseded: true,
+                  invoiceStatus: "Superseded",
+                  supersededByInvoiceId: inv.supersededByInvoiceId,
+                  supersededByInvoiceNumber: inv.supersededByInvoiceNumber,
+                  supersededAt: inv.supersededAt || new Date().toISOString(),
+                };
+              }
+              return prevInv;
+            }
+
+            // Auditable Credit Note / Reversal records (e.g. Undo Check-Out of a Finalized invoice):
+            // Persist as immutable finalized Credit Note without applying positive GST billing formulas.
+            const isCreditNoteRec =
+              inv.isCreditNote === true ||
+              String(inv.invoiceType || "").toLowerCase().trim() === "credit note";
+            if (isCreditNoteRec) {
+              const cnFinal = Number(inv.finalAmount ?? inv.totalAmount ?? 0);
+              const cnTax = Number(inv.taxAmount ?? inv.gst ?? 0);
+              const cnCgst = Number(inv.cgst ?? parseFloat((cnTax / 2).toFixed(2)));
+              const cnSgst = Number(inv.sgst ?? parseFloat((cnTax - cnCgst).toFixed(2)));
+              return {
+                ...inv,
+                isCreditNote: true,
+                invoiceType: "Credit Note",
+                isSeparateInvoice: true,
+                isFinalInvoice: true,
+                invoiceStatus: "Finalized",
+                gst: cnTax,
+                taxAmount: cnTax,
+                cgst: cnCgst,
+                sgst: cnSgst,
+                finalAmount: cnFinal,
+                totalAmount: cnFinal,
+                advancePaid: 0,
+                paidAmount: 0,
+                amountPaid: 0,
+                pendingAmount: 0,
+                outstandingAmount: 0,
+                isPaid: true,
+                paymentStatus: inv.paymentStatus || "Refunded",
+              };
+            }
+
+            const isV2 = inv.billEngine === "v2";
+            const rawOther = Math.max(0, Number(inv.otherCharges || 0));
+            const rawFine = Math.max(0, Number(inv.fineCharges || 0));
+            // In billEngine === 'v2' (stayBilling.ts), otherCharges already includes fineCharges — NEVER double-count.
+            const nonDuplicateOtherAndFine = isV2 ? rawOther : rawOther + rawFine;
+
             const sub = Math.max(
               0,
               Number(
-                inv.subtotal ??
-                  (Number(inv.roomCharges || 0) +
+                inv.subtotal !== undefined && Number.isFinite(Number(inv.subtotal))
+                  ? Number(inv.subtotal)
+                  : Number(inv.roomCharges || 0) +
+                    Number(inv.extraBedCharges || 0) +
+                    Number(inv.extraPersonCharges || 0) +
+                    Number(inv.earlyCheckInCharges || 0) +
+                    Number(inv.lateCheckOutCharges || 0) +
                     Number(inv.foodCharges || 0) +
                     Number(inv.waterCharges || 0) +
                     Number(inv.laundryCharges || 0) +
-                    Number(inv.otherCharges || 0) +
-                    Number(inv.extraChargesTotal || 0))
+                    Number(inv.serviceCharges || 0) +
+                    nonDuplicateOtherAndFine +
+                    Number(inv.extraChargesTotal || 0)
               )
             );
             const disc = Math.max(0, Number(inv.discount || 0));
-            const taxable = Math.max(0, parseFloat((sub - disc).toFixed(2)));
+            const netPreTax = Math.max(0, parseFloat((sub - disc).toFixed(2)));
 
-            // If this invoice ID already existed on the server, strictly lock its original GST / No-GST mode!
+            // Extract authoritative taxable slabs from taxRows whenever available (excludes GST-exempt Damage Fines & GST-exempt items)
+            const validTaxRows = Array.isArray(inv.taxRows)
+              ? inv.taxRows.filter(
+                  (tr: any) =>
+                    tr &&
+                    Number.isFinite(Number(tr.rate)) &&
+                    Number(tr.rate) > 0 &&
+                    Number.isFinite(Number(tr.taxable)) &&
+                    Number(tr.taxable) >= 0
+                )
+              : [];
+            const hasAuthoritativeTaxRows = validTaxRows.length > 0;
+            const taxRowsTaxableSum = hasAuthoritativeTaxRows
+              ? parseFloat(
+                  validTaxRows.reduce((acc: number, tr: any) => acc + Number(tr.taxable || 0), 0).toFixed(2)
+                )
+              : null;
+            const taxRowsCgstSum = hasAuthoritativeTaxRows
+              ? parseFloat(
+                  validTaxRows.reduce((acc: number, tr: any) => acc + Number(tr.cgst || 0), 0).toFixed(2)
+                )
+              : null;
+            const taxRowsSgstSum = hasAuthoritativeTaxRows
+              ? parseFloat(
+                  validTaxRows.reduce((acc: number, tr: any) => acc + Number(tr.sgst || 0), 0).toFixed(2)
+                )
+              : null;
+            const taxRowsTaxSum = hasAuthoritativeTaxRows
+              ? parseFloat(
+                  validTaxRows.reduce((acc: number, tr: any) => acc + Number(tr.tax || 0), 0).toFixed(2)
+                )
+              : null;
+
+            // GST-exempt Damage Fine is NEVER taxed. Use taxRows sum when available, else netPreTax - rawFine.
+            const gstTaxableBase =
+              taxRowsTaxableSum !== null
+                ? taxRowsTaxableSum
+                : Math.max(0, parseFloat((netPreTax - rawFine).toFixed(2)));
+
+            // If this non-finalized invoice ID already existed on the server, lock its original GST / No-GST mode
+            // without corrupting v2 / Including-GST / GST-exempt-fine exact billCalculator tax totals.
             let effectiveNoGst: boolean;
             let effectiveGstRate: number;
             let gstAmt: number;
@@ -2943,8 +3687,12 @@ async function startServer() {
                 : 5;
               gstAmt = effectiveNoGst
                 ? 0
-                : taxable > 0
-                ? parseFloat(((taxable * effectiveGstRate) / 100).toFixed(2))
+                : hasAuthoritativeTaxRows && taxRowsTaxSum !== null
+                ? Math.max(0, taxRowsTaxSum)
+                : isV2 && inv.gst !== undefined && Number.isFinite(Number(inv.gst))
+                ? Math.max(0, Number(inv.gst))
+                : gstTaxableBase > 0
+                ? parseFloat(((gstTaxableBase * effectiveGstRate) / 100).toFixed(2))
                 : Math.max(0, Number(prevInv.gst || 0));
             } else {
               effectiveNoGst =
@@ -2956,29 +3704,42 @@ async function startServer() {
                 : Number(inv.gstRate) > 0
                 ? Number(inv.gstRate)
                 : 5;
-              gstAmt = effectiveNoGst ? 0 : Math.max(0, Number(inv.gst || 0));
+              gstAmt = effectiveNoGst
+                ? 0
+                : hasAuthoritativeTaxRows && taxRowsTaxSum !== null
+                ? Math.max(0, taxRowsTaxSum)
+                : inv.gst !== undefined && Number.isFinite(Number(inv.gst))
+                ? Math.max(0, Number(inv.gst))
+                : gstTaxableBase > 0
+                ? parseFloat(((gstTaxableBase * effectiveGstRate) / 100).toFixed(2))
+                : 0;
             }
 
             const cgst = effectiveNoGst
               ? 0
-              : prevInv
-              ? parseFloat((gstAmt / 2).toFixed(2))
-              : inv.cgst !== undefined
+              : hasAuthoritativeTaxRows && taxRowsCgstSum !== null
+              ? taxRowsCgstSum
+              : isV2 && inv.cgst !== undefined && Number.isFinite(Number(inv.cgst))
               ? Number(inv.cgst)
               : parseFloat((gstAmt / 2).toFixed(2));
             const sgst = effectiveNoGst
               ? 0
-              : prevInv
-              ? parseFloat((gstAmt - cgst).toFixed(2))
-              : inv.sgst !== undefined
+              : hasAuthoritativeTaxRows && taxRowsSgstSum !== null
+              ? taxRowsSgstSum
+              : isV2 && inv.sgst !== undefined && Number.isFinite(Number(inv.sgst))
               ? Number(inv.sgst)
               : parseFloat((gstAmt - cgst).toFixed(2));
-            const finalAmt = prevInv
-              ? parseFloat((taxable + gstAmt).toFixed(2))
-              : Number(inv.finalAmount) > 0
-              ? Number(inv.finalAmount)
-              : parseFloat((taxable + gstAmt).toFixed(2));
-            const paidAmt = Math.max(0, Number(inv.advancePaid ?? inv.amountPaid ?? 0));
+
+            // Authoritative taxableAmount: reflects GST-taxable base when GST is enabled, or netPreTax for Non-GST.
+            const resolvedTaxableAmount = effectiveNoGst ? netPreTax : gstTaxableBase;
+
+            // Grand total ALWAYS equals net pre-tax charges (including GST-exempt Damage Fines) + GST.
+            const finalAmt =
+              isV2 && Number(inv.finalAmount) > 0 && !effectiveNoGst && !hasAuthoritativeTaxRows
+                ? Number(inv.finalAmount)
+                : parseFloat((netPreTax + gstAmt).toFixed(2));
+
+            const paidAmt = Math.max(0, Number(inv.paidAmount ?? inv.advancePaid ?? inv.amountPaid ?? 0));
             const pendingAmt = Math.max(0, parseFloat((finalAmt - paidAmt).toFixed(2)));
             const isTrulyPaid =
               inv.paymentStatus === "Refunded" || inv.paymentStatus === "Cancelled"
@@ -2996,24 +3757,45 @@ async function startServer() {
                 : "Unpaid";
             const invoiceStatus =
               inv.invoiceStatus ||
-              (inv.invoiceType === "Tax Invoice" || inv.invoiceType === "Stay Checkout Invoice"
+              (inv.isFinalInvoice === true ||
+              inv.invoiceType === "Tax Invoice" ||
+              inv.invoiceType === "Stay Checkout Invoice"
                 ? "Finalized"
                 : "Generated");
+            const resolvedIsFinal =
+              inv.isFinalInvoice === true || invoiceStatus === "Finalized";
             return {
               ...inv,
+              isFinalInvoice: resolvedIsFinal,
               isWithoutGst: effectiveNoGst,
+              subtotal: sub,
+              discount: disc,
+              taxableAmount: resolvedTaxableAmount,
               gstRate: effectiveGstRate,
               gst: gstAmt,
+              taxAmount: gstAmt,
               cgst,
               sgst,
               finalAmount: finalAmt,
+              totalAmount: finalAmt,
               advancePaid: paidAmt,
+              paidAmount: paidAmt,
+              amountPaid: paidAmt,
               pendingAmount: pendingAmt,
+              outstandingAmount: pendingAmt,
               isPaid: isTrulyPaid,
               paymentStatus,
               invoiceStatus,
             };
           });
+
+          // Preserve any historical finalized invoices that a client payload omitted (never silently delete finalized invoices)
+          const presentInvIds = new Set(dedupedInvs.map((i: any) => String(i?.id || "")).filter(Boolean));
+          for (const [prevId, prevInv] of prevInvoicesById.entries()) {
+            if (isFinalizedInvRecord(prevInv) && !presentInvIds.has(prevId)) {
+              dedupedInvs.push(prevInv);
+            }
+          }
           mergedStateData.invoices = dedupedInvs;
         }
 
@@ -3681,7 +4463,8 @@ async function startServer() {
     }
   });
 
-  // Submit a Subscription Renewal Request from an Expired Hotel Admin / Owner to SuperAdmin
+  // Submit a Subscription Renewal Request from an Active/Expired Hotel Admin or Owner to SuperAdmin
+  // STRICT PAYMENT RULE: Never auto-activates membership; always queues as Pending Verification until verified.
   app.post("/api/hotels/renewal-request", async (req, res) => {
     const {
       hotelId,
@@ -3689,8 +4472,13 @@ async function startServer() {
       requestedPackageName,
       requestedPlan,
       requestedAmount,
+      baseAmount: clientBaseAmount,
+      gstRate: clientGstRate,
       paymentMethod,
+      upiIdUsed,
       transactionReference,
+      isUpgrade,
+      previousPackageName,
       notes,
       requestedBy,
     } = req.body || {};
@@ -3702,6 +4490,14 @@ async function startServer() {
       });
     }
 
+    const cleanRef = String(transactionReference || "").trim();
+    if (!cleanRef || cleanRef.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: "A valid UTR / Payment Reference number (minimum 6 characters) is required before verification.",
+      });
+    }
+
     try {
       const db = await getMongoDatabase();
       const doc = await db
@@ -3709,6 +4505,8 @@ async function startServer() {
         .findOne({ _id: "FULL_PMS_BACKUP" as any });
       const currentState = doc && doc.data ? doc.data : {};
       const existingHotels: any[] = Array.isArray(currentState.hotels) ? currentState.hotels : [];
+      const existingPackages: any[] = Array.isArray(currentState.packages) ? currentState.packages : [];
+      const existingOwnerPayments: any[] = Array.isArray(currentState.ownerPayments) ? currentState.ownerPayments : [];
       const targetHotel = existingHotels.find((h) => h && h.id === hotelId);
       if (!targetHotel) {
         return res.status(404).json({
@@ -3717,45 +4515,133 @@ async function startServer() {
         });
       }
 
+      const duplicateRef = existingOwnerPayments.some(
+        (p) =>
+          p &&
+          p.type === "Subscription Renewal" &&
+          String(p.utrNumber || p.referenceNo || "")
+            .trim()
+            .toLowerCase() === cleanRef.toLowerCase() &&
+          p.status !== "Rejected" &&
+          p.status !== "Failed"
+      );
+      if (duplicateRef) {
+        return res.status(409).json({
+          success: false,
+          error: `Payment reference "${cleanRef}" has already been submitted. Duplicate UTRs are blocked.`,
+        });
+      }
+
       const nowIso = new Date().toISOString();
       const nowStr = nowIso.replace("T", " ").slice(0, 16);
+      const todayDate = nowIso.split("T")[0];
       const reqPlan = (["Trial", "Monthly", "HalfYearly", "Yearly"].includes(requestedPlan)
         ? requestedPlan
-        : "Monthly") as "Trial" | "Monthly" | "HalfYearly" | "Yearly";
-      const pkgName = String(requestedPackageName || `${reqPlan} Plan`).trim();
-      const amt = Number(requestedAmount) || 1899;
+        : "Yearly") as "Trial" | "Monthly" | "HalfYearly" | "Yearly";
 
+      // Resolve authoritative package & GST from MongoDB Package Manager when available
+      const matchedPackage = existingPackages.find(
+        (p) =>
+          p &&
+          ((requestedPackageId && (p.id === requestedPackageId || p.code === requestedPackageId)) ||
+            (requestedPackageName &&
+              String(p.name || "").trim().toLowerCase() === String(requestedPackageName).trim().toLowerCase()))
+      );
+
+      const pkgName = String(matchedPackage?.name || requestedPackageName || `${reqPlan} Plan`).trim();
+      const resolvedBaseAmount = matchedPackage
+        ? reqPlan === "Monthly"
+          ? Number(matchedPackage.priceMonthly || matchedPackage.priceYearly || 5999)
+          : Number(matchedPackage.priceYearly || matchedPackage.priceMonthly || 5999)
+        : Number(clientBaseAmount || requestedAmount) || 5999;
+
+      const defaultGstFromConfig = Number(currentState?.systemWebsite?.paymentSettings?.defaultGstRate ?? 18);
+      const resolvedGstRate = Number(matchedPackage?.gstRate ?? clientGstRate ?? defaultGstFromConfig ?? 18);
+      const resolvedGstAmount = Math.round(resolvedBaseAmount * (resolvedGstRate / 100));
+      const resolvedCgstAmount = Number((resolvedGstAmount / 2).toFixed(2));
+      const resolvedSgstAmount = Number((resolvedGstAmount / 2).toFixed(2));
+      const resolvedTotalAmount = resolvedBaseAmount + resolvedGstAmount;
+
+      const paymentId = `SUB-PAY-${Date.now()}`;
       const renewalRequest = {
         id: `RNW-${Date.now()}`,
         hotelId: String(hotelId),
         hotelName: String(targetHotel.name || "Hotel Property"),
-        requestedPackageId: requestedPackageId ? String(requestedPackageId) : undefined,
+        requestedPackageId: matchedPackage?.id || (requestedPackageId ? String(requestedPackageId) : undefined),
         requestedPackageName: pkgName,
         requestedPlan: reqPlan,
-        requestedAmount: amt,
-        paymentMethod: String(paymentMethod || "UPI / Online"),
-        transactionReference: transactionReference ? String(transactionReference).trim() : "",
+        requestedAmount: resolvedBaseAmount,
+        baseAmount: resolvedBaseAmount,
+        gstRate: resolvedGstRate,
+        gstAmount: resolvedGstAmount,
+        cgstAmount: resolvedCgstAmount,
+        sgstAmount: resolvedSgstAmount,
+        totalAmount: resolvedTotalAmount,
+        paymentMethod: String(paymentMethod || "UPI QR / Direct UPI"),
+        upiIdUsed: upiIdUsed ? String(upiIdUsed).trim() : undefined,
+        transactionReference: cleanRef,
+        isUpgrade: Boolean(isUpgrade),
+        previousPackageName: previousPackageName ? String(previousPackageName) : undefined,
         notes: notes ? String(notes).trim() : "",
         status: "Pending" as const,
+        paymentVerificationStatus: "Pending Verification" as const,
         requestedAt: nowStr,
-        requestedBy: String(requestedBy || targetHotel.username || "Hotel Admin"),
+        requestedBy: String(requestedBy || targetHotel.ownerName || targetHotel.username || "Hotel Admin"),
       };
 
-      const updatedHotels = existingHotels.map((h) =>
-        h && h.id === hotelId ? { ...h, renewalRequest } : h
-      );
+      const paymentLedgerEntry = {
+        id: paymentId,
+        hotelId: String(hotelId),
+        hotelName: String(targetHotel.name || "Hotel Property"),
+        packageId: renewalRequest.requestedPackageId,
+        packageName: pkgName,
+        date: todayDate,
+        directorName: String(targetHotel.ownerName || renewalRequest.requestedBy || "Hotel Owner"),
+        type: "Subscription Renewal",
+        plan: reqPlan,
+        baseAmount: resolvedBaseAmount,
+        gstRate: resolvedGstRate,
+        gstAmount: resolvedGstAmount,
+        cgstAmount: resolvedCgstAmount,
+        sgstAmount: resolvedSgstAmount,
+        amount: resolvedTotalAmount,
+        totalAmount: resolvedTotalAmount,
+        paymentMethod: renewalRequest.paymentMethod,
+        upiIdUsed: renewalRequest.upiIdUsed,
+        utrNumber: cleanRef,
+        referenceNo: cleanRef,
+        status: "Pending" as const,
+        isUpgrade: Boolean(isUpgrade),
+        previousPackageName: renewalRequest.previousPackageName,
+        createdAt: nowStr,
+        notes:
+          renewalRequest.notes ||
+          `SaaS ${pkgName} (${reqPlan}) • Base ₹${resolvedBaseAmount} + ${resolvedGstRate}% GST ₹${resolvedGstAmount} = ₹${resolvedTotalAmount} • UTR: ${cleanRef}`,
+      };
+
+      const updatedHotels = existingHotels.map((h) => {
+        if (!h || h.id !== hotelId) return h;
+        const prevPayments = Array.isArray(h.subscriptionPayments) ? h.subscriptionPayments : [];
+        return {
+          ...h,
+          renewalRequest,
+          subscriptionPayments: [paymentLedgerEntry, ...prevPayments],
+        };
+      });
+
+      const updatedOwnerPayments = [paymentLedgerEntry, ...existingOwnerPayments];
 
       const saNotif = {
         id: `NTF-RNW-${hotelId}-${Date.now()}`,
         hotelId: "SUPERADMIN",
         recipientRole: "SuperAdmin",
-        title: `Renewal Request: ${targetHotel.name}`,
-        message: `${targetHotel.name} requested subscription renewal for "${pkgName}" (${reqPlan}, ₹${amt.toLocaleString("en-IN")}) via ${renewalRequest.paymentMethod}${renewalRequest.transactionReference ? ` (Ref: ${renewalRequest.transactionReference})` : ""}. Please verify payment and approve.`,
+        title: `${isUpgrade ? "Upgrade" : "Renewal"} Payment Pending Verification: ${targetHotel.name}`,
+        message: `${targetHotel.name} submitted ₹${resolvedTotalAmount.toLocaleString("en-IN")} (incl. ${resolvedGstRate}% GST) for "${pkgName}" via ${renewalRequest.paymentMethod} (UTR: ${cleanRef}). Verify receipt before activating.`,
         type: "subscription",
         severity: "warning",
         isRead: false,
         createdAt: nowStr,
-        linkPath: "/superadmin/hotels",
+        linkPath: "/superadmin/dashboard",
         entityId: String(hotelId),
         dedupeKey: `SUPERADMIN:renewal_req:${renewalRequest.id}`,
       };
@@ -3767,6 +4653,7 @@ async function startServer() {
       const updatedState = {
         ...currentState,
         hotels: updatedHotels,
+        ownerPayments: updatedOwnerPayments,
         notifications: [saNotif, ...existingNotifs],
       };
 
@@ -3780,7 +4667,7 @@ async function startServer() {
         { upsert: true }
       );
 
-      await syncAllDomainCollections(db, updatedState, new Set(["hotels", "notifications"]));
+      await syncAllDomainCollections(db, updatedState, new Set(["hotels", "ownerPayments", "notifications"]));
 
       const clean = sanitizeNotificationForClient(saNotif);
       broadcastSseEventToAuthorized("notification", clean, (client) =>
@@ -3790,7 +4677,8 @@ async function startServer() {
       return res.json({
         success: true,
         renewalRequest,
-        message: "Renewal request sent to Super Admin for payment verification and approval.",
+        payment: paymentLedgerEntry,
+        message: "Renewal payment submitted for billing verification. Activation occurs once verified.",
       });
     } catch (err: any) {
       return res.status(500).json({
@@ -4034,7 +4922,8 @@ async function startServer() {
           overridePaymentMethod: body.overridePaymentMethod,
           overrideInvoiceType: body.overrideInvoiceType || body.invoiceType,
           overrideNotes: body.overrideNotes,
-          allowUpdateExistingFinalOnCheckout: body.allowUpdateExistingFinalOnCheckout,
+          // Never allow untrusted client flags to overwrite an already-finalized invoice (BUG-P2-05)
+          allowUpdateExistingFinalOnCheckout: false,
           createSeparateInvoice: Boolean(body.createSeparateInvoice),
           parentInvoiceId: body.parentInvoiceId,
         });
@@ -4846,12 +5735,12 @@ async function startServer() {
         });
       }
 
-      // Trusted server-side price & 5% GST (2.5% CGST + 2.5% SGST) calculation (ignores any client-supplied amount)
+      // Trusted server-side price & 18% GST (9% CGST + 9% SGST) calculation (ignores any client-supplied amount)
       const baseAmount = planConfig.basePrice;
-      const gstRate = 5;
+      const gstRate = Number(currentState?.systemWebsite?.paymentSettings?.defaultGstRate ?? 18);
       const gstAmount = Math.round(baseAmount * (gstRate / 100));
-      const cgstAmount = Number((baseAmount * 0.025).toFixed(2));
-      const sgstAmount = Number((baseAmount * 0.025).toFixed(2));
+      const cgstAmount = Number((gstAmount / 2).toFixed(2));
+      const sgstAmount = Number((gstAmount / 2).toFixed(2));
       const totalAmount = baseAmount + gstAmount;
 
       const targetHotel = existingHotels.find((h) => h && h.id === targetHotelId);
@@ -4869,11 +5758,12 @@ async function startServer() {
         cgstAmount,
         sgstAmount,
         amount: totalAmount,
+        totalAmount,
         paymentMethod: String(paymentMethod),
         utrNumber: cleanUtr,
         referenceNo: cleanUtr,
         status: "Pending",
-        notes: `SaaS ${normalizedPlan} renewal (Base ₹${baseAmount} + 5% GST [2.5% CGST + 2.5% SGST] ₹${gstAmount} = ₹${totalAmount}) • UTR: ${cleanUtr}`,
+        notes: `SaaS ${normalizedPlan} renewal (Base ₹${baseAmount} + ${gstRate}% GST [${(gstRate / 2).toFixed(1)}% CGST + ${(gstRate / 2).toFixed(1)}% SGST] ₹${gstAmount} = ₹${totalAmount}) • UTR: ${cleanUtr}`,
       };
 
       const updatedPayments = [paymentRecord, ...existingPayments];
@@ -4941,11 +5831,11 @@ async function startServer() {
       });
     }
 
-    const { paymentId, decision = "Approved" } = req.body || {};
-    if (!paymentId || !["Approved", "Rejected"].includes(decision)) {
+    const { paymentId, decision = "Approved", rejectionReason = "" } = req.body || {};
+    if (!paymentId || !["Approved", "Rejected", "Failed"].includes(decision)) {
       return res.status(400).json({
         success: false,
-        error: "Valid paymentId and decision ('Approved' | 'Rejected') are required.",
+        error: "Valid paymentId and decision ('Approved' | 'Rejected' | 'Failed') are required.",
       });
     }
 
@@ -4960,6 +5850,9 @@ async function startServer() {
         : [];
       const existingHotels: any[] = Array.isArray(currentState.hotels)
         ? currentState.hotels
+        : [];
+      const existingPackages: any[] = Array.isArray(currentState.packages)
+        ? currentState.packages
         : [];
 
       const targetPayment = existingPayments.find((p) => p && p.id === paymentId);
@@ -4977,35 +5870,175 @@ async function startServer() {
         });
       }
 
-      const updatedPayments = existingPayments.map((p) =>
-        p && p.id === paymentId
-          ? {
-              ...p,
-              status: decision,
-              verifiedBy: caller.username || "SuperAdmin",
-              verifiedAt: new Date().toISOString(),
-            }
-          : p
+      const nowIso = new Date().toISOString();
+      const todayStr = nowIso.split("T")[0];
+      const nowStamp = nowIso.replace("T", " ").slice(0, 16);
+
+      const matchedPkg = existingPackages.find(
+        (pkg) =>
+          pkg &&
+          ((targetPayment.packageId && pkg.id === targetPayment.packageId) ||
+            (targetPayment.packageName &&
+              String(pkg.name || "").trim().toLowerCase() === String(targetPayment.packageName).trim().toLowerCase()))
       );
-      currentState.ownerPayments = updatedPayments;
 
       let updatedHotelRecord: any = null;
+      let generatedInvoice: any = null;
+
       if (decision === "Approved") {
-        const planKey = targetPayment.plan || "Monthly";
-        const planCfg = TRUSTED_PLAN_PRICES[planKey] || TRUSTED_PLAN_PRICES.Monthly;
-        const nextEnd = new Date();
-        nextEnd.setDate(nextEnd.getDate() + planCfg.days);
+        const planKey = targetPayment.plan || "Yearly";
+        const fallbackDays = planKey === "Monthly" ? 30 : planKey === "HalfYearly" ? 180 : 365;
+        const durationDays = Number(matchedPkg?.durationDays || fallbackDays) || 365;
+
+        const baseAmount = Number(
+          targetPayment.baseAmount ||
+            matchedPkg?.priceYearly ||
+            TRUSTED_PLAN_PRICES[planKey]?.basePrice ||
+            5999
+        );
+        const gstRate = Number(
+          targetPayment.gstRate ??
+            matchedPkg?.gstRate ??
+            currentState?.systemWebsite?.paymentSettings?.defaultGstRate ??
+            18
+        );
+        const gstAmount = Number(targetPayment.gstAmount ?? Math.round(baseAmount * (gstRate / 100)));
+        const cgstAmount = Number(targetPayment.cgstAmount ?? Number((gstAmount / 2).toFixed(2)));
+        const sgstAmount = Number(targetPayment.sgstAmount ?? Number((gstAmount / 2).toFixed(2)));
+        const totalAmount = Number(targetPayment.totalAmount || targetPayment.amount || baseAmount + gstAmount);
+
+        const targetHotel = existingHotels.find((h) => h && h.id === targetPayment.hotelId);
+        const existingEnd = targetHotel?.subscriptionEndDate ? new Date(targetHotel.subscriptionEndDate) : null;
+        const baseStart = existingEnd && !Number.isNaN(existingEnd.getTime()) && existingEnd.getTime() > Date.now()
+          ? existingEnd
+          : new Date();
+        const validFromStr = baseStart.toISOString().split("T")[0];
+        const nextEnd = new Date(baseStart.getTime());
+        nextEnd.setDate(nextEnd.getDate() + durationDays);
         const endDateStr = nextEnd.toISOString().split("T")[0];
+
+        const existingSubInvoicesCount = existingHotels.reduce(
+          (sum, h) => sum + (Array.isArray(h?.subscriptionInvoices) ? h.subscriptionInvoices.length : 0),
+          0
+        );
+        const seqNum = String(existingSubInvoicesCount + 1).padStart(4, "0");
+        const yr = new Date().getFullYear();
+        const invoiceNumber = `DS-SUB-${yr}-${seqNum}`;
+        const receiptNumber = `RCPT-${yr}-${seqNum}`;
+
+        const includedModules: string[] = [];
+        if (matchedPkg?.modules) {
+          Object.entries(matchedPkg.modules).forEach(([k, v]) => {
+            if (v) includedModules.push(k.toUpperCase());
+          });
+        }
+        if (includedModules.length === 0) {
+          includedModules.push("FRONT DESK", "GST BILLING", "POS", "REPORTS");
+        }
+
+        generatedInvoice = {
+          id: `SUB-INV-${Date.now()}`,
+          invoiceNumber,
+          receiptNumber,
+          hotelId: targetPayment.hotelId,
+          hotelName: targetHotel?.name || targetPayment.hotelName || targetPayment.hotelId,
+          ownerName: targetHotel?.ownerName || targetPayment.directorName || "",
+          hotelAddress: targetHotel?.address || "",
+          hotelPhone: targetHotel?.phoneNumber || "",
+          hotelEmail: targetHotel?.emailAddress || "",
+          hotelGst: targetHotel?.gstNumber || "",
+          packageId: matchedPkg?.id || targetPayment.packageId,
+          packageName: matchedPkg?.name || targetPayment.packageName || `${planKey} Plan`,
+          subscriptionPlan: planKey,
+          roomCapacityLabel: matchedPkg?.roomTierLabel || targetHotel?.roomTierLimit || "Unlimited Rooms",
+          includedModules,
+          validFrom: validFromStr,
+          validUntil: endDateStr,
+          baseAmount,
+          gstRate,
+          gstAmount,
+          cgstAmount,
+          sgstAmount,
+          totalAmount,
+          paymentMethod: targetPayment.paymentMethod || "UPI",
+          transactionReference: targetPayment.utrNumber || targetPayment.referenceNo || "",
+          paymentStatus: "Paid" as const,
+          approvedBy: caller.username || "SuperAdmin",
+          createdAt: todayStr,
+          notes: `Verified payment receipt #${receiptNumber} (UTR: ${targetPayment.utrNumber || targetPayment.referenceNo || "Verified"})`,
+        };
 
         currentState.hotels = existingHotels.map((h) => {
           if (h && h.id === targetPayment.hotelId) {
+            const prevInvoices = Array.isArray(h.subscriptionInvoices) ? h.subscriptionInvoices : [];
+            const prevSubPayments = Array.isArray(h.subscriptionPayments) ? h.subscriptionPayments : [];
+            const updatedSubPayments = prevSubPayments.map((sp: any) =>
+              sp && (sp.id === paymentId || (sp.utrNumber && sp.utrNumber === targetPayment.utrNumber))
+                ? {
+                    ...sp,
+                    status: "Approved",
+                    verifiedBy: caller.username || "SuperAdmin",
+                    verifiedAt: nowStamp,
+                    invoiceId: generatedInvoice.id,
+                    invoiceNumber,
+                    receiptNumber,
+                  }
+                : sp
+            );
+
             updatedHotelRecord = {
               ...h,
               status: "Approved",
+              packageId: matchedPkg?.id || targetPayment.packageId || h.packageId,
               subscriptionPlan: planKey,
               subscriptionStatus: "Active",
-              subscriptionPrice: planCfg.basePrice,
+              subscriptionPrice: baseAmount,
+              subscriptionActivatedAt: todayStr,
               subscriptionEndDate: endDateStr,
+              renewalRequest: h.renewalRequest
+                ? {
+                    ...h.renewalRequest,
+                    status: "Approved",
+                    paymentVerificationStatus: "Verified",
+                    approvedAt: nowStamp,
+                    approvedBy: caller.username || "SuperAdmin",
+                  }
+                : undefined,
+              subscriptionInvoices: [generatedInvoice, ...prevInvoices],
+              subscriptionPayments: updatedSubPayments,
+            };
+            return updatedHotelRecord;
+          }
+          return h;
+        });
+        await syncCollectionDocs(db, "hotels", currentState.hotels);
+      } else {
+        // Rejected or Failed — preserve hotel access rules & data without activating
+        currentState.hotels = existingHotels.map((h) => {
+          if (h && h.id === targetPayment.hotelId) {
+            const prevSubPayments = Array.isArray(h.subscriptionPayments) ? h.subscriptionPayments : [];
+            const updatedSubPayments = prevSubPayments.map((sp: any) =>
+              sp && (sp.id === paymentId || (sp.utrNumber && sp.utrNumber === targetPayment.utrNumber))
+                ? {
+                    ...sp,
+                    status: decision,
+                    verifiedBy: caller.username || "SuperAdmin",
+                    verifiedAt: nowStamp,
+                    notes: rejectionReason ? `${sp.notes || ""} | ${rejectionReason}`.trim() : sp.notes,
+                  }
+                : sp
+            );
+            updatedHotelRecord = {
+              ...h,
+              renewalRequest: h.renewalRequest
+                ? {
+                    ...h.renewalRequest,
+                    status: decision,
+                    paymentVerificationStatus: decision,
+                    rejectionReason: rejectionReason || undefined,
+                  }
+                : undefined,
+              subscriptionPayments: updatedSubPayments,
             };
             return updatedHotelRecord;
           }
@@ -5014,12 +6047,28 @@ async function startServer() {
         await syncCollectionDocs(db, "hotels", currentState.hotels);
       }
 
+      const updatedPayments = existingPayments.map((p) =>
+        p && p.id === paymentId
+          ? {
+              ...p,
+              status: decision,
+              verifiedBy: caller.username || "SuperAdmin",
+              verifiedAt: nowStamp,
+              invoiceId: generatedInvoice?.id || p.invoiceId,
+              invoiceNumber: generatedInvoice?.invoiceNumber || p.invoiceNumber,
+              receiptNumber: generatedInvoice?.receiptNumber || p.receiptNumber,
+              notes: rejectionReason && decision !== "Approved" ? `${p.notes || ""} | ${rejectionReason}`.trim() : p.notes,
+            }
+          : p
+      );
+      currentState.ownerPayments = updatedPayments;
+
       await db.collection("pms_app_state").replaceOne(
         { _id: "FULL_PMS_BACKUP" as any },
         {
           _id: "FULL_PMS_BACKUP" as any,
           data: currentState,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso,
         },
         { upsert: true }
       );
@@ -5033,8 +6082,8 @@ async function startServer() {
           title: `Subscription Payment ${decision}`,
           message:
             decision === "Approved"
-              ? `Your ${targetPayment.plan || "SaaS"} subscription payment (UTR: ${targetPayment.utrNumber || targetPayment.referenceNo}) was verified. License active until ${updatedHotelRecord?.subscriptionEndDate || "updated term"}.`
-              : `Your subscription payment (UTR: ${targetPayment.utrNumber || targetPayment.referenceNo}) was marked as Rejected by SuperAdmin.`,
+              ? `Your ${generatedInvoice?.packageName || targetPayment.plan || "SaaS"} subscription payment (UTR: ${targetPayment.utrNumber || targetPayment.referenceNo}) was verified. License active until ${updatedHotelRecord?.subscriptionEndDate || "updated term"}. Tax Invoice ${generatedInvoice?.invoiceNumber || ""} generated.`
+              : `Your subscription payment (UTR: ${targetPayment.utrNumber || targetPayment.referenceNo}) was marked as ${decision}${rejectionReason ? `: ${rejectionReason}` : ""}.`,
           type: "subscription",
           severity: decision === "Approved" ? "success" : "error",
           linkPath: "/hotelowner/subscription",
@@ -5048,6 +6097,7 @@ async function startServer() {
         decision,
         payment: updatedPayments.find((p) => p && p.id === paymentId),
         hotel: updatedHotelRecord,
+        invoice: generatedInvoice,
       });
     } catch (err: any) {
       return res.status(500).json({
@@ -8043,6 +9093,44 @@ async function startServer() {
 
     if (!incomingItems) {
       return res.status(400).json({ success: false, error: "Payload must include items[] or item{}" });
+    }
+
+    // Backend RBAC guard for sensitive collections on /api/pms/modules/:collection
+    const modCallerRoleLower = String(caller.rawRole || caller.role || "").trim().toLowerCase();
+    const isModPrivilegedAdmin =
+      caller.role === "SuperAdmin" ||
+      caller.isSuperAdmin === true ||
+      modCallerRoleLower === "admin" ||
+      modCallerRoleLower === "owner" ||
+      modCallerRoleLower === "hoteladmin" ||
+      modCallerRoleLower === "superadmin";
+
+    if (!isModPrivilegedAdmin && (colKey === "rbacMatrix" || colKey === "rolePermissions" || colKey === "staff")) {
+      try {
+        const dbCheck = await getMongoDatabase();
+        const stateDoc = await dbCheck.collection("pms_app_state").findOne({ _id: "FULL_PMS_BACKUP" as any });
+        const rolePerms: any[] = Array.isArray(stateDoc?.data?.rolePermissions) ? stateDoc.data.rolePermissions : [];
+        const matched = rolePerms.find(
+          (rp: any) =>
+            rp &&
+            (!rp.hotelId || rp.hotelId === targetHotelId) &&
+            String(rp.roleName || "").trim().toLowerCase() === modCallerRoleLower
+        );
+        const allowed = Boolean(
+          matched?.canManageStaff ||
+          matched?.modulePermissions?.staff?.manage ||
+          matched?.modulePermissions?.roles?.manage ||
+          modCallerRoleLower === "manager"
+        );
+        if (!allowed) {
+          return res.status(403).json({
+            success: false,
+            error: `Forbidden: Role "${caller.rawRole || caller.role}" cannot modify "${colKey}".`,
+          });
+        }
+      } catch {
+        return res.status(403).json({ success: false, error: `Forbidden: Cannot verify permission for "${colKey}".` });
+      }
     }
 
     try {
@@ -11122,6 +12210,163 @@ An error occurred while connecting to the Gemini engines: *"${err.message}"*.
 * **Credit Warning**: Outstanding guest dues require prompt reception follow-ups prior to departure checkouts.`
       });
     }
+  });
+
+  // =========================================================================
+  // DYNAMIC SEO ENDPOINTS: /robots.txt, /sitemap.xml & 301/302 REDIRECTS
+  // =========================================================================
+  app.get("/robots.txt", async (_req, res) => {
+    try {
+      const db = await getMongoDatabase();
+      const doc = await db.collection("pms_app_state").findOne({ _id: "FULL_PMS_BACKUP" as any });
+      const seoSettings = doc?.data?.systemWebsite?.seoSettings;
+      const siteUrl = String(seoSettings?.siteUrl || "https://directstay.online").replace(/\/+$/, "");
+      const customRobots = String(seoSettings?.robotsTxt || "").trim();
+      const body =
+        customRobots ||
+        [
+          "User-agent: *",
+          "Allow: /",
+          "Allow: /features/",
+          "Allow: /pricing/",
+          "Allow: /free-trial/",
+          "Allow: /blog/",
+          "Allow: /about/",
+          "Allow: /contact/",
+          "Disallow: /api/",
+          "Disallow: /superadmin",
+          "Disallow: /admin",
+          "Disallow: /hotelowner",
+          "",
+          `Sitemap: ${siteUrl}/sitemap.xml`,
+        ].join("\n");
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Cache-Control", "public, max-age=300");
+      return res.send(body);
+    } catch {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      return res.send("User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: https://directstay.online/sitemap.xml\n");
+    }
+  });
+
+  app.get("/sitemap.xml", async (_req, res) => {
+    try {
+      const db = await getMongoDatabase();
+      const doc = await db.collection("pms_app_state").findOne({ _id: "FULL_PMS_BACKUP" as any });
+      const rawData = doc?.data || {};
+      const seoSettings = rawData?.systemWebsite?.seoSettings || {};
+      const siteUrl = String(seoSettings?.siteUrl || "https://directstay.online").replace(/\/+$/, "");
+      const today = new Date().toISOString().split("T")[0];
+      const nowMs = Date.now();
+
+      const escapeXml = (s: string) =>
+        String(s || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&apos;");
+
+      const urls: Array<{ loc: string; lastmod: string; changefreq: string; priority: string }> = [
+        { loc: `${siteUrl}/`, lastmod: today, changefreq: "daily", priority: "1.0" },
+        { loc: `${siteUrl}/features/`, lastmod: today, changefreq: "weekly", priority: "0.9" },
+        { loc: `${siteUrl}/pricing/`, lastmod: today, changefreq: "weekly", priority: "0.95" },
+        { loc: `${siteUrl}/free-trial/`, lastmod: today, changefreq: "weekly", priority: "0.9" },
+        { loc: `${siteUrl}/blog/`, lastmod: today, changefreq: "weekly", priority: "0.85" },
+        { loc: `${siteUrl}/about/`, lastmod: today, changefreq: "monthly", priority: "0.7" },
+        { loc: `${siteUrl}/contact/`, lastmod: today, changefreq: "monthly", priority: "0.7" },
+      ];
+
+      const customPages: any[] = Array.isArray(rawData.customPages) ? rawData.customPages : [];
+      customPages.forEach((p) => {
+        if (!p || !p.slug) return;
+        const status = p.status || (p.published ? "published" : "draft");
+        const isScheduledLive =
+          status === "scheduled" && p.scheduledAt && !Number.isNaN(new Date(p.scheduledAt).getTime()) && new Date(p.scheduledAt).getTime() <= nowMs;
+        if (!(status === "published" || isScheduledLive)) return;
+        if (p.seo?.robotsIndex === "noindex") return;
+        const cleanSlug = String(p.slug).replace(/^\/+|\/+$/g, "");
+        if (!cleanSlug) return;
+        urls.push({
+          loc: `${siteUrl}/page/${cleanSlug}`,
+          lastmod: String(p.updatedAt || p.createdAt || today).slice(0, 10),
+          changefreq: "weekly",
+          priority: "0.8",
+        });
+      });
+
+      const blogs: any[] = Array.isArray(rawData?.systemWebsite?.blogs) ? rawData.systemWebsite.blogs : [];
+      blogs.forEach((b) => {
+        if (!b || !b.title) return;
+        const status = b.status || (b.published ? "published" : "draft");
+        const isScheduledLive =
+          status === "scheduled" && b.scheduledAt && !Number.isNaN(new Date(b.scheduledAt).getTime()) && new Date(b.scheduledAt).getTime() <= nowMs;
+        if (!(status === "published" || isScheduledLive)) return;
+        if (b.seo?.robotsIndex === "noindex") return;
+        const slug = String(b.slug || b.id).replace(/^\/+|\/+$/g, "");
+        if (!slug) return;
+        urls.push({
+          loc: `${siteUrl}/blog/${slug}/`,
+          lastmod: String(b.updatedAt || b.publishedAt || today).slice(0, 10),
+          changefreq: "monthly",
+          priority: "0.75",
+        });
+      });
+
+      const xml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+        ...urls.map(
+          (u) =>
+            `  <url>\n    <loc>${escapeXml(u.loc)}</loc>\n    <lastmod>${escapeXml(u.lastmod)}</lastmod>\n    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>\n  </url>`
+        ),
+        "</urlset>",
+      ].join("\n");
+
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+      res.setHeader("Cache-Control", "public, max-age=300");
+      return res.send(xml);
+    } catch {
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+      return res.send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>');
+    }
+  });
+
+  // Server-side 301 / 302 SEO Redirect Manager middleware (runs before SPA fallback)
+  app.use(async (req, res, next) => {
+    if (req.method !== "GET") return next();
+    const p = req.path || "/";
+    if (
+      p.startsWith("/api/") ||
+      p.startsWith("/assets/") ||
+      p.startsWith("/src/") ||
+      p.startsWith("/@") ||
+      p === "/robots.txt" ||
+      p === "/sitemap.xml" ||
+      /\.(js|css|png|jpg|jpeg|svg|ico|webp|woff2?|map)$/i.test(p)
+    ) {
+      return next();
+    }
+    try {
+      const db = await getMongoDatabase();
+      const doc = await db.collection("pms_app_state").findOne({ _id: "FULL_PMS_BACKUP" as any });
+      const redirects: any[] = Array.isArray(doc?.data?.systemWebsite?.seoSettings?.redirects)
+        ? doc.data.systemWebsite.seoSettings.redirects
+        : [];
+      const normPath = p.toLowerCase().replace(/\/+$/, "") || "/";
+      const match = redirects.find((r) => {
+        if (!r || r.isActive === false || !r.fromPath || !r.toPath) return false;
+        const fromNorm = String(r.fromPath).trim().toLowerCase().replace(/\/+$/, "") || "/";
+        return fromNorm === normPath;
+      });
+      if (match && String(match.toPath).trim() !== p) {
+        const code = Number(match.statusCode) === 302 ? 302 : 301;
+        return res.redirect(code, String(match.toPath).trim());
+      }
+    } catch {
+      // Fall through cleanly if DB unavailable
+    }
+    return next();
   });
 
   // Mount Vite middleware in dev / dist static serving in production

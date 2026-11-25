@@ -50,7 +50,7 @@ export const calculateEarlyCheckIn = (
   hotelSettings?: HotelSettings
 ): EarlyCheckInResult => {
   const standardTime = hotelSettings?.checkInTime?.trim() || '12:00 PM';
-  if (hotelSettings?.earlyCheckInEnabled === false) {
+  if (hotelSettings?.earlyCheckInEnabled !== true) {
     return { isEarly: false, earlyHours: 0, chargeAmount: 0, standardTime, reason: '' };
   }
 
