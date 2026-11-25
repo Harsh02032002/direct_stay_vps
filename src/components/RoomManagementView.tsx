@@ -14,6 +14,7 @@ import {
   QrCode, Printer, Building, Building2, Utensils
 } from 'lucide-react';
 import BuildingFloorView from './rooms/BuildingFloorView';
+import TimePicker12h from './TimePicker12h';
 
 interface RoomManagementViewProps {
   rooms: Room[];
@@ -345,6 +346,10 @@ export default function RoomManagementView({
   // Room Module Settings State
   const [defaultCheckInTime, setDefaultCheckInTime] = useState(hotelSettings?.checkInTime || '12:00 PM');
   const [defaultCheckOutTime, setDefaultCheckOutTime] = useState(hotelSettings?.checkOutTime || '11:00 AM');
+  const [earlyCheckInEnabled, setEarlyCheckInEnabled] = useState<boolean>(hotelSettings?.earlyCheckInEnabled ?? true);
+  const [earlyCheckInType, setEarlyCheckInType] = useState<'hourly' | 'fixed'>(hotelSettings?.earlyCheckInType || 'hourly');
+  const [earlyCheckInHourlyRate, setEarlyCheckInHourlyRate] = useState<number>(Number(hotelSettings?.earlyCheckInHourlyRate) || 0);
+  const [earlyCheckInFixedRate, setEarlyCheckInFixedRate] = useState<number>(Number(hotelSettings?.earlyCheckInFixedRate) || 0);
   const [autoMarkDirtyOnCheckout, setAutoMarkDirtyOnCheckout] = useState(true);
   const [requireInspectionToClean, setRequireInspectionToClean] = useState(true);
   const [overbookingLimitPercent, setOverbookingLimitPercent] = useState(0);
@@ -355,6 +360,10 @@ export default function RoomManagementView({
     if (hotelSettings) {
       if (hotelSettings.checkInTime) setDefaultCheckInTime(hotelSettings.checkInTime);
       if (hotelSettings.checkOutTime) setDefaultCheckOutTime(hotelSettings.checkOutTime);
+      if (hotelSettings.earlyCheckInEnabled !== undefined) setEarlyCheckInEnabled(Boolean(hotelSettings.earlyCheckInEnabled));
+      if (hotelSettings.earlyCheckInType) setEarlyCheckInType(hotelSettings.earlyCheckInType);
+      if (hotelSettings.earlyCheckInHourlyRate !== undefined) setEarlyCheckInHourlyRate(Number(hotelSettings.earlyCheckInHourlyRate) || 0);
+      if (hotelSettings.earlyCheckInFixedRate !== undefined) setEarlyCheckInFixedRate(Number(hotelSettings.earlyCheckInFixedRate) || 0);
       if (hotelSettings.allowBackDatedCheckIn !== undefined) setAllowBackDatedCheckIn(hotelSettings.allowBackDatedCheckIn);
       if (hotelSettings.allowBackDatedFoodBill !== undefined) setAllowBackDatedFoodBill(hotelSettings.allowBackDatedFoodBill);
       if (hotelSettings.autoMarkDirtyOnCheckout !== undefined) setAutoMarkDirtyOnCheckout(hotelSettings.autoMarkDirtyOnCheckout);
@@ -884,12 +893,16 @@ export default function RoomManagementView({
         ...hotelSettings,
         checkInTime: defaultCheckInTime,
         checkOutTime: defaultCheckOutTime,
+        earlyCheckInEnabled,
+        earlyCheckInType,
+        earlyCheckInHourlyRate: Math.max(0, Number(earlyCheckInHourlyRate) || 0),
+        earlyCheckInFixedRate: Math.max(0, Number(earlyCheckInFixedRate) || 0),
         autoMarkDirtyOnCheckout,
         allowBackDatedCheckIn,
         allowBackDatedFoodBill
       });
     }
-    showToast('Room Module settings saved successfully!', 'success');
+    showToast('Room Module & Early Check-In settings saved successfully!', 'success');
   };
 
   // Metrics Calculations for Dashboard
@@ -1918,24 +1931,137 @@ export default function RoomManagementView({
             <form onSubmit={handleSaveRoomSettings} className="space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-luxury-brown-700 font-bold block">Standard Check-In Time</label>
-                  <input
-                    type="text"
+                  <label className="text-luxury-brown-700 font-bold block">
+                    Standard Check-In Time (12-Hour AM / PM)
+                  </label>
+                  <TimePicker12h
                     value={defaultCheckInTime}
-                    onChange={e => setDefaultCheckInTime(e.target.value)}
-                    className="w-full bg-luxury-beige-50 border border-luxury-brown-200 rounded-xl p-2.5 text-luxury-brown-950 font-mono font-bold"
+                    onChange={(display12h) => setDefaultCheckInTime(display12h)}
+                    title="Standard Hotel Check-In Time"
+                    className="w-full py-1 px-2.5 !border-luxury-brown-200 bg-white"
                   />
+                  <span className="text-[10px] text-slate-500 block">
+                    Arrivals before <strong>{defaultCheckInTime}</strong> will trigger Early Check-In detection.
+                  </span>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-luxury-brown-700 font-bold block">Standard Check-Out Time</label>
-                  <input
-                    type="text"
+                  <label className="text-luxury-brown-700 font-bold block">
+                    Standard Check-Out Time (12-Hour AM / PM)
+                  </label>
+                  <TimePicker12h
                     value={defaultCheckOutTime}
-                    onChange={e => setDefaultCheckOutTime(e.target.value)}
-                    className="w-full bg-luxury-beige-50 border border-luxury-brown-200 rounded-xl p-2.5 text-luxury-brown-950 font-mono font-bold"
+                    onChange={(display12h) => setDefaultCheckOutTime(display12h)}
+                    title="Standard Hotel Check-Out Time"
+                    className="w-full py-1 px-2.5 !border-luxury-brown-200 bg-white"
                   />
+                  <span className="text-[10px] text-slate-500 block">
+                    Default departure time pre-filled on new reservations &amp; check-ins.
+                  </span>
                 </div>
+              </div>
+
+              {/* ⚡ EARLY CHECK-IN PRICING RULES */}
+              <div className="bg-gradient-to-br from-[#FFFDF7] via-[#FDF8EC] to-[#FAF1DC] p-4 rounded-2xl border border-[#DFC07A] space-y-3.5 shadow-2xs">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <div>
+                    <span className="font-serif font-bold text-[#263449] text-sm flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-[#C49A3A]" /> Early Check-In Time &amp; Pricing Rules
+                    </span>
+                    <p className="text-[11px] text-slate-600 mt-0.5">
+                      Set per-hour or fixed surcharge when a guest arrives before Standard Check-In Time ({defaultCheckInTime}).
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white border border-[#E5D2A6] cursor-pointer shadow-2xs">
+                    <input
+                      type="checkbox"
+                      checked={earlyCheckInEnabled}
+                      onChange={e => setEarlyCheckInEnabled(e.target.checked)}
+                      className="w-4 h-4 accent-[#C49A3A] cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-[#263449]">
+                      {earlyCheckInEnabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </label>
+                </div>
+
+                {earlyCheckInEnabled && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div className="space-y-1">
+                      <label className="text-[10.5px] font-mono uppercase font-bold text-[#7A5915] block">
+                        Charge Calculation Mode
+                      </label>
+                      <div className="grid grid-cols-2 gap-1.5 bg-white p-1 rounded-xl border border-[#E5D2A6]">
+                        <button
+                          type="button"
+                          onClick={() => setEarlyCheckInType('hourly')}
+                          className={`py-1.5 px-2.5 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                            earlyCheckInType === 'hourly'
+                              ? 'bg-[#FDF6E3] text-[#7A5915] border border-[#C49A3A]'
+                              : 'text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          Per Hour (₹/hr)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEarlyCheckInType('fixed')}
+                          className={`py-1.5 px-2.5 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                            earlyCheckInType === 'fixed'
+                              ? 'bg-[#FDF6E3] text-[#7A5915] border border-[#C49A3A]'
+                              : 'text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          Fixed Flat (₹)
+                        </button>
+                      </div>
+                    </div>
+
+                    {earlyCheckInType === 'hourly' ? (
+                      <div className="space-y-1">
+                        <label className="text-[10.5px] font-mono uppercase font-bold text-[#7A5915] block">
+                          Early Check-In Rate (₹ / Hour) *
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={earlyCheckInHourlyRate === 0 ? '' : String(earlyCheckInHourlyRate)}
+                          placeholder="e.g. 200"
+                          onFocus={e => e.currentTarget.select()}
+                          onChange={e => {
+                            const d = e.target.value.replace(/[^0-9]/g, '');
+                            setEarlyCheckInHourlyRate(d === '' ? 0 : parseInt(d, 10));
+                          }}
+                          className="w-full px-3 py-2 bg-white border border-[#DFC07A] rounded-xl text-xs font-mono font-extrabold text-[#1F2937] focus:outline-none focus:border-[#C49A3A]"
+                        />
+                        <span className="text-[10px] text-slate-500 block">
+                          Example: 2 hrs early @ ₹{earlyCheckInHourlyRate || 200}/hr = ₹{((earlyCheckInHourlyRate || 200) * 2).toLocaleString('en-IN')} (editable at check-in)
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <label className="text-[10.5px] font-mono uppercase font-bold text-[#7A5915] block">
+                          Fixed Early Check-In Charge (₹) *
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={earlyCheckInFixedRate === 0 ? '' : String(earlyCheckInFixedRate)}
+                          placeholder="e.g. 500"
+                          onFocus={e => e.currentTarget.select()}
+                          onChange={e => {
+                            const d = e.target.value.replace(/[^0-9]/g, '');
+                            setEarlyCheckInFixedRate(d === '' ? 0 : parseInt(d, 10));
+                          }}
+                          className="w-full px-3 py-2 bg-white border border-[#DFC07A] rounded-xl text-xs font-mono font-extrabold text-[#1F2937] focus:outline-none focus:border-[#C49A3A]"
+                        />
+                        <span className="text-[10px] text-slate-500 block">
+                          Flat ₹{(earlyCheckInFixedRate || 500).toLocaleString('en-IN')} surcharge for early arrival (editable at check-in)
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="bg-luxury-beige-50 p-4 rounded-xl space-y-3 border border-luxury-brown-200">
@@ -2054,7 +2180,7 @@ export default function RoomManagementView({
               <div className="pt-2 border-t border-luxury-brown-100 flex justify-end">
                 <button
                   type="submit"
-                  className="px-6 py-2.5 bg-luxury-brown-900 hover:bg-black text-luxury-gold-300 font-bold text-xs rounded-xl shadow transition-all"
+                  className="px-6 py-2.5 bg-gradient-to-r from-[#D4A745] to-[#BE8F2E] hover:from-[#C49837] hover:to-[#A87D24] text-white font-extrabold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
                 >
                   Save Module Settings
                 </button>

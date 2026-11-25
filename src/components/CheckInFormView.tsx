@@ -7990,6 +7990,78 @@ export default function CheckInFormView({
                       </div>
                     )}
 
+                    {/* Early Check-In Surcharge Detection & Editable Charge Toggle */}
+                    {earlyCheckInInfo.isEarly && (
+                      <div className="p-3.5 rounded-xl bg-gradient-to-r from-[#FFFDF7] via-[#FDF6E3] to-[#FAF0D7] border border-[#DFC07A] space-y-2.5 text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 text-[#263449]">
+                            <Clock className="w-4 h-4 text-[#B5822D] shrink-0" />
+                            <span>
+                              <strong>Early Check-In Detected:</strong> Arrival at{' '}
+                              <strong className="font-mono text-[#7A5915]">{arrivalTime}</strong> is{' '}
+                              <strong className="font-mono">{earlyCheckInInfo.earlyHours} hr(s)</strong> before standard check-in ({earlyCheckInInfo.standardTime}).
+                            </span>
+                          </div>
+                          <label className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-white border border-[#DFC07A] font-bold text-[#7A5915] cursor-pointer shadow-2xs">
+                            <input
+                              type="checkbox"
+                              checked={applyEarlyCheckInCharge}
+                              onChange={e => setApplyEarlyCheckInCharge(e.target.checked)}
+                              className="w-4 h-4 accent-[#C49A3A] cursor-pointer"
+                            />
+                            <span>Apply Early Check-In Charge</span>
+                          </label>
+                        </div>
+
+                        {applyEarlyCheckInCharge ? (
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#E6D3A7]/70 font-mono">
+                            <span className="text-[11px] text-[#7A5915] font-semibold">
+                              {(hotelSettings?.earlyCheckInType || 'hourly') === 'fixed'
+                                ? `Fixed Policy Fee: ₹${Number(hotelSettings?.earlyCheckInFixedRate || 0).toLocaleString('en-IN')}`
+                                : `Hourly Policy: ${earlyCheckInInfo.earlyHours}h × ₹${Number(hotelSettings?.earlyCheckInHourlyRate || 0).toLocaleString('en-IN')}/hr`}
+                              {' '}• Editable here:
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-[#263449]">₹</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={earlyCheckInCustomRate !== '' ? earlyCheckInCustomRate : earlyCheckInInfo.chargeAmount}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                onChange={e =>
+                                  setEarlyCheckInCustomRate(
+                                    e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0)
+                                  )
+                                }
+                                placeholder={String(earlyCheckInInfo.chargeAmount)}
+                                className="w-24 px-2.5 py-1 border border-[#C49A3A] rounded-lg bg-white font-mono font-extrabold text-xs text-[#1F2937] focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setApplyEarlyCheckInCharge(false)}
+                                className="text-[11px] font-sans font-bold text-rose-700 hover:underline cursor-pointer"
+                              >
+                                Waive
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#E6D3A7]/60 text-[11px]">
+                            <span className="text-emerald-800 font-medium">
+                              ✓ Waived by default (₹0 extra added to room tariff).
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setApplyEarlyCheckInCharge(true)}
+                              className="text-[#8B691E] hover:underline font-bold cursor-pointer"
+                            >
+                              + Add Early Charge (₹{earlyCheckInInfo.chargeAmount.toLocaleString('en-IN')})
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Travel Agent / Partner (linked to Travel Agents master list) */}
                     {walkInBookingSource === 'Travel Agent' && (
                     <div className="grid grid-cols-2 md:grid-cols-12 gap-3 p-3 rounded-xl bg-[#F4F6F9]/70 border border-[#DCE3EC] items-end">
