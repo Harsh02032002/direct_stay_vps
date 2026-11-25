@@ -4795,7 +4795,7 @@ export default function ReservationView({
                         {checkInTime}
                       </span>
                     </div>
-                    <div className="grid grid-cols-[1fr_148px] gap-1.5">
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5 items-center">
                       <input
                         type="date"
                         required
@@ -4803,7 +4803,7 @@ export default function ReservationView({
                         value={checkInDate}
                         onWheel={(e) => e.currentTarget.blur()}
                         onChange={(e) => handleCheckInDateChange(e.target.value)}
-                        className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
+                        className="w-full min-w-0 h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
                       />
                       <TimePicker12h
                         value={checkInTime}
@@ -4817,7 +4817,7 @@ export default function ReservationView({
                           }
                           setCheckInTime(display12h);
                         }}
-                        className="w-full h-9 !rounded-lg"
+                        className="h-9 !rounded-lg"
                         title="Arrival Time (12-Hour AM / PM)"
                       />
                     </div>

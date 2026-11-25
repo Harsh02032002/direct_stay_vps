@@ -190,7 +190,7 @@ export default function TimePicker12h({
     <div
       ref={containerRef}
       title={title || 'Type 12-hour time or click clock icon to pick (AM / PM)'}
-      className={`relative inline-flex items-center justify-between gap-0.5 px-1.5 border border-[#DCE3EC] rounded-xl bg-white focus-within:border-[#C49A3A] focus-within:ring-1 focus-within:ring-[#C49A3A]/30 ${className}`}
+      className={`relative inline-flex items-center justify-between gap-0.5 px-1.5 border border-[#DCE3EC] rounded-xl bg-white focus-within:border-[#C49A3A] focus-within:ring-1 focus-within:ring-[#C49A3A]/30 shrink-0 ${className}`}
     >
       <input
         type="text"
@@ -223,16 +223,16 @@ export default function TimePicker12h({
         placeholder="00"
         className="w-6 py-1.5 text-center text-xs font-mono font-bold text-[#263449] bg-transparent focus:outline-none"
       />
-      <select
+      <button
+        type="button"
         disabled={disabled}
-        value={period}
-        onChange={e => handlePeriodChange(e.target.value === 'PM' ? 'PM' : 'AM')}
-        aria-label="AM or PM"
-        className="px-1 py-1 rounded-md bg-[#FDF8ED] border border-[#E5D2A6] text-[10.5px] font-mono font-extrabold text-[#8B691E] focus:outline-none cursor-pointer"
+        onClick={() => handlePeriodChange(period === 'AM' ? 'PM' : 'AM')}
+        aria-label="Toggle AM or PM"
+        title="Click to switch AM / PM"
+        className="px-1.5 py-1 rounded-md bg-[#FDF8ED] hover:bg-[#F5E7C1] border border-[#E5D2A6] text-[10.5px] font-mono font-extrabold text-[#8B691E] focus:outline-none cursor-pointer transition-colors shrink-0"
       >
-        <option value="AM">AM</option>
-        <option value="PM">PM</option>
-      </select>
+        {period}
+      </button>
       <button
         type="button"
         disabled={disabled}

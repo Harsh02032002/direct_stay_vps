@@ -7812,10 +7812,10 @@ export default function CheckInFormView({
                       </div>
                     )}
 
-                    {/* Row 1: Choose Date (Arrival) | Departure | Nights/Hours | Source */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-12 gap-3 items-end">
-                      <div className="sm:col-span-1 xl:col-span-4 space-y-1">
-                        <div className="flex items-center justify-between">
+                    {/* Row 1: Arrival Date & Time | Departure Date & Time (Spacious 2-Column Row — Zero Overlap!) */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
                           <label className="text-xs font-bold text-[#263449]">
                             Choose Date <span className="text-[#A8812B]">*</span>
                           </label>
@@ -7823,7 +7823,7 @@ export default function CheckInFormView({
                             {formatDdmmyyyy(checkInDate)} / {arrivalTime}
                           </span>
                         </div>
-                        <div className="grid grid-cols-[1fr_148px] gap-1.5">
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center">
                           <input
                             type="date"
                             required
@@ -7831,19 +7831,19 @@ export default function CheckInFormView({
                             onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleArrivalDateChange(e.target.value)}
                             onBlur={handleArrivalDateBlur}
-                            className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                            className="w-full min-w-0 px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
                           <TimePicker12h
                             value={arrivalTime}
                             onChange={(_, hhmm24) => handleArrivalTimeChange(hhmm24)}
                             title="Arrival Time (12-Hour AM / PM)"
-                            className="w-full py-0.5"
+                            className="py-0.5"
                           />
                         </div>
                       </div>
 
-                      <div className="sm:col-span-1 xl:col-span-4 space-y-1">
-                        <div className="flex items-center justify-between">
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
                           <label className="text-xs font-bold text-[#263449] flex items-center gap-1.5">
                             <span>Departure</span>
                             <span className="text-[#A8812B]">*</span>
@@ -7857,7 +7857,7 @@ export default function CheckInFormView({
                             {formatDdmmyyyy(checkOutDate)} / {departureTime}
                           </span>
                         </div>
-                        <div className="grid grid-cols-[1fr_148px] gap-1.5">
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center">
                           <input
                             type="date"
                             required
@@ -7865,35 +7865,38 @@ export default function CheckInFormView({
                             onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleDepartureDateChange(e.target.value)}
                             onBlur={handleDepartureDateBlur}
-                            className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
+                            className="w-full min-w-0 px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
                           <TimePicker12h
                             value={departureTime}
                             onChange={(_, hhmm24) => handleDepartureTimeChange(hhmm24)}
                             title="Departure Time (12-Hour AM / PM)"
-                            className="w-full py-0.5"
+                            className="py-0.5"
                           />
                         </div>
                       </div>
+                    </div>
 
-                      <div className="sm:col-span-1 xl:col-span-1 space-y-1">
+                    {/* Row 1b: Stay Duration (Nights/Hours) | Booking Source */}
+                    <div className="grid grid-cols-1 sm:grid-cols-[140px_minmax(0,1fr)] gap-3 items-end">
+                      <div className="space-y-1">
                         <label className="text-xs font-bold text-[#263449] block">
-                          {isSameDayStay ? 'Hours' : 'Nights'}
+                          {isSameDayStay ? 'Stay Duration (Hours)' : 'Stay Nights'}
                         </label>
-                        <div className={`py-2 px-1.5 rounded-xl border text-center text-xs font-mono font-extrabold whitespace-nowrap ${
+                        <div className={`py-2 px-2.5 rounded-xl border text-center text-xs font-mono font-extrabold whitespace-nowrap ${
                           isSameDayStay
                             ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-2xs'
                             : 'border-[#DCE3EC] bg-[#F4F6F9] text-[#263449]'
                         }`}>
                           {isSameDayStay
-                            ? `${stayHours || computedStayHours || 3}h`
-                            : `${stayNights} nt${stayNights > 1 ? 's' : ''}`}
+                            ? `${stayHours || computedStayHours || 3} hrs`
+                            : `${stayNights} Night${stayNights > 1 ? 's' : ''}`}
                         </div>
                       </div>
 
-                      <div className="sm:col-span-1 xl:col-span-3 space-y-1">
+                      <div className="space-y-1">
                         <label className="text-xs font-bold text-[#263449] block">
-                          Source <span className="text-[#A8812B]">*</span>
+                          Booking Source <span className="text-[#A8812B]">*</span>
                         </label>
                         <select
                           value={walkInBookingSource}
