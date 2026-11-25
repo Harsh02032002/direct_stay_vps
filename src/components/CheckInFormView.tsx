@@ -7823,7 +7823,7 @@ export default function CheckInFormView({
                             {formatDdmmyyyy(checkInDate)} / {arrivalTime}
                           </span>
                         </div>
-                        <div className="grid grid-cols-[1fr_132px] gap-1.5">
+                        <div className="grid grid-cols-[1fr_148px] gap-1.5">
                           <input
                             type="date"
                             required
@@ -7857,7 +7857,7 @@ export default function CheckInFormView({
                             {formatDdmmyyyy(checkOutDate)} / {departureTime}
                           </span>
                         </div>
-                        <div className="grid grid-cols-[1fr_132px] gap-1.5">
+                        <div className="grid grid-cols-[1fr_148px] gap-1.5">
                           <input
                             type="date"
                             required

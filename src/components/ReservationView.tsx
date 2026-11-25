@@ -4795,7 +4795,7 @@ export default function ReservationView({
                         {checkInTime}
                       </span>
                     </div>
-                    <div className="grid grid-cols-[1fr_130px] gap-1.5">
+                    <div className="grid grid-cols-[1fr_148px] gap-1.5">
                       <input
                         type="date"
                         required
