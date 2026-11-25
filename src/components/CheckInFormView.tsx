@@ -4,7 +4,7 @@ import {
   Contact, Printer, Check, Receipt, RefreshCw, FileCheck, Users, 
   Sparkles, DollarSign, Plus, Trash2, Landmark, Send, Download, 
   ClipboardList, Settings, Sliders, Hotel, Calendar, UserCheck, Inbox, ShieldCheck,
-  Globe, Building, FileSpreadsheet, ShieldAlert, FileText, Layers, Eye, Search, Filter, Clock, PenTool, X, ChevronDown, ChevronUp, BedDouble, AlertCircle
+  Globe, Building, FileSpreadsheet, ShieldAlert, FileText, Layers, Eye, Search, Filter, Clock, PenTool, X, ChevronDown, ChevronUp, BedDouble, AlertCircle, GlassWater, Minus
 } from 'lucide-react';
 import { showToast } from '../utils/toast';
 import QuickDateInput from './QuickDateInput';
@@ -190,13 +190,134 @@ export default function CheckInFormView({
       p.name?.toLowerCase() === 'water' ||
       ((p as any).sku && String((p as any).sku).toUpperCase().includes('WATER'))
   );
-  const [complimentaryWaterBottles, setComplimentaryWaterBottles] = useState<number>(() =>
-    Math.min(2, Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0)))
+  const availableWaterStock = Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0));
+  const defaultInventoryWaterRate = Number(
+    (waterBottleInventoryProduct as any)?.sellingPrice ||
+      (waterBottleInventoryProduct as any)?.unitPrice ||
+      hotelSettings?.waterBottleRate ||
+      20
   );
+  const [complimentaryWaterBottles, setComplimentaryWaterBottles] = useState<number>(() =>
+    Math.min(2, availableWaterStock)
+  );
+  const [chargeableWaterBottles, setChargeableWaterBottles] = useState<number>(0);
+  const [chargeableWaterRateInput, setChargeableWaterRateInput] = useState<string>(() =>
+    String(defaultInventoryWaterRate)
+  );
+  const waterRateManuallyEditedRef = React.useRef(false);
+  const [showQuickAddWaterStock, setShowQuickAddWaterStock] = useState<boolean>(false);
+  const [quickWaterAddQty, setQuickWaterAddQty] = useState<string>('24');
+  const [quickWaterSellRate, setQuickWaterSellRate] = useState<string>(() =>
+    String(defaultInventoryWaterRate)
+  );
+  const [quickWaterCostRate, setQuickWaterCostRate] = useState<string>('10');
+
+  // Track booking ID created via "Save as Draft" / "Add to Waitlist" in this form session
+  // so clicking Draft -> Waitlist -> Reserve & Check-In updates the SAME booking in-place (ZERO duplicates!)
+  const [activeSessionBookingId, setActiveSessionBookingId] = useState<string | null>(null);
+
   useEffect(() => {
     const avail = Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0));
     setComplimentaryWaterBottles(prev => (prev > avail ? avail : prev));
+    setChargeableWaterBottles(prev => {
+      const maxChargeable = Math.max(0, avail - Math.min(complimentaryWaterBottles, avail));
+      return prev > maxChargeable ? maxChargeable : prev;
+    });
   }, [waterBottleInventoryProduct?.currentStock]);
+
+  useEffect(() => {
+    if (!waterRateManuallyEditedRef.current) {
+      setChargeableWaterRateInput(String(defaultInventoryWaterRate));
+      setQuickWaterSellRate(String(defaultInventoryWaterRate));
+    }
+  }, [defaultInventoryWaterRate]);
+
+  const effectiveChargeableWaterRate = Math.max(
+    0,
+    Number(chargeableWaterRateInput === '' ? 0 : chargeableWaterRateInput) || 0
+  );
+  const chargeableWaterTotal =
+    Math.max(0, Number(chargeableWaterBottles) || 0) * effectiveChargeableWaterRate;
+  const totalRequestedWaterBottles =
+    Math.max(0, Number(complimentaryWaterBottles) || 0) +
+    Math.max(0, Number(chargeableWaterBottles) || 0);
+
+  const handleQuickAddWaterStockToInventory = () => {
+    const qtyToAdd = Math.max(0, Math.floor(Number(quickWaterAddQty) || 0));
+    const sellRate = Math.max(0, Number(quickWaterSellRate) || 0);
+    const costRate = Math.max(0, Number(quickWaterCostRate) || 0);
+    if (qtyToAdd <= 0) {
+      showToast('Please enter a valid quantity of water bottles to add (at least 1).', 'warning');
+      return;
+    }
+    if (!onUpdateInventoryProducts) {
+      showToast('Inventory update handler is not available on this screen.', 'error');
+      return;
+    }
+    const currentHotelId =
+      rooms[0]?.hotelId ||
+      (hotelSettings as any)?.id ||
+      'hotel-1';
+    const prevStock = Number(waterBottleInventoryProduct?.currentStock || 0);
+    const nextStock = prevStock + qtyToAdd;
+    const prodId = waterBottleInventoryProduct?.id || `inv-prod-water-${currentHotelId}`;
+    const updatedWaterProd: InventoryProduct = {
+      ...(waterBottleInventoryProduct || {
+        id: prodId,
+        hotelId: currentHotelId,
+        name: 'Packaged Drinking Water (1L)',
+        code: 'WATER-1L',
+        category: 'Housekeeping / F&B',
+        sku: 'WATER-1L',
+        unit: 'Bottles',
+        minimumStock: 5,
+        minStockAlert: 5,
+      }),
+      currentStock: nextStock,
+      purchasePrice: costRate,
+      costPrice: costRate,
+      sellingPrice: sellRate,
+      unitPrice: sellRate,
+      status: nextStock <= 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock',
+      lastRestockedDate: new Date().toISOString().split('T')[0],
+      lastUpdated: new Date().toISOString(),
+    } as any;
+
+    const exists = (inventoryProducts || []).some(p => p.id === updatedWaterProd.id);
+    const nextProds = exists
+      ? (inventoryProducts || []).map(p => (p.id === updatedWaterProd.id ? updatedWaterProd : p))
+      : [updatedWaterProd, ...(inventoryProducts || [])];
+    onUpdateInventoryProducts(nextProds);
+
+    if (onUpdateInventoryMovements) {
+      const inMov = {
+        id: `MOV-WB-IN-${Date.now()}`,
+        productId: updatedWaterProd.id,
+        productName: updatedWaterProd.name,
+        type: 'IN' as const,
+        quantity: qtyToAdd,
+        previousStock: prevStock,
+        newStock: nextStock,
+        date: getTodayDateStr(),
+        time: new Date().toLocaleTimeString(),
+        referenceType: 'Purchase' as any,
+        referenceId: `QUICK-CI-${Date.now()}`,
+        notes: `Quick restock from Check-In (+${qtyToAdd} bottles @ ₹${sellRate}/bottle)`,
+        performedBy: loggedInUser || 'Admin',
+        hotelId: currentHotelId,
+      } as unknown as InventoryStockMovement;
+      onUpdateInventoryMovements([inMov, ...(inventoryStockMovements || [])]);
+    }
+
+    if (sellRate > 0) {
+      setChargeableWaterRateInput(String(sellRate));
+    }
+    setShowQuickAddWaterStock(false);
+    showToast(
+      `Added ${qtyToAdd} water bottles to Inventory (Stock: ${prevStock} → ${nextStock}, Rate: ₹${sellRate}/bottle).`,
+      'success'
+    );
+  };
   const [resSearchQuery, setResSearchQuery] = useState('');
   const [hkOverrideApproved, setHkOverrideApproved] = useState(false);
   const [hkOverrideReason, setHkOverrideReason] = useState('');
@@ -798,32 +919,79 @@ export default function CheckInFormView({
     if (!rawNewDate) return;
     const nextIn = rawNewDate;
     setCheckInDate(nextIn);
-    // Never forcibly shift departure date into next month!
-    // 1) If same-day stay: keep checkout aligned with arrival
-    // 2) If checkout is missing or strictly on/before arrival: move to next day (1 night)
-    // 3) If checkout is already after arrival: leave it intact!
+    // Do NOT force-overwrite checkOutDate mid-typing if nextIn < checkOutDate!
+    // Only advance checkOutDate if same-day mode is on or arrival moved strictly past checkout.
     if (isSameDayStay) {
       setCheckOutDate(nextIn);
-    } else if (!checkOutDate || checkOutDate <= nextIn) {
+    } else if (!checkOutDate || nextIn > checkOutDate) {
       setCheckOutDate(getFutureDateStr(1, nextIn));
+    }
+  };
+
+  const handleArrivalDateBlur = () => {
+    if (!checkInDate) return;
+    if (checkOutDate && checkOutDate === checkInDate) {
+      const in24 = to24hTime(arrivalTime, getIstNowParts().hhmm);
+      const out24 = to24hTime(departureTime, '18:00');
+      if (out24 <= in24) {
+        handleSelectStayHours(Number(stayHours) || 3);
+      }
+    } else if (!checkOutDate || checkOutDate < checkInDate) {
+      setCheckOutDate(getFutureDateStr(1, checkInDate));
     }
   };
 
   const handleArrivalTimeChange = (newHhmm: string) => {
     if (!newHhmm) return;
-    setArrivalTime(to12hTime(newHhmm, getIstNowParts().displayTime));
+    const nextArr = to12hTime(newHhmm, getIstNowParts().displayTime);
+    setArrivalTime(nextArr);
+    if (isSameDayStay) {
+      const out24 = to24hTime(departureTime, '18:00');
+      if (out24 <= newHhmm) {
+        const [inH, inM] = newHhmm.split(':').map(Number);
+        const hrs = Number(stayHours) || 3;
+        const outTotalMin = Math.min(23 * 60 + 59, inH * 60 + inM + hrs * 60);
+        const hhmmOut = `${String(Math.floor(outTotalMin / 60)).padStart(2, '0')}:${String(outTotalMin % 60).padStart(2, '0')}`;
+        setDepartureTime(to12hTime(hhmmOut, '06:00 PM'));
+      }
+    }
   };
 
+  // Never clamp/force-reset checkOutDate inside onChange!
+  // Browser date inputs emit partial values mid-typing (e.g. typing "2" of "21" emits "02").
+  // Clamping in onChange snaps the field back and blocks keyboard typing. Validate on blur / submit instead.
   const handleDepartureDateChange = (rawNewOut: string) => {
     if (!rawNewOut) return;
-    if (rawNewOut < checkInDate) {
-      setCheckOutDate(checkInDate);
-      showToast('Departure date cannot be earlier than arrival date.', 'warning');
-      return;
-    }
     setCheckOutDate(rawNewOut);
-    if (rawNewOut === checkInDate && !stayHours) {
-      setStayHours(3);
+    if (rawNewOut === checkInDate) {
+      const hrs = Number(stayHours) || 3;
+      if (!stayHours) setStayHours(hrs);
+      const in24 = to24hTime(arrivalTime, getIstNowParts().hhmm);
+      const out24 = to24hTime(departureTime, '18:00');
+      if (out24 <= in24) {
+        handleSelectStayHours(hrs);
+      }
+    }
+  };
+
+  const handleDepartureDateBlur = () => {
+    if (!checkOutDate || !checkInDate) return;
+    if (checkOutDate < checkInDate) {
+      setCheckOutDate(checkInDate);
+      const hrs = Number(stayHours) || 3;
+      if (!stayHours) setStayHours(hrs);
+      const in24 = to24hTime(arrivalTime, getIstNowParts().hhmm);
+      const out24 = to24hTime(departureTime, '18:00');
+      if (out24 <= in24) {
+        handleSelectStayHours(hrs);
+      }
+      showToast('Departure date cannot be earlier than arrival date.', 'warning');
+    } else if (checkOutDate === checkInDate) {
+      const in24 = to24hTime(arrivalTime, getIstNowParts().hhmm);
+      const out24 = to24hTime(departureTime, '18:00');
+      if (out24 <= in24) {
+        handleSelectStayHours(Number(stayHours) || 3);
+      }
     }
   };
 
@@ -1017,6 +1185,7 @@ export default function CheckInFormView({
     const effectiveEnd = endStr || getFutureDateStr(1, effectiveStart);
     return bookings.find(b => {
       if (selectedBooking && b.id === selectedBooking.id) return false;
+      if (activeSessionBookingId && b.id === activeSessionBookingId) return false;
       if (editingCheckIn && b.id === editingCheckIn.id) return false;
       const rawSt = String(b.status || '').toLowerCase().replace(/[\s_-]/g, '');
       if (b.status === 'Cancelled' || rawSt === 'cancelled' || rawSt === 'noshow' || rawSt === 'draft' || rawSt === 'waiting') return false;
@@ -1055,10 +1224,16 @@ export default function CheckInFormView({
         (editingCheckIn.roomNumber === r.number ||
           (editingCheckIn.bookedRooms || []).some(br => br.roomNumber === r.number))
     );
+    const activeSessionBkgObj = activeSessionBookingId
+      ? bookings.find(b => b.id === activeSessionBookingId)
+      : undefined;
     const isSelectedReservationRoom = Boolean(
-      selectedBooking &&
+      (selectedBooking &&
         (selectedBooking.roomNumber === r.number ||
-          (selectedBooking.bookedRooms || []).some(br => br.roomNumber === r.number))
+          (selectedBooking.bookedRooms || []).some(br => br.roomNumber === r.number))) ||
+      (activeSessionBkgObj &&
+        (activeSessionBkgObj.roomNumber === r.number ||
+          (activeSessionBkgObj.bookedRooms || []).some(br => br.roomNumber === r.number)))
     );
     if (isCurrentEditedRoom) return true;
 
@@ -1524,6 +1699,19 @@ export default function CheckInFormView({
                 },
               ]
             : []),
+          ...(!editingCheckIn && chargeableWaterBottles > 0 && chargeableWaterTotal > 0
+            ? [
+                {
+                  id: 'ci-water-chg',
+                  kind: 'water' as const,
+                  description: `Water Bottles (${chargeableWaterBottles} × ₹${effectiveChargeableWaterRate})`,
+                  amount: chargeableWaterTotal,
+                  quantity: chargeableWaterBottles,
+                  rate: effectiveChargeableWaterRate,
+                  roomNumber: selectedRoomNumber || '101',
+                },
+              ]
+            : []),
           ...existingStayFolioCharges,
         ]
       : [
@@ -1592,6 +1780,19 @@ export default function CheckInFormView({
                   kind: 'early_checkin' as const,
                   description: 'Early Check-In Charges',
                   amount: earlyCheckInCharge,
+                },
+              ]
+            : []),
+          ...(!editingCheckIn && chargeableWaterBottles > 0 && chargeableWaterTotal > 0
+            ? [
+                {
+                  id: 'ci-gr-water-chg',
+                  kind: 'water' as const,
+                  description: `Water Bottles (${chargeableWaterBottles} × ₹${effectiveChargeableWaterRate})`,
+                  amount: chargeableWaterTotal,
+                  quantity: chargeableWaterBottles,
+                  rate: effectiveChargeableWaterRate,
+                  roomNumber: groupRooms[0]?.roomNumber || '101',
                 },
               ]
             : []),
@@ -2119,6 +2320,7 @@ export default function CheckInFormView({
 
   const handleSelectAdvanceBooking = (b: Booking) => {
     lastPopulatedBookingRef.current = `${b.id}:${rooms.length > 0 ? 'ready' : 'empty'}`;
+    setActiveSessionBookingId(null);
     setSelectedBooking(b);
     populateFormFromBooking(b, true);
   };
@@ -2534,8 +2736,8 @@ export default function CheckInFormView({
       showToast('Past arrival dates cannot be selected for new bookings.', 'error');
       return;
     }
-    if (!checkOutDate || checkOutDate <= checkInDate) {
-      showToast('Departure date must be later than arrival date.', 'error');
+    if (!checkOutDate || checkOutDate < checkInDate) {
+      showToast('Departure date cannot be earlier than arrival date.', 'error');
       return;
     }
 
@@ -2594,6 +2796,7 @@ export default function CheckInFormView({
       while (existingIds.has(`GP-BKG-${nextNum}`)) nextNum += 1;
       const newResId =
         selectedBooking?.id ||
+        activeSessionBookingId ||
         (isMulti ? groupBookingId : !existingIds.has(walkInPreviewBookingId) ? walkInPreviewBookingId : `GP-BKG-${nextNum}`);
 
       const activeHotelId =
@@ -2788,6 +2991,9 @@ export default function CheckInFormView({
         ? bookings.map(b => (b.id === newResId ? newBookingRecord : b))
         : [newBookingRecord, ...bookings];
       onUpdateBookings(nextBookings);
+      // Remember this booking ID for this form session so Draft -> Waitlist -> Confirm / Check-In
+      // converts the SAME booking in-place instead of creating duplicate room bookings!
+      setActiveSessionBookingId(newResId);
 
       const resolvedLabel =
         actionLabelOverride ||
@@ -2821,8 +3027,9 @@ export default function CheckInFormView({
         'success'
       );
 
-      setSelectedBooking(null);
-      setWalkInIdSeed(Number(String(Date.now()).slice(-6)) + 1);
+      if (targetStatus === 'Confirmed') {
+        setSelectedBooking(null);
+      }
     } finally {
       setIsSubmittingAction(false);
     }
@@ -2850,18 +3057,18 @@ export default function CheckInFormView({
       showToast('Past arrival dates cannot be selected for new check-ins.', 'error');
       return;
     }
-    if (!checkOutDate || checkOutDate <= checkInDate) {
-      showToast('Departure date must be later than arrival date.', 'error');
+    if (!checkOutDate || checkOutDate < checkInDate) {
+      showToast('Departure date cannot be earlier than arrival date.', 'error');
       return;
     }
 
-    if (!editingCheckIn && complimentaryWaterBottles > 0) {
+    if (!editingCheckIn && totalRequestedWaterBottles > 0) {
       const availWater = Number(waterBottleInventoryProduct?.currentStock ?? 0);
-      if (availWater < complimentaryWaterBottles) {
+      if (availWater < totalRequestedWaterBottles) {
         showToast(
           availWater <= 0
-            ? 'Water Bottle stock in Inventory is 0. If bottles are physically available, please add stock in Inventory first, or set Allocated Bottles to 0.'
-            : `Insufficient Water Bottle stock in Inventory (Available: ${availWater}, Requested: ${complimentaryWaterBottles}). Please add stock in Inventory first.`,
+            ? 'Water Bottle stock in Inventory is 0. Use "+ Add Water Stock to Inventory" in the Water Bottles section, or set bottles to 0.'
+            : `Insufficient Water Bottle stock in Inventory (Available: ${availWater}, Requested: ${totalRequestedWaterBottles}). Use "+ Add Water Stock" or reduce bottle quantity.`,
           'error'
         );
         return;
@@ -2869,8 +3076,11 @@ export default function CheckInFormView({
     }
 
     // 1. Validate Advance Reservation Status (Prevent Cancelled reservations)
-    if (selectedBooking && !editingCheckIn) {
-      const currentBookingInState = bookings.find(b => b.id === selectedBooking.id) || selectedBooking;
+    const activeLinkedBooking =
+      selectedBooking ||
+      (activeSessionBookingId ? bookings.find(b => b.id === activeSessionBookingId) || null : null);
+    if (activeLinkedBooking && !editingCheckIn) {
+      const currentBookingInState = bookings.find(b => b.id === activeLinkedBooking.id) || activeLinkedBooking;
       const rawSt = String(currentBookingInState.status || '').toLowerCase();
       if (currentBookingInState.status === 'Cancelled' || rawSt === 'cancelled') {
         showToast(`Check-In Blocked: Reservation #${currentBookingInState.id} has been Cancelled and cannot be checked in.`, 'error');
@@ -2918,10 +3128,10 @@ export default function CheckInFormView({
     }
 
     // 2. Walk-In guests are fresh arrivals — never auto-link them to an advance reservation.
-    //    Only an explicitly selected advance booking (Check-In tab) is used.
+    //    Only an explicitly selected advance booking OR a Draft/Waitlist booking created in this exact form session is converted in-place.
     const effectiveBooking: Booking | null = editingCheckIn
       ? (bookings.find(b => b.id === editingCheckIn.id || (editingCheckIn.bookingId && b.id === editingCheckIn.bookingId) || (b.roomNumber === editingCheckIn.roomNumber && b.guestName === editingCheckIn.guestName && !b.isCompleted)) || null)
-      : (selectedBooking || null);
+      : (selectedBooking || (activeSessionBookingId ? bookings.find(b => b.id === activeSessionBookingId) || null : null));
 
     const prevEditingRooms: string[] = editingCheckIn
       ? [
@@ -3285,6 +3495,21 @@ export default function CheckInFormView({
         description: `Auxiliary Charges (Room ${primaryRoom})`,
         amount: otherCharges,
         dateTime: nowIsoSrv
+      });
+    }
+    const chgWaterRecordId =
+      !editingCheckIn && chargeableWaterBottles > 0 && chargeableWaterTotal > 0
+        ? `WB-CHG-${Date.now()}`
+        : '';
+    if (chgWaterRecordId && chargeableWaterBottles > 0 && chargeableWaterTotal > 0) {
+      stayServiceExtraCharges.push({
+        id: `EC-WB-${chgWaterRecordId}`,
+        category: 'Water Bottle',
+        description: `Water Bottles (${chargeableWaterBottles} × ₹${effectiveChargeableWaterRate})`,
+        amount: chargeableWaterTotal,
+        dateTime: nowIsoSrv,
+        sourceType: 'water_bottle',
+        sourceId: chgWaterRecordId,
       });
     }
 
@@ -3736,11 +3961,11 @@ export default function CheckInFormView({
       onUpdateInvoices(updatedInvoicesList);
     }
 
-    // Complimentary Water Bottle inventory verification & deduction (Requested by Sir & User)
-    if (!editingCheckIn && complimentaryWaterBottles > 0) {
+    // Water Bottle (Complimentary + Chargeable) inventory deduction & logging
+    if (!editingCheckIn && totalRequestedWaterBottles > 0) {
       if (waterBottleInventoryProduct && onUpdateInventoryProducts) {
         const prevStock = Number(waterBottleInventoryProduct.currentStock) || 0;
-        const newStock = Math.max(0, prevStock - complimentaryWaterBottles);
+        const newStock = Math.max(0, prevStock - totalRequestedWaterBottles);
         const minAlert = Number((waterBottleInventoryProduct as any).minStockAlert ?? 5) || 5;
         const newStatus: InventoryProduct['status'] =
           newStock <= 0 ? 'Out of Stock' : newStock <= minAlert ? 'Low Stock' : 'In Stock';
@@ -3754,19 +3979,22 @@ export default function CheckInFormView({
         );
 
         if (onUpdateInventoryMovements && inventoryStockMovements) {
+          const noteParts: string[] = [];
+          if (complimentaryWaterBottles > 0) noteParts.push(`${complimentaryWaterBottles} Complimentary`);
+          if (chargeableWaterBottles > 0) noteParts.push(`${chargeableWaterBottles} Chargeable @ ₹${effectiveChargeableWaterRate}`);
           const movement = {
-            id: `MOV-WB-COMP-${Date.now()}`,
+            id: `MOV-WB-CI-${Date.now()}`,
             productId: waterBottleInventoryProduct.id,
             productName: waterBottleInventoryProduct.name,
             type: 'OUT' as const,
-            quantity: complimentaryWaterBottles,
+            quantity: totalRequestedWaterBottles,
             previousStock: prevStock,
             newStock,
             date: checkInDate,
             time: new Date().toLocaleTimeString(),
             referenceType: 'Housekeeping' as any,
             referenceId: newCheckIn.id,
-            notes: `Complimentary Water Bottle (${complimentaryWaterBottles} bottles) issued at Check-In for Room ${primaryRoom} (${guestName})`,
+            notes: `Water Bottles (${noteParts.join(' + ')}) issued at Check-In for Room ${primaryRoom} (${guestName})`,
             performedBy: autoDetectedCheckedInBy,
             hotelId: activeHotelId
           } as unknown as InventoryStockMovement;
@@ -3774,29 +4002,56 @@ export default function CheckInFormView({
         }
 
         if (onUpdateWaterBottles && waterBottles) {
-          const compRecord: WaterBottleRecord = {
-            id: `WB-COMP-${Date.now()}`,
-            hotelId: activeHotelId,
-            roomNumber: primaryRoom,
-            guestName,
-            checkInId: newCheckIn.id,
-            checkinId: newCheckIn.id,
-            bookingId: effectiveBooking?.id,
-            quantity: complimentaryWaterBottles,
-            type: 'Complimentary',
-            isChargeable: false,
-            unitPrice: 0,
-            totalAmount: 0,
-            chargeAmount: 0,
-            date: checkInDate,
-            dateTime: `${checkInDate} ${arrivalTime}`,
-            deliveredBy: autoDetectedCheckedInBy,
-          } as WaterBottleRecord;
-          onUpdateWaterBottles([compRecord, ...waterBottles]);
+          const newWbRecords: WaterBottleRecord[] = [];
+          if (complimentaryWaterBottles > 0) {
+            newWbRecords.push({
+              id: `WB-COMP-${Date.now()}`,
+              hotelId: activeHotelId,
+              roomNumber: primaryRoom,
+              guestName,
+              checkInId: newCheckIn.id,
+              checkinId: newCheckIn.id,
+              bookingId: effectiveBooking?.id,
+              quantity: complimentaryWaterBottles,
+              type: 'Complimentary',
+              isChargeable: false,
+              unitPrice: 0,
+              totalAmount: 0,
+              chargeAmount: 0,
+              date: checkInDate,
+              dateTime: `${checkInDate} ${arrivalTime}`,
+              deliveredBy: autoDetectedCheckedInBy,
+            } as WaterBottleRecord);
+          }
+          if (chargeableWaterBottles > 0) {
+            newWbRecords.push({
+              id: chgWaterRecordId || `WB-CHG-${Date.now() + 1}`,
+              hotelId: activeHotelId,
+              roomNumber: primaryRoom,
+              guestName,
+              checkInId: newCheckIn.id,
+              checkinId: newCheckIn.id,
+              bookingId: effectiveBooking?.id,
+              quantity: chargeableWaterBottles,
+              extraChargeableCount: chargeableWaterBottles,
+              type: 'Chargeable',
+              isChargeable: true,
+              unitPrice: effectiveChargeableWaterRate,
+              ratePerBottle: effectiveChargeableWaterRate,
+              totalAmount: chargeableWaterTotal,
+              chargeAmount: chargeableWaterTotal,
+              date: checkInDate,
+              dateTime: `${checkInDate} ${arrivalTime}`,
+              deliveredBy: autoDetectedCheckedInBy,
+            } as WaterBottleRecord);
+          }
+          if (newWbRecords.length > 0) {
+            onUpdateWaterBottles([...newWbRecords, ...waterBottles]);
+          }
         }
 
         if (newStock === 0) {
-          showToast('Check-In completed! Note: Water Bottle stock in Inventory is now 0 — please restock in Inventory Store.', 'warning');
+          showToast('Check-In completed! Note: Water Bottle stock in Inventory is now 0 — use "+ Add Water Stock" or Inventory Store to restock.', 'warning');
         } else if (newStock <= minAlert) {
           showToast(`Low Stock Alert: Only ${newStock} water bottle(s) remaining in Inventory.`, 'warning');
         }
@@ -3839,7 +4094,13 @@ export default function CheckInFormView({
       status: 'Checked-In',
     });
     setSelectedBooking(null);
+    setActiveSessionBookingId(null);
     setEditingCheckIn(null);
+    setChargeableWaterBottles(0);
+    setComplimentaryWaterBottles(Math.min(2, Math.max(0, availableWaterStock - totalRequestedWaterBottles)));
+    setShowQuickAddWaterStock(false);
+    waterRateManuallyEditedRef.current = false;
+    setWalkInIdSeed(Number(String(Date.now()).slice(-6)) + 1);
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -7167,13 +7428,30 @@ export default function CheckInFormView({
                       <strong>₹{inlineBookingSuccess.paidAmount.toLocaleString('en-IN')}</strong> ({inlineBookingSuccess.status})
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setInlineBookingSuccess(null)}
-                    className="px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-900 text-xs font-bold hover:bg-emerald-100 cursor-pointer shrink-0"
-                  >
-                    Dismiss
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {activeSessionBookingId && inlineBookingSuccess.status !== 'Checked-In' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveSessionBookingId(null);
+                          setSelectedBooking(null);
+                          setInlineBookingSuccess(null);
+                          setWalkInIdSeed(Number(String(Date.now()).slice(-6)) + 1);
+                          showToast('Started a fresh booking session. Previous Draft/Waitlist stays saved.', 'info');
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-[#FDF8ED] border border-[#C49A3A] text-[#8B691E] text-xs font-bold hover:bg-[#F6E9C8] cursor-pointer"
+                      >
+                        + Start Fresh Booking
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setInlineBookingSuccess(null)}
+                      className="px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-900 text-xs font-bold hover:bg-emerald-100 cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -7272,6 +7550,13 @@ export default function CheckInFormView({
                             <strong className="shrink-0">
                               ₹{effectiveExtraBedTotal.toLocaleString('en-IN')}
                             </strong>
+                          </div>
+                        )}
+
+                        {!editingCheckIn && chargeableWaterBottles > 0 && chargeableWaterTotal > 0 && (
+                          <div className="flex items-center justify-between text-sky-800">
+                            <span>Water Bottles ({chargeableWaterBottles} × ₹{effectiveChargeableWaterRate}):</span>
+                            <strong>₹{chargeableWaterTotal.toLocaleString('en-IN')}</strong>
                           </div>
                         )}
 
@@ -7417,6 +7702,11 @@ export default function CheckInFormView({
                             onClick={() => {
                               setCheckOutDate(checkInDate);
                               setStayHours(3);
+                              const in24 = to24hTime(arrivalTime, getIstNowParts().hhmm);
+                              const out24 = to24hTime(departureTime, '18:00');
+                              if (out24 <= in24) {
+                                handleSelectStayHours(3);
+                              }
                             }}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-[#C49A3A]/60 text-amber-900 text-xs font-mono font-bold hover:bg-amber-100 transition-all cursor-pointer shadow-xs"
                             title="Set same-day hourly stay"
@@ -7539,6 +7829,7 @@ export default function CheckInFormView({
                             value={checkInDate}
                             onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleArrivalDateChange(e.target.value)}
+                            onBlur={handleArrivalDateBlur}
                             className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
                           <input
@@ -7573,6 +7864,7 @@ export default function CheckInFormView({
                             value={checkOutDate}
                             onWheel={(e) => e.currentTarget.blur()}
                             onChange={e => handleDepartureDateChange(e.target.value)}
+                            onBlur={handleDepartureDateBlur}
                             className="w-full px-2.5 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold bg-white focus:border-[#C49A3A] focus:outline-none"
                           />
                           <input
@@ -8554,6 +8846,254 @@ export default function CheckInFormView({
                       </div>
                     )}
                   </section>
+
+                  {/* WATER BOTTLES (COMPLIMENTARY + CHARGEABLE + LIVE INVENTORY SYNC + INLINE QUICK STOCK ADD) */}
+                  {!editingCheckIn && (
+                    <section className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs p-5 space-y-3.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-sky-50 border border-sky-200 text-sky-700 flex items-center justify-center shrink-0">
+                            <GlassWater className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-serif font-bold text-[#263449] flex flex-wrap items-center gap-2">
+                              <span>Water Bottles (Check-In Allocation)</span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${
+                                  availableWaterStock <= 0
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                    : availableWaterStock <= 5
+                                    ? 'bg-amber-50 text-amber-800 border-amber-300'
+                                    : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                }`}
+                              >
+                                {waterBottleInventoryProduct
+                                  ? `Inventory Stock: ${availableWaterStock} Bottle${availableWaterStock === 1 ? '' : 's'}`
+                                  : 'Not in Inventory (0 Stock)'}
+                              </span>
+                            </h3>
+                            <p className="text-[11px] text-slate-500">
+                              Issue complimentary (₹0) and/or chargeable water bottles • Auto-deducts from Inventory on Check-In
+                            </p>
+                          </div>
+                        </div>
+
+                        {onUpdateInventoryProducts && (
+                          <button
+                            type="button"
+                            onClick={() => setShowQuickAddWaterStock(prev => !prev)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold border inline-flex items-center gap-1.5 cursor-pointer transition-all ${
+                              availableWaterStock <= 5 || showQuickAddWaterStock
+                                ? 'bg-[#C49A3A] hover:bg-[#A8812B] text-white border-[#A8812B] shadow-2xs'
+                                : 'bg-[#FDF8ED] hover:bg-[#F6E9C8] text-[#8B691E] border-[#C49A3A]/60'
+                            }`}
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            {showQuickAddWaterStock ? 'Close Stock Panel' : 'Add Water Stock to Inventory'}
+                          </button>
+                        )}
+                      </div>
+
+                      {/* INLINE QUICK ADD WATER STOCK TO INVENTORY */}
+                      {(showQuickAddWaterStock || (!waterBottleInventoryProduct && availableWaterStock === 0)) && onUpdateInventoryProducts && (
+                        <div className="p-3.5 rounded-xl bg-amber-50/80 border border-[#C49A3A]/60 space-y-2.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-[#263449]">
+                              {waterBottleInventoryProduct
+                                ? `Quick Restock: ${waterBottleInventoryProduct.name} (Current: ${availableWaterStock})`
+                                : 'Water Bottle item not found in Inventory — Quick Add SKU (WATER-1L) directly here:'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-end">
+                            <div>
+                              <label className="text-[10px] font-mono font-bold uppercase text-[#8B691E] block">
+                                Add Quantity (Bottles) *
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={quickWaterAddQty}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                onChange={e => setQuickWaterAddQty(e.target.value)}
+                                placeholder="e.g. 24"
+                                className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-mono font-bold uppercase text-[#8B691E] block">
+                                Selling Rate / Bottle (₹) *
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={quickWaterSellRate}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                onChange={e => setQuickWaterSellRate(e.target.value)}
+                                placeholder="e.g. 20"
+                                className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-mono font-bold uppercase text-[#8B691E] block">
+                                Cost Price / Bottle (₹)
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={quickWaterCostRate}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                onChange={e => setQuickWaterCostRate(e.target.value)}
+                                placeholder="e.g. 10"
+                                className="w-full mt-1 px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleQuickAddWaterStockToInventory}
+                              className="w-full py-2 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold cursor-pointer shadow-xs"
+                            >
+                              + Add to Inventory
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* COMPLIMENTARY + CHARGEABLE CONTROLS */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {/* 1. Complimentary Water Bottles */}
+                        <div className="p-3.5 rounded-xl bg-[#F4F6F9] border border-[#DCE3EC] flex flex-col justify-between gap-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <span className="text-xs font-bold text-[#263449] block">Complimentary Bottles</span>
+                              <span className="text-[10.5px] text-slate-500">Free welcome water • Deducted from stock</span>
+                            </div>
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold border border-emerald-200">
+                              ₹0 Free
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={complimentaryWaterBottles <= 0}
+                                onClick={() => setComplimentaryWaterBottles(prev => Math.max(0, prev - 1))}
+                                className="w-8 h-8 rounded-lg border border-[#C2CDD9] bg-white hover:bg-slate-100 disabled:opacity-40 inline-flex items-center justify-center text-[#263449] cursor-pointer"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                              </button>
+                              <input
+                                type="number"
+                                min={0}
+                                max={Math.max(0, availableWaterStock - chargeableWaterBottles)}
+                                value={complimentaryWaterBottles}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                onChange={e => {
+                                  const maxAllowed = Math.max(0, availableWaterStock - chargeableWaterBottles);
+                                  const parsed = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                                  setComplimentaryWaterBottles(Math.min(maxAllowed, parsed));
+                                }}
+                                className="w-16 py-1.5 px-2 text-center border border-[#DCE3EC] rounded-lg text-xs font-mono font-extrabold bg-white text-[#263449]"
+                              />
+                              <button
+                                type="button"
+                                disabled={totalRequestedWaterBottles >= availableWaterStock}
+                                onClick={() =>
+                                  setComplimentaryWaterBottles(prev =>
+                                    Math.min(Math.max(0, availableWaterStock - chargeableWaterBottles), prev + 1)
+                                  )
+                                }
+                                className="w-8 h-8 rounded-lg border border-[#C2CDD9] bg-white hover:bg-slate-100 disabled:opacity-40 inline-flex items-center justify-center text-[#263449] cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <span className="text-[11px] font-mono text-slate-600">
+                              Max avail: <strong>{Math.max(0, availableWaterStock - chargeableWaterBottles)}</strong>
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 2. Chargeable Water Bottles */}
+                        <div className="p-3.5 rounded-xl bg-[#FDF8ED]/60 border border-[#C49A3A]/40 flex flex-col justify-between gap-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <span className="text-xs font-bold text-[#263449] block">Chargeable Bottles</span>
+                              <span className="text-[10.5px] text-slate-500">Rate auto-fills from Inventory • Editable here</span>
+                            </div>
+                            <span className="px-2 py-0.5 rounded-md bg-[#F6E9C8] text-[#8B691E] text-[10px] font-mono font-extrabold border border-[#C49A3A]/50">
+                              Bill: ₹{chargeableWaterTotal.toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={chargeableWaterBottles <= 0}
+                                onClick={() => setChargeableWaterBottles(prev => Math.max(0, prev - 1))}
+                                className="w-8 h-8 rounded-lg border border-[#C2CDD9] bg-white hover:bg-slate-100 disabled:opacity-40 inline-flex items-center justify-center text-[#263449] cursor-pointer"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                              </button>
+                              <input
+                                type="number"
+                                min={0}
+                                max={Math.max(0, availableWaterStock - complimentaryWaterBottles)}
+                                value={chargeableWaterBottles}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                onChange={e => {
+                                  const maxAllowed = Math.max(0, availableWaterStock - complimentaryWaterBottles);
+                                  const parsed = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                                  setChargeableWaterBottles(Math.min(maxAllowed, parsed));
+                                }}
+                                className="w-16 py-1.5 px-2 text-center border border-[#DCE3EC] rounded-lg text-xs font-mono font-extrabold bg-white text-[#263449]"
+                              />
+                              <button
+                                type="button"
+                                disabled={totalRequestedWaterBottles >= availableWaterStock}
+                                onClick={() =>
+                                  setChargeableWaterBottles(prev =>
+                                    Math.min(Math.max(0, availableWaterStock - complimentaryWaterBottles), prev + 1)
+                                  )
+                                }
+                                className="w-8 h-8 rounded-lg border border-[#C2CDD9] bg-white hover:bg-slate-100 disabled:opacity-40 inline-flex items-center justify-center text-[#263449] cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-mono font-bold text-[#8B691E] uppercase">Rate ₹</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={chargeableWaterRateInput}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                onChange={e => {
+                                  waterRateManuallyEditedRef.current = true;
+                                  setChargeableWaterRateInput(e.target.value);
+                                }}
+                                placeholder={String(defaultInventoryWaterRate)}
+                                className="w-20 py-1.5 px-2 border border-[#C49A3A]/70 rounded-lg text-xs font-mono font-extrabold bg-white text-[#263449]"
+                                title="Editable chargeable water bottle price (defaults from Inventory)"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* LIVE INVENTORY DEDUCTION FOOTER */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] font-mono text-slate-600 border-t border-[#DCE3EC]/70">
+                        <span>
+                          Total Issued: <strong className="text-[#263449]">{totalRequestedWaterBottles}</strong> bottle{totalRequestedWaterBottles === 1 ? '' : 's'} ({complimentaryWaterBottles} Free + {chargeableWaterBottles} Chargeable)
+                        </span>
+                        <span>
+                          Stock after Check-In:{' '}
+                          <strong className={availableWaterStock - totalRequestedWaterBottles <= 5 ? 'text-amber-700' : 'text-emerald-700'}>
+                            {Math.max(0, availableWaterStock - totalRequestedWaterBottles)}
+                          </strong>
+                        </span>
+                      </div>
+                    </section>
+                  )}
 
                   {/* AUXILIARY & CUSTOM CHARGES */}
                   <section className="bg-white border border-[#DCE3EC] rounded-2xl shadow-xs overflow-hidden">
@@ -10012,6 +10552,8 @@ export default function CheckInFormView({
                               ? 'Confirm Advance Booking'
                               : selectedBooking
                               ? `Reserve & Check-In Now (${selectedBooking.id})`
+                              : activeSessionBookingId
+                              ? `Reserve & Check-In Now (${activeSessionBookingId})`
                               : 'Reserve & Check-In Now'}
                           </button>
 

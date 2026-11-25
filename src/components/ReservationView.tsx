@@ -1069,17 +1069,21 @@ export default function ReservationView({
     }
   };
 
+  const handleCheckOutDateBlur = () => {
+    if (checkOutDate && checkInDate && checkOutDate < checkInDate) {
+      setCheckOutDate(checkInDate);
+      showToast('Departure date cannot be before Arrival date.', 'warning');
+    }
+  };
+
   const handleCheckOutDateChange = (val: string) => {
     const prevNights = calNightsForDates(checkInDate, checkOutDate);
-    let cleanVal = val;
-    if (cleanVal && checkInDate && cleanVal < checkInDate) {
-      cleanVal = checkInDate;
-      showToast('Departure date cannot be before Arrival date.', 'warning');
-      setCheckOutDate(cleanVal);
+    setCheckOutDate(val);
+    if (!val || (checkInDate && val < checkInDate)) {
+      // Allow mid-typing intermediate digits (e.g. typing "2" then "1" for 21st) without snapping back
       return;
     }
-    setCheckOutDate(cleanVal);
-    const nightsCount = calNightsForDates(checkInDate, cleanVal);
+    const nightsCount = calNightsForDates(checkInDate, val);
 
     if (editingBooking) {
       if (nightsCount !== prevNights && prevNights > 0 && bookingPrice > 0) {
@@ -2392,6 +2396,15 @@ export default function ReservationView({
     const thisMonthPrefix = todayStr.slice(0, 7);
 
     const list = enrichedReservations.filter(item => {
+      // Reservations List shows ONLY actual reservations (Draft, Confirmed, Upcoming, Cancelled, No-Show).
+      // Once checked in or checked out, stays move cleanly to In-House Guest / Checked Out Rooms.
+      if (
+        item.isStandaloneCheckin ||
+        item.canonicalStatus === 'Checked-In' ||
+        item.canonicalStatus === 'Checked-Out'
+      ) {
+        return false;
+      }
       const bk = item.booking;
       const matchesSearch =
         !q ||
@@ -2428,7 +2441,7 @@ export default function ReservationView({
       const inDate = String(bk.checkInDate || '').slice(0, 10);
       const outDate = String(bk.checkOutDate || inDate).slice(0, 10);
       if (dateFilterType === 'Today') {
-        matchesDate = inDate === todayStr || (inDate <= todayStr && outDate >= todayStr && item.canonicalStatus === 'Checked-In');
+        matchesDate = inDate === todayStr;
       } else if (dateFilterType === 'Yesterday') {
         matchesDate = inDate === yesterdayStr;
       } else if (dateFilterType === 'Date') {
@@ -3831,8 +3844,6 @@ export default function ReservationView({
             <option value="Draft">Draft</option>
             <option value="Confirmed">Confirmed</option>
             <option value="Upcoming">Upcoming</option>
-            <option value="Checked-In">Checked-In</option>
-            <option value="Checked-Out">Checked-Out</option>
             <option value="Cancelled">Cancelled</option>
             <option value="No-Show">No-Show</option>
           </select>
@@ -4846,10 +4857,10 @@ export default function ReservationView({
                     </div>
                     <input
                       type="date"
-                      min={editingBooking || allowBackDatedCheckIn ? undefined : (checkInDate || getTodayDateStr())}
                       value={checkOutDate}
                       onWheel={(e) => e.currentTarget.blur()}
                       onChange={(e) => handleCheckOutDateChange(e.target.value)}
+                      onBlur={handleCheckOutDateBlur}
                       className="w-full h-9 px-2.5 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-mono bg-white text-luxury-brown-900"
                     />
                   </div>
