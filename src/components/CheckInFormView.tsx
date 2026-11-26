@@ -21,6 +21,7 @@ import { requestAtomicGrcNumber, toGrcPrintData } from '../utils/stayBilling';
 import { collectStayCharges } from '../utils/folioCollector';
 import { defaultGrcTerms, renderGrcHtml } from '../utils/printTemplates';
 import { openPrintWindow } from '../utils/printDocument';
+import { getPmsData } from '../utils/dummyData';
 import {
   useHotelPaymentModes,
   buildPaymentOptions,
@@ -9615,7 +9616,35 @@ export default function CheckInFormView({
                           />
                           {guestSearchTerm.trim().length >= 2 && (() => {
                             const q = guestSearchTerm.trim().toLowerCase();
+                            const activeHotelKey = (hotelSettings as any)?.id || 'default';
+                            const registeredGuestProfiles: any[] = [];
+                            try {
+                              const pmsHotels: any[] = (getPmsData() as any)?.hotels || [];
+                              const hObj = pmsHotels.find((h) => h && h.id === activeHotelKey);
+                              if (Array.isArray(hObj?.customGuests)) registeredGuestProfiles.push(...hObj.customGuests);
+                            } catch {}
+                            try {
+                              const lsRaw = localStorage.getItem(`hotel_custom_registered_guests_${activeHotelKey}`);
+                              if (lsRaw) {
+                                const parsed = JSON.parse(lsRaw);
+                                if (Array.isArray(parsed)) registeredGuestProfiles.push(...parsed);
+                              }
+                            } catch {}
                             const matches = [
+                              ...registeredGuestProfiles.map((rg: any) => ({
+                                id: rg.id || `rg-${rg.name}`,
+                                name: rg.name || '',
+                                mobile: rg.mobile || '',
+                                email: rg.email || '',
+                                address: rg.address || '',
+                                city: rg.city || '',
+                                state: rg.state || '',
+                                country: rg.nationality || 'India',
+                                idType: rg.passportNumber ? 'Passport' : 'Aadhaar',
+                                idNumber: rg.aadhaarNumber || rg.passportNumber || '',
+                                companyName: rg.companyName || '',
+                                gstNumber: rg.gstNumber || '',
+                              })),
                               ...checkins.map(c => ({
                                 id: c.id,
                                 name: c.guestName,
@@ -9627,6 +9656,8 @@ export default function CheckInFormView({
                                 country: c.country || 'India',
                                 idType: c.idType || 'Aadhaar',
                                 idNumber: c.idNumber || c.aadhaarNumber || c.passportNumber || '',
+                                companyName: c.companyName || '',
+                                gstNumber: c.gstNumber || '',
                               })),
                               ...bookings.map(b => ({
                                 id: b.id,
@@ -9639,16 +9670,19 @@ export default function CheckInFormView({
                                 country: 'India',
                                 idType: b.passportNumber ? 'Passport' : 'Aadhaar',
                                 idNumber: b.aadhaarNumber || b.passportNumber || '',
+                                companyName: b.companyName || '',
+                                gstNumber: b.gstNumber || '',
                               })),
                             ]
                               .filter(
                                 (item, idx, arr) =>
+                                  item.name &&
                                   (item.name.toLowerCase().includes(q) ||
                                     item.mobile.toLowerCase().includes(q) ||
                                     item.email.toLowerCase().includes(q)) &&
                                   arr.findIndex(x => x.mobile === item.mobile && x.name === item.name) === idx
                               )
-                              .slice(0, 5);
+                              .slice(0, 8);
                             if (matches.length === 0) return null;
                             return (
                               <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#C2CDD9] rounded-xl shadow-lg z-30 divide-y divide-slate-100 overflow-hidden">
@@ -9664,12 +9698,14 @@ export default function CheckInFormView({
                                       if (m.city) setCity(m.city);
                                       if (m.state) setState(m.state);
                                       if (m.country) setCountry(m.country);
+                                      if (m.companyName) setCompanyName(m.companyName);
+                                      if (m.gstNumber) setGstNumber(m.gstNumber);
                                       if (m.idNumber) {
                                         setIdType(m.idType);
                                         setIdNumber(m.idNumber);
                                       }
                                       setGuestSearchTerm('');
-                                      showToast(`Auto-filled returning guest profile: ${m.name}`, 'success');
+                                      showToast(`Auto-filled guest profile: ${m.name}`, 'success');
                                     }}
                                     className="w-full text-left px-3 py-2 hover:bg-[#FDF8ED] text-xs cursor-pointer"
                                   >

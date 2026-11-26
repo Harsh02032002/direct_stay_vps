@@ -8,6 +8,8 @@ import {
   FileCheck, Printer, Receipt
 } from 'lucide-react';
 import { showToast } from '../utils/toast';
+import { getPmsData, savePmsData } from '../utils/dummyData';
+import { syncAllToSupabase } from '../utils/supabaseClient';
 
 export interface RegisteredGuest {
   id: string;
@@ -73,12 +75,28 @@ export default function GuestUserListView({
   const storageKey = `hotel_custom_registered_guests_${hotelId || 'default'}`;
 
   const [customGuests, setCustomGuests] = useState<RegisteredGuest[]>(() => {
+    const merged: RegisteredGuest[] = [];
+    const seen = new Set<string>();
+    const addUnique = (arr: any) => {
+      if (!Array.isArray(arr)) return;
+      for (const g of arr) {
+        if (!g || !g.name) continue;
+        const k = String(g.id || `${g.name}-${g.mobile || ''}`).toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        merged.push(g);
+      }
+    };
+    try {
+      const pmsHotels: any[] = (getPmsData() as any)?.hotels || [];
+      const matchedHotel = pmsHotels.find((h) => h && h.id === hotelId);
+      addUnique(matchedHotel?.customGuests);
+    } catch {}
     try {
       const saved = localStorage.getItem(storageKey);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+      if (saved) addUnique(JSON.parse(saved));
+    } catch {}
+    return merged;
   });
 
   // Modal States
@@ -120,7 +138,7 @@ export default function GuestUserListView({
   const [guestFilterStartDate, setGuestFilterStartDate] = useState<string>(getOffsetGuestIso(-7));
   const [guestFilterEndDate, setGuestFilterEndDate] = useState<string>(getTodayGuestIso());
 
-  // Save custom guests to localStorage
+  // Save custom guests to BOTH localStorage and live hotel record in DB (syncs across devices + Check-In search)
   const handleSaveCustomGuests = (updated: RegisteredGuest[]) => {
     setCustomGuests(updated);
     try {
@@ -128,6 +146,18 @@ export default function GuestUserListView({
     } catch (e) {
       console.error('Failed to save guest to localStorage', e);
     }
+    try {
+      if (hotelId) {
+        const pmsHotels: any[] = (getPmsData() as any)?.hotels || [];
+        if (Array.isArray(pmsHotels) && pmsHotels.length > 0) {
+          const nextHotels = pmsHotels.map((h) =>
+            h && h.id === hotelId ? { ...h, customGuests: updated } : h
+          );
+          savePmsData({ hotels: nextHotels });
+          syncAllToSupabase({ hotels: nextHotels }).catch(() => {});
+        }
+      }
+    } catch {}
   };
 
   // Compile full guest directory from checkins, bookings, and custom guests

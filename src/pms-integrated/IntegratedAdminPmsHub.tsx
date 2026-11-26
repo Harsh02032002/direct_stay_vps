@@ -3021,6 +3021,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     addedServices: BookingRecord['otherServices'];
     updatedDiscount: number;
     withGst?: boolean;
+    roomRateIncludesGst?: boolean;
     updatedGstRate: number;
     paymentsToRecord: Array<{
       amount: number;
@@ -3126,7 +3127,10 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       laundryOrders: appLaundryOrders,
       waterBottles: appWaterBottles,
       rooms: appRooms,
-      settings: billSettings,
+      settings:
+        payload.roomRateIncludesGst !== undefined
+          ? { ...billSettings, roomRateIncludesGst: payload.roomRateIncludesGst }
+          : billSettings,
       additionalCharges,
       additionalPayments,
       gstEnabledOverride: effectiveGstEnabled,

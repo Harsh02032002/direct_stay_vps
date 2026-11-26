@@ -50,6 +50,7 @@ interface CheckoutClearanceModalProps {
     addedServices: OtherServiceItem[];
     updatedDiscount: number;
     withGst: boolean;
+    roomRateIncludesGst?: boolean;
     updatedGstRate: number;
     paymentsToRecord: Array<{ amount: number; method: PaymentMethod; referenceNo: string; notes: string }>;
     refundAmount: number;
@@ -176,6 +177,13 @@ export default function CheckoutClearanceModal({
       ? existingInvHasGst
       : Boolean(booking.gstInvoice && Number(booking.taxRate ?? configuredRoomGst) > 0)
   );
+  const [isInclusiveGst, setIsInclusiveGst] = useState<boolean>(() =>
+    Boolean(
+      (rawCheckin as any)?.roomRateIncludesGst ??
+        (rawBooking as any)?.roomRateIncludesGst ??
+        settings.roomRateIncludesGst
+    )
+  );
 
   // Payment Clearance State (Single, Split Payment, or Refund)
   const [isSplitPayment, setIsSplitPayment] = useState<boolean>(false);
@@ -207,6 +215,13 @@ export default function CheckoutClearanceModal({
         const bRate = booking.taxRate !== undefined ? Number(booking.taxRate) : configuredRoomGst;
         setIsGstEnabled(Boolean(booking.gstInvoice && bRate > 0));
       }
+      setIsInclusiveGst(
+        Boolean(
+          (rawCheckin as any)?.roomRateIncludesGst ??
+            (rawBooking as any)?.roomRateIncludesGst ??
+            settings.roomRateIncludesGst
+        )
+      );
       setIsSplitPayment(false);
       setExtraSplitRows([]);
       setCoMarkPaid(false);
@@ -244,7 +259,7 @@ export default function CheckoutClearanceModal({
         laundryOrders,
         waterBottles,
         rooms,
-        settings,
+        settings: { ...settings, roomRateIncludesGst: isInclusiveGst },
         additionalCharges: additionalBillCharges,
         gstEnabledOverride: isGstEnabled,
         discountOverride: discount,
@@ -260,6 +275,7 @@ export default function CheckoutClearanceModal({
       settings,
       additionalBillCharges,
       isGstEnabled,
+      isInclusiveGst,
       discount,
     ]
   );
@@ -405,6 +421,7 @@ export default function CheckoutClearanceModal({
       addedServices, // ONLY newly added checkout charges!
       updatedDiscount: r2(discount),
       withGst: isGstEnabled,
+      roomRateIncludesGst: isGstEnabled && isInclusiveGst,
       updatedGstRate: isGstEnabled ? configuredRoomGst : 0,
       paymentsToRecord,
       refundAmount: r2(refundAmount),
@@ -846,35 +863,75 @@ export default function CheckoutClearanceModal({
                       </p>
                     </div>
                   ) : (
-                    <label className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white border border-slate-200 cursor-pointer">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={isGstEnabled}
-                          onChange={(e) => setIsGstEnabled(e.target.checked)}
-                          className="w-4 h-4 accent-emerald-600 rounded"
-                        />
-                        <div>
-                          <span className="text-xs font-extrabold text-slate-900 block">
-                            GST Invoice
-                          </span>
-                          <span className="text-[10px] text-slate-500">
-                            {isGstEnabled
-                              ? `Settings GST: ${settings.roomGstRate}% Room â€¢ ${settings.foodGstRate}% Food`
-                              : '0% Bill of Supply (Without GST)'}
-                          </span>
-                        </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono uppercase font-bold text-slate-600">
+                          GST Billing Mode (3 Options)
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border ${
+                            !isGstEnabled
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : isInclusiveGst
+                              ? 'bg-blue-50 text-blue-800 border-blue-200'
+                              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          }`}
+                        >
+                          {!isGstEnabled
+                            ? 'Non-GST (0%)'
+                            : isInclusiveGst
+                            ? `Including GST (${configuredRoomGst}%)`
+                            : `GST Extra (+${configuredRoomGst}%)`}
+                        </span>
                       </div>
-                      <span
-                        className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border ${
-                          isGstEnabled
-                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                            : 'bg-amber-50 text-amber-800 border-amber-200'
-                        }`}
-                      >
-                        {isGstEnabled ? `${configuredRoomGst}% GST` : '0% No GST'}
-                      </span>
-                    </label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsGstEnabled(false);
+                            setIsInclusiveGst(false);
+                          }}
+                          className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
+                            !isGstEnabled
+                              ? 'bg-amber-50 border-amber-400 text-amber-950 font-extrabold shadow-2xs'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold'
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold">Non-GST</div>
+                          <div className="text-[9px] opacity-75">0% Tax</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsGstEnabled(true);
+                            setIsInclusiveGst(false);
+                          }}
+                          className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
+                            isGstEnabled && !isInclusiveGst
+                              ? 'bg-emerald-50 border-emerald-400 text-emerald-950 font-extrabold shadow-2xs'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold'
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold">GST Extra</div>
+                          <div className="text-[9px] opacity-75">+{configuredRoomGst}% on top</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsGstEnabled(true);
+                            setIsInclusiveGst(true);
+                          }}
+                          className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
+                            isGstEnabled && isInclusiveGst
+                              ? 'bg-blue-50 border-blue-400 text-blue-950 font-extrabold shadow-2xs'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold'
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold">Including GST</div>
+                          <div className="text-[9px] opacity-75">Reverse {configuredRoomGst}% split</div>
+                        </button>
+                      </div>
+                    </div>
                   )}
 
                   {isGstEnabled && gstAmount > 0 ? (
