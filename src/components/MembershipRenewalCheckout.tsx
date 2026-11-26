@@ -248,7 +248,11 @@ export default function MembershipRenewalCheckout({
   const sgstAmount = Number((gstAmount / 2).toFixed(2));
   const totalPayable = baseAmount + gstAmount;
 
-  const upiId = systemWebsite?.paymentSettings?.upiId?.trim() || 'directstay@upi';
+  const rawConfiguredUpi = String(systemWebsite?.paymentSettings?.upiId || '').trim();
+  const upiId =
+    !rawConfiguredUpi || rawConfiguredUpi.toLowerCase() === 'directstay@upi'
+      ? '7684023584-4@ybl'
+      : rawConfiguredUpi;
   const upiPayeeName =
     systemWebsite?.paymentSettings?.upiPayeeName?.trim() ||
     systemWebsite?.businessName ||
@@ -435,116 +439,47 @@ export default function MembershipRenewalCheckout({
                   </span>
                 </div>
 
-                {/* Payment Method Switcher */}
-                <div className="grid grid-cols-3 gap-1.5 text-[10px] font-mono font-bold">
-                  {(['UPI QR / Direct UPI', 'Bank Transfer (NEFT/IMPS)', 'Payment Gateway'] as const).map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setPaymentMethod(m)}
-                      className={`py-2 px-2 rounded-xl border transition-all cursor-pointer text-center ${
-                        paymentMethod === m
-                          ? 'bg-luxury-brown-950 text-luxury-gold-400 border-luxury-brown-950 shadow-sm'
-                          : 'bg-white text-luxury-brown-700 border-luxury-brown-200 hover:bg-luxury-beige-50'
-                      }`}
-                    >
-                      {m === 'UPI QR / Direct UPI' ? 'UPI & QR' : m === 'Bank Transfer (NEFT/IMPS)' ? 'Bank NEFT' : 'Gateway'}
-                    </button>
-                  ))}
-                </div>
-
-                {paymentMethod === 'UPI QR / Direct UPI' && (
-                  <div className="space-y-3">
-                    <div className="bg-white rounded-2xl border border-luxury-brown-200 p-4 flex flex-col items-center text-center space-y-2.5 shadow-xs">
-                      <img
-                        src={upiQrUrl}
-                        referrerPolicy="no-referrer"
-                        onError={() => {
-                          if (qrProviderIdx < qrUrls.length - 1) setQrProviderIdx(qrProviderIdx + 1);
-                        }}
-                        alt={`DirectStay UPI QR Code for ${selectedPkg?.name}`}
-                        className="w-44 h-44 rounded-xl border border-luxury-brown-100 object-contain bg-white"
-                      />
-                      <div>
-                        <p className="text-[11px] font-bold text-luxury-brown-950">{upiPayeeName}</p>
-                        <div className="inline-flex items-center gap-1.5 mt-1 px-2.5 py-1 rounded-lg bg-luxury-beige-50 border border-luxury-brown-200 text-[11px] font-mono">
-                          <span>{upiId}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleCopy(upiId, 'UPI ID')}
-                            className="text-luxury-gold-700 hover:text-luxury-brown-950 cursor-pointer"
-                            title="Copy UPI ID"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-luxury-brown-500">
-                        Scan with Google Pay, PhonePe, Paytm, BHIM or any UPI app for{' '}
-                        <strong className="text-luxury-brown-950">₹{totalPayable.toLocaleString('en-IN')}</strong>
-                      </p>
-                    </div>
-
-                    <a
-                      href={upiDeepLink}
-                      className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition-all"
-                    >
-                      <Smartphone className="w-4 h-4" />
-                      <span>Open UPI App (Pay ₹{totalPayable.toLocaleString('en-IN')})</span>
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                    </a>
-                  </div>
-                )}
-
-                {paymentMethod === 'Bank Transfer (NEFT/IMPS)' && (
-                  <div className="bg-white rounded-2xl border border-luxury-brown-200 p-4 space-y-2 text-xs">
-                    <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase font-bold text-luxury-gold-700">
-                      <Building2 className="w-3.5 h-3.5" /> Direct Bank Transfer Details
-                    </div>
-                    <div className="space-y-1.5 font-mono text-[11px]">
-                      <p>
-                        <span className="text-luxury-brown-500">Account Name:</span>{' '}
-                        <strong>{systemWebsite?.paymentSettings?.bankAccountName || upiPayeeName}</strong>
-                      </p>
-                      <p>
-                        <span className="text-luxury-brown-500">Bank:</span>{' '}
-                        <strong>{systemWebsite?.paymentSettings?.bankName || 'Contact Billing Desk on WhatsApp'}</strong>
-                      </p>
-                      <p>
-                        <span className="text-luxury-brown-500">Account No:</span>{' '}
-                        <strong>{systemWebsite?.paymentSettings?.bankAccountNumber || 'Available on Request'}</strong>
-                      </p>
-                      <p>
-                        <span className="text-luxury-brown-500">IFSC Code:</span>{' '}
-                        <strong>{systemWebsite?.paymentSettings?.bankIfsc || 'Available on Request'}</strong>
-                      </p>
-                      <p className="pt-1 text-emerald-700 font-bold">
-                        Exact Payable (incl. {gstRate}% GST): ₹{totalPayable.toLocaleString('en-IN')}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {paymentMethod === 'Payment Gateway' && (
-                  <div className="bg-white rounded-2xl border border-luxury-brown-200 p-4 space-y-2.5 text-xs">
-                    <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase font-bold text-luxury-gold-700">
-                      <CreditCard className="w-3.5 h-3.5" /> Supported Payment Gateway Options
-                    </div>
-                    <p className="text-luxury-brown-700 leading-relaxed">
-                      {systemWebsite?.paymentSettings?.supportGatewayNote ||
-                        'Online Card / NetBanking payment links are issued directly by our billing desk. Request an instant verified payment link via WhatsApp or use Direct UPI QR above for zero transaction fee.'}
-                    </p>
-                    <WhatsAppSupportWidget
-                      variant="inline-button"
-                      phone={whatsappNumber}
-                      context="renewal"
-                      hotelName={hotel.name}
-                      packageName={selectedPkg?.name}
-                      label="Request Instant Gateway Link on WhatsApp"
-                      className="w-full"
+                {/* Direct UPI & QR Only (No Card / Bank / Gateway Tabs) */}
+                <div className="space-y-3">
+                  <div className="bg-white rounded-2xl border border-luxury-brown-200 p-4 flex flex-col items-center text-center space-y-2.5 shadow-xs">
+                    <img
+                      src={upiQrUrl}
+                      referrerPolicy="no-referrer"
+                      onError={() => {
+                        if (qrProviderIdx < qrUrls.length - 1) setQrProviderIdx(qrProviderIdx + 1);
+                      }}
+                      alt={`DirectStay UPI QR Code for ${selectedPkg?.name}`}
+                      className="w-44 h-44 rounded-xl border border-luxury-brown-100 object-contain bg-white"
                     />
+                    <div>
+                      <p className="text-[11px] font-bold text-luxury-brown-950">{upiPayeeName}</p>
+                      <div className="inline-flex items-center gap-1.5 mt-1 px-2.5 py-1 rounded-lg bg-luxury-beige-50 border border-luxury-brown-200 text-[11px] font-mono">
+                        <span>{upiId}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(upiId, 'UPI ID')}
+                          className="text-luxury-gold-700 hover:text-luxury-brown-950 cursor-pointer"
+                          title="Copy UPI ID"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-luxury-brown-500">
+                      Scan with Google Pay, PhonePe, Paytm, BHIM or any UPI app for{' '}
+                      <strong className="text-luxury-brown-950">₹{totalPayable.toLocaleString('en-IN')}</strong>
+                    </p>
                   </div>
-                )}
+
+                  <a
+                    href={upiDeepLink}
+                    className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition-all"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    <span>Open UPI App (Pay ₹{totalPayable.toLocaleString('en-IN')})</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </a>
+                </div>
               </div>
 
               {/* Right: Order Summary + Verified UTR Submission */}

@@ -5,7 +5,7 @@ import {
   Upload, Hotel, LogIn, ArrowRight, Star, HelpCircle, Phone, Mail, 
   MapPin, Globe, CheckCircle, RefreshCw, BarChart3, Users, Landmark,
   Quote, Menu, X, Calendar, BedDouble, Receipt, FileSpreadsheet, BookOpen, Home,
-  Search, ArrowLeft, Share2, CheckCircle2, MessageSquare, ExternalLink
+  Search, ArrowLeft, Share2, CheckCircle2, MessageSquare, ExternalLink, Copy, QrCode, Smartphone
 } from 'lucide-react';
 import { Hotel as HotelType, Room, Staff, HotelPolicy, AuditLog, SystemWebsiteConfig, CustomPage, WebsiteBlogPost } from '../types';
 import { INITIAL_SYSTEM_WEBSITE, INITIAL_CUSTOM_PAGES, getPmsData } from '../utils/dummyData';
@@ -970,6 +970,43 @@ export default function FrontWebsite({
   const sgstAmount = Number((planDetails.price * 0.09).toFixed(2));
   const totalAmount = planDetails.price + gstAmount;
 
+  // Direct UPI Onboarding Checkout state (UPI Only — 7684023584-4@ybl)
+  const [onboardUtrRef, setOnboardUtrRef] = useState('');
+  const [onboardPayerUpi, setOnboardPayerUpi] = useState('');
+  const [onboardUpiError, setOnboardUpiError] = useState('');
+  const [onboardQrIdx, setOnboardQrIdx] = useState(0);
+  const [onboardCopiedKey, setOnboardCopiedKey] = useState<string | null>(null);
+
+  const rawConfiguredUpi = String(systemWebsite?.paymentSettings?.upiId || '').trim();
+  const onboardUpiId =
+    !rawConfiguredUpi || rawConfiguredUpi.toLowerCase() === 'directstay@upi'
+      ? '7684023584-4@ybl'
+      : rawConfiguredUpi;
+  const onboardUpiPayee =
+    systemWebsite?.paymentSettings?.upiPayeeName?.trim() ||
+    systemWebsite?.businessName ||
+    'DirectStay Hospitality SaaS';
+  const onboardTxNote = `DirectStay ${planDetails.name} - ${hotelName.trim() || 'New Hotel'}`;
+  const onboardUpiLink = `upi://pay?pa=${encodeURIComponent(onboardUpiId)}&pn=${encodeURIComponent(
+    onboardUpiPayee
+  )}&am=${totalAmount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(onboardTxNote.slice(0, 60))}`;
+  const onboardQrUrls = [
+    `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&format=png&data=${encodeURIComponent(onboardUpiLink)}`,
+    `https://quickchart.io/qr?size=220&margin=2&text=${encodeURIComponent(onboardUpiLink)}`,
+  ];
+  const onboardQrUrl = onboardQrUrls[Math.min(onboardQrIdx, onboardQrUrls.length - 1)];
+
+  const handleCopyOnboardValue = (val: string, key: string, label: string) => {
+    try {
+      navigator.clipboard.writeText(val);
+      setOnboardCopiedKey(key);
+      showToast(`${label} copied`, 'success');
+      setTimeout(() => setOnboardCopiedKey((prev) => (prev === key ? null : prev)), 2000);
+    } catch {
+      showToast(`${label}: ${val}`, 'info');
+    }
+  };
+
   // Normalized phone & WhatsApp helpers
   const rawSupportDigits = String(systemWebsite.supportPhone || '7978563771').replace(/\D/g, '');
   const formattedSupportPhone = rawSupportDigits.startsWith('91') && rawSupportDigits.length === 12
@@ -983,8 +1020,17 @@ export default function FrontWebsite({
   const rawWhatsappInput = String(systemWebsite.whatsappNumber || systemWebsite.supportPhone || '7978563771').replace(/\D/g, '');
   const whatsappNumberDigits = rawWhatsappInput.length === 10 ? `91${rawWhatsappInput}` : (rawWhatsappInput || supportDialDigits);
   const telHref = `tel:+${supportDialDigits}`;
-  const defaultWhatsappSalesMsg =
-    'Hi, I am interested in trying DirectStay PMS for my hotel. Please share more details about the free trial and product demonstration.';
+  const defaultWhatsappSalesMsg = [
+    'Hello DirectStay Team,',
+    '',
+    'I visited directstay.online and would like to know more about DirectStay Hotel PMS & Mobile App.',
+    '',
+    '• Hotel / Property Name: ',
+    '• City & Total Rooms: ',
+    '• Looking for: 7-Day Free Trial / Live Demo / Pricing Details',
+    '',
+    'Please connect with me. Thank you!',
+  ].join('\n');
   const whatsappHref = `https://wa.me/${whatsappNumberDigits}?text=${encodeURIComponent(
     defaultWhatsappSalesMsg
   )}`;
@@ -1161,6 +1207,16 @@ export default function FrontWebsite({
 
   const handleOnboardSubmit = () => {
     if (!hotelName.trim() || isSubmittingOnboard || currentStep === 'processing') return;
+
+    if (selectedPlan !== 'Trial') {
+      const cleanUtr = onboardUtrRef.trim();
+      if (!cleanUtr || cleanUtr.length < 6) {
+        setOnboardUpiError('Please pay via UPI (7684023584-4@ybl) and enter your 12-digit UTR / UPI Transaction Reference Number (minimum 6 characters).');
+        showToast('Enter UPI UTR / Transaction Reference Number to continue', 'warning');
+        return;
+      }
+      setOnboardUpiError('');
+    }
     
     setIsSubmittingOnboard(true);
     setCurrentStep('processing');
@@ -1216,7 +1272,34 @@ export default function FrontWebsite({
       ownerUsername: `${(regUsername.trim() || 'admin')}_owner`,
       ownerPassword: sha256(regPassword),
       emailSettings: { host: 'smtp.gmail.com', port: 587, user: `notifications@${hotelName.toLowerCase().replace(/\s+/g, '')}.com`, pass: 'securepass', secure: false },
-      status: 'Pending'
+      status: 'Pending',
+      ...(selectedPlan !== 'Trial'
+        ? {
+            renewalRequest: {
+              id: `ONB-PAY-${Date.now()}`,
+              hotelId,
+              hotelName: hotelName.trim(),
+              requestedPackageId: `plan-${selectedPlan.toLowerCase()}`,
+              requestedPackageName: planDetails.name,
+              requestedPlan: selectedPlan,
+              requestedAmount: totalAmount,
+              baseAmount: planDetails.price,
+              gstRate: 18,
+              gstAmount,
+              cgstAmount,
+              sgstAmount,
+              totalAmount,
+              paymentMethod: 'UPI',
+              upiIdUsed: onboardUpiId,
+              transactionReference: onboardUtrRef.trim(),
+              notes: onboardPayerUpi.trim() ? `Onboarding UPI Payment • Payer: ${onboardPayerUpi.trim()}` : 'Onboarding UPI Payment',
+              status: 'Pending' as const,
+              paymentVerificationStatus: 'Pending Verification' as const,
+              requestedAt: new Date().toISOString(),
+              requestedBy: ownerFullName.trim() || regUsername.trim() || 'Hotel Owner',
+            },
+          }
+        : {}),
     };
 
     // Start new hotel with zero static rooms (admin adds rooms manually)
@@ -4848,7 +4931,7 @@ export default function FrontWebsite({
                 <div className="space-y-1">
                   <span className="text-xs uppercase font-mono text-luxury-gold-300 font-bold">Secure SaaS Checkout</span>
                   <h4 className="text-base font-serif font-medium text-white">Consolidated Subscription Invoice</h4>
-                  <p className="text-xs text-luxury-brown-200">Review your plan price including legally calculated 5% GST (2.5% CGST + 2.5% SGST).</p>
+                  <p className="text-xs text-luxury-brown-200">Review your plan price including legally calculated 18% GST (9% CGST + 9% SGST).</p>
                 </div>
 
                 {/* Invoice Receipt Panel */}
@@ -4891,23 +4974,143 @@ export default function FrontWebsite({
                   </div>
                 </div>
 
-                {/* UPI/Mock gateway details */}
-                <div className="p-4 bg-luxury-gold-500/5 border border-luxury-gold-500/10 rounded-xl space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-mono text-luxury-gold-400 font-bold">
-                    <CreditCard className="w-4 h-4" /> Secure Sandbox Payment Portal
+                {/* Direct UPI Payment Only (7684023584-4@ybl — No Card/Gateway) */}
+                {selectedPlan === 'Trial' ? (
+                  <div className="p-4 bg-luxury-gold-500/5 border border-luxury-gold-500/15 rounded-xl space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-mono text-luxury-gold-400 font-bold">
+                      <ShieldCheck className="w-4 h-4" /> ₹0 — 7-Day Free Trial Activation
+                    </div>
+                    <p className="text-[11px] text-luxury-brown-200 leading-normal">
+                      No payment is required. Clicking launch registers your 7-day free trial tier instantly.
+                    </p>
                   </div>
-                  <p className="text-[10px] text-luxury-brown-200 leading-normal">
-                    {selectedPlan === 'Trial' 
-                      ? 'No actual transaction is scheduled. Clicking launch registers your 7-day free trial tier instantly.'
-                      : `Mock authorization: In production, this proxies to a secure UPI/Gateway. Click launch to simulate successful payment of ₹${totalAmount.toLocaleString()} and activate standard service.`}
-                  </p>
-                </div>
+                ) : (
+                  <div className="p-4 sm:p-5 bg-[#120C08]/95 border border-luxury-gold-500/30 rounded-2xl space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-xs font-mono text-luxury-gold-300 font-bold uppercase tracking-wider">
+                        <QrCode className="w-4 h-4 text-luxury-gold-400" /> Direct UPI Payment Only
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">
+                        0% UPI Fee • ₹{totalAmount.toLocaleString('en-IN')}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
+                      {/* Scannable UPI QR Code */}
+                      <div className="sm:col-span-5 flex flex-col items-center">
+                        <div className="bg-white p-2.5 rounded-xl shadow-md border-2 border-luxury-gold-500/40">
+                          <img
+                            src={onboardQrUrl}
+                            referrerPolicy="no-referrer"
+                            alt={`DirectStay UPI QR ${onboardUpiId}`}
+                            onError={() => {
+                              if (onboardQrIdx < onboardQrUrls.length - 1) {
+                                setOnboardQrIdx((idx) => idx + 1);
+                              }
+                            }}
+                            className="w-36 h-36 object-contain"
+                          />
+                        </div>
+                        <span className="text-[10px] font-mono text-luxury-brown-300 mt-1.5 text-center">
+                          Scan with GPay / PhonePe / Paytm / BHIM
+                        </span>
+                      </div>
+
+                      {/* Official UPI ID + Pay via UPI App */}
+                      <div className="sm:col-span-7 space-y-2.5 text-xs">
+                        <div className="bg-black/50 border border-luxury-gold-500/25 rounded-xl p-2.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="text-[10px] font-mono uppercase text-luxury-brown-300 block">
+                              Official UPI ID ({onboardUpiPayee})
+                            </span>
+                            <span className="font-mono font-bold text-luxury-gold-300 text-xs sm:text-sm break-all">
+                              {onboardUpiId}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyOnboardValue(onboardUpiId, 'upi', 'UPI ID')}
+                            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-luxury-gold-500/15 hover:bg-luxury-gold-500/25 border border-luxury-gold-500/35 text-luxury-gold-300 text-[11px] font-bold cursor-pointer"
+                          >
+                            {onboardCopiedKey === 'upi' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{onboardCopiedKey === 'upi' ? 'Copied' : 'Copy'}</span>
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <a
+                            href={onboardUpiLink}
+                            className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-colors"
+                          >
+                            <Smartphone className="w-3.5 h-3.5" />
+                            <span>Open UPI App (Pay ₹{totalAmount.toLocaleString('en-IN')})</span>
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyOnboardValue(String(totalAmount), 'amt', 'Payable Amount')}
+                            className="inline-flex items-center justify-center gap-1 py-2.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-luxury-gold-500/25 text-luxury-gold-200 font-mono text-[11px] font-bold cursor-pointer"
+                          >
+                            {onboardCopiedKey === 'amt' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>₹{totalAmount}</span>
+                          </button>
+                        </div>
+
+                        <a
+                          href={`https://wa.me/${whatsappNumberDigits}?text=${encodeURIComponent(
+                            `Hello DirectStay Billing, I am onboarding "${hotelName || 'my hotel'}" on ${planDetails.name} (₹${totalAmount} via UPI ${onboardUpiId}).`
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-[11px] text-emerald-300 hover:underline font-mono"
+                        >
+                          <ExternalLink className="w-3 h-3" /> Need help? WhatsApp Billing Desk (+91 7978563771)
+                        </a>
+                      </div>
+                    </div>
+
+                    {/* UTR / UPI Transaction Reference Input */}
+                    <div className="pt-3 border-t border-luxury-gold-500/15 space-y-2.5">
+                      <div>
+                        <label className="block text-[11px] font-mono uppercase text-luxury-gold-300 font-bold mb-1">
+                          UPI UTR / Transaction Reference Number *
+                        </label>
+                        <input
+                          type="text"
+                          value={onboardUtrRef}
+                          onChange={(e) => {
+                            setOnboardUtrRef(e.target.value);
+                            if (onboardUpiError) setOnboardUpiError('');
+                          }}
+                          placeholder="e.g. 432910485921 (12-digit UPI UTR Ref)"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-black/60 border border-luxury-gold-500/35 text-white font-mono text-xs focus:outline-none focus:border-luxury-gold-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-mono uppercase text-luxury-brown-300 mb-1">
+                          Your Payer UPI ID / Note (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={onboardPayerUpi}
+                          onChange={(e) => setOnboardPayerUpi(e.target.value)}
+                          placeholder="e.g. yourname@ybl or Paid via PhonePe"
+                          className="w-full px-3.5 py-2 rounded-xl bg-black/50 border border-luxury-gold-500/20 text-white text-xs focus:outline-none focus:border-luxury-gold-400"
+                        />
+                      </div>
+                      {onboardUpiError && (
+                        <p className="text-[11px] text-rose-400 font-semibold bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">
+                          {onboardUpiError}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Stepper buttons */}
-                <div className="pt-4 border-t border-luxury-gold-500/10 flex justify-between items-center">
+                <div className="pt-4 border-t border-luxury-gold-500/10 flex flex-wrap justify-between items-center gap-3">
                   <button 
                     onClick={() => setCurrentStep('inventory')}
-                    className="text-xs text-luxury-brown-300 hover:text-white"
+                    className="text-xs text-luxury-brown-300 hover:text-white cursor-pointer"
                   >
                     ← Back to Room Inventory
                   </button>
@@ -4915,9 +5118,9 @@ export default function FrontWebsite({
                     type="button"
                     onClick={handleOnboardSubmit}
                     disabled={isSubmittingOnboard}
-                    className="inline-flex items-center gap-2 py-3.5 px-8 bg-gradient-to-r from-luxury-gold-500 to-[#8C7355] text-luxury-brown-950 font-serif font-black text-sm rounded-xl shadow-xl shadow-luxury-gold-500/10 hover:scale-102 disabled:opacity-50"
+                    className="inline-flex items-center gap-2 py-3.5 px-6 sm:px-8 bg-gradient-to-r from-luxury-gold-500 to-[#8C7355] text-luxury-brown-950 font-serif font-black text-sm rounded-xl shadow-xl shadow-luxury-gold-500/10 hover:scale-102 disabled:opacity-50 cursor-pointer"
                   >
-                    <span>Launch Property PMS</span>
+                    <span>{selectedPlan === 'Trial' ? 'Launch Property PMS' : 'Submit UPI UTR & Launch PMS'}</span>
                     <Sparkles className="w-4 h-4 text-[#120C08]" />
                   </button>
                 </div>

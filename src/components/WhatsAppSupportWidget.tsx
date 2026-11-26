@@ -21,19 +21,61 @@ export function buildDirectStayWhatsappUrl(options: {
     return `https://wa.me/${digits}?text=${encodeURIComponent(options.customMessage.trim())}`;
   }
 
-  let message = 'Hello DirectStay Team, I would like to know more about DirectStay Hotel PMS.';
+  let message = [
+    'Hello DirectStay Team,',
+    '',
+    'I visited directstay.online and would like to know more about DirectStay Hotel PMS & Mobile App.',
+    '',
+    '• Hotel / Property Name: ',
+    '• City & Total Rooms: ',
+    '• Looking for: 7-Day Free Trial / Live Demo / Pricing Details',
+    '',
+    'Please connect with me. Thank you!',
+  ].join('\n');
+
   if (options.context === 'pricing') {
-    message = options.packageName
-      ? `Hello DirectStay Team, I am interested in the "${options.packageName}" plan on your Pricing page. Please share details and onboarding steps.`
-      : 'Hello DirectStay Team, I am viewing your Pricing plans and would like help choosing the right PMS package for my hotel.';
+    const planLine = options.packageName
+      ? `• Interested Plan: ${options.packageName}`
+      : '• Interested Plan: Need help choosing the best PMS package';
+    message = [
+      'Hello DirectStay Sales Team,',
+      '',
+      'I am exploring DirectStay Hotel Management Software pricing plans and would like complete details.',
+      '',
+      planLine,
+      '• Hotel / Property Name: ',
+      '• City & Total Rooms: ',
+      '• Requirement: Pricing / Live Demo / Onboarding Steps',
+      '',
+      'Please share the details at the earliest. Thank you!',
+    ].join('\n');
   } else if (options.context === 'renewal') {
-    const hotelLabel = options.hotelName ? ` for ${options.hotelName}` : '';
-    const pkgLabel = options.packageName ? ` (${options.packageName})` : '';
-    message = `Hello DirectStay Billing Team, I need assistance with my membership renewal${hotelLabel}${pkgLabel}.`;
+    const lines = [
+      'Hello DirectStay Billing Team,',
+      '',
+      'I need assistance with my DirectStay PMS membership renewal / UPI payment verification.',
+      '',
+    ];
+    if (options.hotelName) lines.push(`• Hotel Name: ${options.hotelName}`);
+    if (options.packageName) lines.push(`• Plan / Reference: ${options.packageName}`);
+    lines.push('• UPI UTR / Query: ');
+    lines.push('');
+    lines.push('Kindly verify and confirm activation. Thank you!');
+    message = lines.join('\n');
   } else if (options.context === 'dashboard') {
-    const hotelLabel = options.hotelName ? ` (${options.hotelName})` : '';
-    const pkgLabel = options.packageName ? ` — Current Plan: ${options.packageName}` : '';
-    message = `Hello DirectStay Support, I need assistance from my hotel dashboard${hotelLabel}${pkgLabel}.`;
+    const lines = [
+      'Hello DirectStay Support Team,',
+      '',
+      'I need support from my DirectStay Hotel Admin Dashboard.',
+      '',
+    ];
+    if (options.hotelName) lines.push(`• Hotel Name: ${options.hotelName}`);
+    if (options.packageName) lines.push(`• Current Plan: ${options.packageName}`);
+    lines.push('• Module / Query: (e.g. Check-In, Billing/GST, Rooms, POS, Mobile App)');
+    lines.push('• Details: ');
+    lines.push('');
+    lines.push('Please assist at the earliest. Thank you!');
+    message = lines.join('\n');
   }
 
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;

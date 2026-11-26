@@ -2834,7 +2834,7 @@ export default function SuperAdminHub({
                         <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">DirectStay UPI ID *</label>
                         <input
                           type="text"
-                          value={payCfg.upiId || 'directstay@upi'}
+                          value={payCfg.upiId || '7684023584-4@ybl'}
                           onChange={(e) => updatePay({ upiId: e.target.value })}
                           placeholder="merchant@upi"
                           className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono font-bold"
