@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { showToast } from '../utils/toast';
 import { syncAllToSupabase } from '../utils/supabaseClient';
-import { getConversionEventsLog, runSiteSeoAudit, DIRECTSTAY_DOMAIN } from '../utils/seoManager';
+import { getConversionEventsLog, runSiteSeoAudit, DIRECTSTAY_DOMAIN, PUBLIC_SEO_PAGES, PublicSeoPageKey } from '../utils/seoManager';
 
 export interface HotelAdminUser {
   id: string;
@@ -296,6 +296,7 @@ export default function SuperAdminHub({
 
   // SaaS Dashboard Payments Ledger & Website CMS Sub-Panels
   const [cmsSubPanel, setCmsSubPanel] = useState<'content' | 'navigation' | 'seo' | 'payments'>('content');
+  const [selectedBuiltInSeoKey, setSelectedBuiltInSeoKey] = useState<PublicSeoPageKey>('home');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<'All' | 'Pending' | 'Approved' | 'Rejected' | 'Failed'>('All');
   const [verifyingPaymentId, setVerifyingPaymentId] = useState<string | null>(null);
   const [newRedirectFrom, setNewRedirectFrom] = useState('');
@@ -2611,8 +2612,347 @@ export default function SuperAdminHub({
               const redirectsList: SeoRedirectRule[] = Array.isArray(seoCfg.redirects) ? seoCfg.redirects : [];
               const auditReport = runSiteSeoAudit({ systemWebsite: cmsConfig, customPages: customPagesList });
 
+              const builtInPageKeys: PublicSeoPageKey[] = [
+                'home',
+                'features',
+                'gallery',
+                'pricing',
+                'free-trial',
+                'hotel-reservation-software',
+                'hotel-billing-software',
+                'blog',
+                'about',
+                'contact',
+                'privacy-policy',
+                'terms-and-conditions',
+                'refund-policy',
+                'data-security',
+              ];
+              const pageOverrides: Record<string, SeoMetaConfig> = seoCfg.pageSeoOverrides || {};
+              const activeBuiltInDef = PUBLIC_SEO_PAGES[selectedBuiltInSeoKey] || PUBLIC_SEO_PAGES.home;
+              const activeOverride: SeoMetaConfig = pageOverrides[selectedBuiltInSeoKey] || {};
+              const updateActivePageOverride = (patch: Partial<SeoMetaConfig>) => {
+                updateSeo({
+                  pageSeoOverrides: {
+                    ...pageOverrides,
+                    [selectedBuiltInSeoKey]: { ...activeOverride, ...patch },
+                  },
+                });
+              };
+              const resetActivePageOverride = () => {
+                const nextOverrides = { ...pageOverrides };
+                delete nextOverrides[selectedBuiltInSeoKey];
+                updateSeo({ pageSeoOverrides: nextOverrides });
+                showToast(`Reset SEO for "${activeBuiltInDef.breadcrumbLabel}" to defaults`, 'info');
+              };
+
+              const siteBase = String(seoCfg.siteUrl || DIRECTSTAY_DOMAIN).replace(/\/+$/, '');
+              const effectiveTitle = activeOverride.seoTitle || activeBuiltInDef.title;
+              const effectiveDesc = activeOverride.metaDescription || activeBuiltInDef.description;
+              const effectiveSlug = activeOverride.customSlug || activeBuiltInDef.path;
+              const effectiveCanonical =
+                activeOverride.canonicalUrl ||
+                (activeOverride.customSlug
+                  ? `${siteBase}/${String(activeOverride.customSlug).replace(/^\/+|\/+$/g, '')}/`
+                  : `${siteBase}${activeBuiltInDef.path}`);
+              const effectiveOgImage = activeOverride.ogImage || seoCfg.defaultOgImage || `${siteBase}/hero-resort.jpg`;
+
               return (
                 <div className="space-y-6 text-xs">
+                  {/* PER-PAGE SEO MANAGER FOR EVERY BUILT-IN WEBSITE PAGE (14 ROUTES) */}
+                  <div className="p-5 rounded-2xl border-2 border-luxury-gold-300/80 bg-white space-y-4 shadow-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-luxury-gold-700 block">
+                          Per-Page SEO Control • All {builtInPageKeys.length} Website Pages
+                        </span>
+                        <h3 className="text-sm font-serif font-bold text-luxury-brown-950">
+                          Individual Website Page SEO, Meta, OG, Robots &amp; Schema Editor
+                        </h3>
+                        <p className="text-[11px] text-luxury-brown-500">
+                          Select any built-in website page below to customize its SEO Title, Meta Description, Slug, Canonical URL, Focus Keyword, OG Image, Alt Text, Index/Follow, and Schema Markup. (Custom Pages &amp; Blogs also have full per-item SEO editors in their respective tabs.)
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={resetActivePageOverride}
+                        className="px-3 py-1.5 rounded-lg border border-luxury-brown-200 bg-luxury-beige-50 hover:bg-luxury-beige-100 text-luxury-brown-800 font-bold text-[11px] cursor-pointer"
+                      >
+                        Reset "{activeBuiltInDef.breadcrumbLabel}" to Default
+                      </button>
+                    </div>
+
+                    {/* Page Selector Pills (All 14 Public Website Pages) */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {builtInPageKeys.map((pk) => {
+                        const def = PUBLIC_SEO_PAGES[pk];
+                        const ov = pageOverrides[pk];
+                        const hasCustom = Boolean(ov && Object.values(ov).some((v) => v !== undefined && v !== ''));
+                        const isNoIndex = ov?.robotsIndex === 'noindex';
+                        const isSelected = selectedBuiltInSeoKey === pk;
+                        return (
+                          <button
+                            key={pk}
+                            type="button"
+                            onClick={() => setSelectedBuiltInSeoKey(pk)}
+                            className={`px-3 py-1.5 rounded-xl font-mono text-[11px] font-bold border transition-all cursor-pointer inline-flex items-center gap-1.5 ${
+                              isSelected
+                                ? 'bg-luxury-brown-950 text-luxury-gold-400 border-luxury-brown-950 shadow-sm'
+                                : 'bg-luxury-beige-50/70 text-luxury-brown-800 border-luxury-brown-200 hover:bg-luxury-beige-100'
+                            }`}
+                          >
+                            <span>{def.breadcrumbLabel}</span>
+                            <span className={`text-[9px] ${isSelected ? 'text-luxury-gold-200/80' : 'text-luxury-brown-400'}`}>
+                              {def.path}
+                            </span>
+                            {isNoIndex && (
+                              <span className="px-1.5 py-0.5 rounded bg-rose-500 text-white text-[8px] uppercase">
+                                NOINDEX
+                              </span>
+                            )}
+                            {hasCustom && !isNoIndex && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" title="Customized SEO" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Selected Page SEO Fields */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-2 border-t border-luxury-brown-100">
+                      <div className="lg:col-span-7 space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700">
+                                SEO Title
+                              </label>
+                              <span className={`font-mono text-[10px] ${effectiveTitle.length > 60 ? 'text-amber-600 font-bold' : 'text-emerald-700'}`}>
+                                {effectiveTitle.length}/60 chars
+                              </span>
+                            </div>
+                            <input
+                              type="text"
+                              value={activeOverride.seoTitle ?? ''}
+                              onChange={(e) => updateActivePageOverride({ seoTitle: e.target.value })}
+                              placeholder={activeBuiltInDef.title}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Focus Keyword
+                            </label>
+                            <input
+                              type="text"
+                              value={activeOverride.focusKeyword ?? ''}
+                              onChange={(e) => updateActivePageOverride({ focusKeyword: e.target.value })}
+                              placeholder={activeBuiltInDef.primaryKeyword}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700">
+                              Meta Description
+                            </label>
+                            <span className={`font-mono text-[10px] ${effectiveDesc.length > 160 ? 'text-amber-600 font-bold' : 'text-emerald-700'}`}>
+                              {effectiveDesc.length}/160 chars
+                            </span>
+                          </div>
+                          <textarea
+                            rows={2}
+                            value={activeOverride.metaDescription ?? ''}
+                            onChange={(e) => updateActivePageOverride({ metaDescription: e.target.value })}
+                            placeholder={activeBuiltInDef.description}
+                            className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Custom URL Slug
+                            </label>
+                            <input
+                              type="text"
+                              value={activeOverride.customSlug ?? ''}
+                              onChange={(e) => updateActivePageOverride({ customSlug: e.target.value })}
+                              placeholder={activeBuiltInDef.path}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Canonical URL
+                            </label>
+                            <input
+                              type="text"
+                              value={activeOverride.canonicalUrl ?? ''}
+                              onChange={(e) => updateActivePageOverride({ canonicalUrl: e.target.value })}
+                              placeholder={`${siteBase}${activeBuiltInDef.path}`}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Open Graph / Social Sharing Image URL
+                            </label>
+                            <input
+                              type="text"
+                              value={activeOverride.ogImage ?? ''}
+                              onChange={(e) => updateActivePageOverride({ ogImage: e.target.value })}
+                              placeholder={seoCfg.defaultOgImage || `${siteBase}/hero-resort.jpg`}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Image Alt Text
+                            </label>
+                            <input
+                              type="text"
+                              value={activeOverride.imageAlt ?? ''}
+                              onChange={(e) => updateActivePageOverride({ imageAlt: e.target.value })}
+                              placeholder={`${activeBuiltInDef.breadcrumbLabel} — DirectStay Hotel PMS`}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Open Graph Title (Optional)
+                            </label>
+                            <input
+                              type="text"
+                              value={activeOverride.ogTitle ?? ''}
+                              onChange={(e) => updateActivePageOverride({ ogTitle: e.target.value })}
+                              placeholder={effectiveTitle}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                            />
+                          </div>
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Open Graph Description (Optional)
+                            </label>
+                            <input
+                              type="text"
+                              value={activeOverride.ogDescription ?? ''}
+                              onChange={(e) => updateActivePageOverride({ ogDescription: e.target.value })}
+                              placeholder={effectiveDesc}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Robots Index
+                            </label>
+                            <select
+                              value={activeOverride.robotsIndex || 'index'}
+                              onChange={(e) => updateActivePageOverride({ robotsIndex: e.target.value as 'index' | 'noindex' })}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 bg-white font-mono"
+                            >
+                              <option value="index">index (Allow Google)</option>
+                              <option value="noindex">noindex (Hide from Google &amp; Sitemap)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Robots Follow
+                            </label>
+                            <select
+                              value={activeOverride.robotsFollow || 'follow'}
+                              onChange={(e) => updateActivePageOverride({ robotsFollow: e.target.value as 'follow' | 'nofollow' })}
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 bg-white font-mono"
+                            >
+                              <option value="follow">follow</option>
+                              <option value="nofollow">nofollow</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="font-mono uppercase text-[10px] font-bold text-luxury-brown-700 block mb-1">
+                              Schema Markup (+ Breadcrumbs)
+                            </label>
+                            <select
+                              value={activeOverride.schemaType || (selectedBuiltInSeoKey === 'home' ? 'SoftwareApplication' : selectedBuiltInSeoKey === 'about' ? 'Organization' : selectedBuiltInSeoKey === 'blog' ? 'Article' : 'WebPage')}
+                              onChange={(e) =>
+                                updateActivePageOverride({
+                                  schemaType: e.target.value as SeoMetaConfig['schemaType'],
+                                })
+                              }
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 bg-white font-mono"
+                            >
+                              <option value="SoftwareApplication">SoftwareApplication + Organization</option>
+                              <option value="Organization">Organization + Breadcrumbs</option>
+                              <option value="FAQPage">FAQPage + Breadcrumbs</option>
+                              <option value="Article">Article + Breadcrumbs</option>
+                              <option value="WebPage">WebPage + Breadcrumbs</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Live Google SERP & Social Card Preview */}
+                      <div className="lg:col-span-5 space-y-3">
+                        <div className="p-4 rounded-2xl border border-luxury-brown-200 bg-luxury-beige-50/60 space-y-2">
+                          <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-luxury-gold-700 block">
+                            Live Google Search (SERP) Preview
+                          </span>
+                          <div className="bg-white rounded-xl p-3.5 border border-luxury-brown-100 space-y-1">
+                            <p className="text-[11px] text-emerald-700 font-mono truncate">{effectiveCanonical}</p>
+                            <p className="text-sm font-bold text-blue-700 leading-snug line-clamp-2">{effectiveTitle}</p>
+                            <p className="text-[11px] text-gray-600 leading-relaxed line-clamp-3">{effectiveDesc}</p>
+                            <div className="pt-1 flex flex-wrap gap-1.5 text-[9px] font-mono">
+                              <span className="px-1.5 py-0.5 rounded bg-luxury-beige-50 border border-luxury-brown-200 text-luxury-brown-700">
+                                Keyword: {activeOverride.focusKeyword || activeBuiltInDef.primaryKeyword}
+                              </span>
+                              <span className={`px-1.5 py-0.5 rounded font-bold ${activeOverride.robotsIndex === 'noindex' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-800'}`}>
+                                {activeOverride.robotsIndex || 'index'}, {activeOverride.robotsFollow || 'follow'}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">
+                                Slug: {effectiveSlug}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-4 rounded-2xl border border-luxury-brown-200 bg-white space-y-2">
+                          <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-luxury-brown-600 block">
+                            Social / Open Graph Card Preview
+                          </span>
+                          <div className="rounded-xl overflow-hidden border border-luxury-brown-200 bg-luxury-beige-50/40">
+                            <img
+                              src={effectiveOgImage}
+                              alt={activeOverride.imageAlt || effectiveTitle}
+                              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                              className="w-full h-28 object-cover bg-luxury-brown-100"
+                            />
+                            <div className="p-2.5 space-y-0.5">
+                              <p className="text-[9px] font-mono uppercase text-luxury-brown-500">{siteBase.replace(/^https?:\/\//, '')}</p>
+                              <p className="text-xs font-bold text-luxury-brown-950 line-clamp-1">
+                                {activeOverride.ogTitle || effectiveTitle}
+                              </p>
+                              <p className="text-[10px] text-luxury-brown-600 line-clamp-2">
+                                {activeOverride.ogDescription || effectiveDesc}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* GSC, GA4, Site URL & Default Meta */}
                   <div className="p-5 rounded-2xl border border-luxury-brown-200 space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">

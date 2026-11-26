@@ -1172,6 +1172,7 @@ export interface Testimonial {
 export interface SeoMetaConfig {
   seoTitle?: string;
   metaDescription?: string;
+  customSlug?: string;
   canonicalUrl?: string;
   focusKeyword?: string;
   ogTitle?: string;
@@ -1180,7 +1181,7 @@ export interface SeoMetaConfig {
   imageAlt?: string;
   robotsIndex?: 'index' | 'noindex';
   robotsFollow?: 'follow' | 'nofollow';
-  schemaType?: 'WebPage' | 'SoftwareApplication' | 'FAQPage' | 'Article';
+  schemaType?: 'WebPage' | 'SoftwareApplication' | 'Organization' | 'FAQPage' | 'Article';
 }
 
 export interface SeoRedirectRule {

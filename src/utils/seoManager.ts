@@ -603,13 +603,16 @@ export function applySeoHeadTags(
         {
           seoTitle?: string;
           metaDescription?: string;
+          customSlug?: string;
           canonicalUrl?: string;
           focusKeyword?: string;
           ogTitle?: string;
           ogDescription?: string;
           ogImage?: string;
+          imageAlt?: string;
           robotsIndex?: 'index' | 'noindex';
           robotsFollow?: 'follow' | 'nofollow';
+          schemaType?: 'WebPage' | 'SoftwareApplication' | 'Organization' | 'FAQPage' | 'Article';
         }
       >;
     };
@@ -694,6 +697,9 @@ export function applySeoHeadTags(
       ? options.blogPost.summary
       : page.description);
 
+  const customSlugClean = override?.customSlug
+    ? `/${String(override.customSlug).replace(/^\/+|\/+$/g, '')}/`.replace(/^\/\/+$/, '/')
+    : '';
   const canonicalUrl =
     itemSeo?.canonicalUrl ||
     override?.canonicalUrl ||
@@ -701,7 +707,14 @@ export function applySeoHeadTags(
       ? `${siteUrl}/page/${String(options.customPage.slug || '').replace(/^\/+|\/+$/g, '')}`
       : pageKey === 'blog-article' && options?.blogPost
       ? `${siteUrl}/blog/${options.blogPost.slug}/`
+      : customSlugClean
+      ? `${siteUrl}${customSlugClean}`
       : page.canonicalUrl);
+
+  const imageAlt =
+    (itemSeo as any)?.imageAlt ||
+    override?.imageAlt ||
+    pageTitle;
 
   const robotsIndex = itemSeo?.robotsIndex || override?.robotsIndex || 'index';
   const robotsFollow = itemSeo?.robotsFollow || override?.robotsFollow || 'follow';
@@ -723,6 +736,7 @@ export function applySeoHeadTags(
   upsertMetaTag('property', 'og:description', itemSeo?.ogDescription || override?.ogDescription || pageDesc);
   upsertMetaTag('property', 'og:url', canonicalUrl);
   upsertMetaTag('property', 'og:image', ogImage);
+  upsertMetaTag('property', 'og:image:alt', imageAlt);
   upsertMetaTag('property', 'og:locale', 'en_IN');
 
   // Twitter Card metadata
@@ -730,6 +744,7 @@ export function applySeoHeadTags(
   upsertMetaTag('name', 'twitter:title', itemSeo?.ogTitle || override?.ogTitle || pageTitle);
   upsertMetaTag('name', 'twitter:description', itemSeo?.ogDescription || override?.ogDescription || pageDesc);
   upsertMetaTag('name', 'twitter:image', ogImage);
+  upsertMetaTag('name', 'twitter:image:alt', imageAlt);
 
   // Google Search Console verification & GA4 Analytics
   if (options?.seoSettings?.googleSiteVerification?.trim()) {

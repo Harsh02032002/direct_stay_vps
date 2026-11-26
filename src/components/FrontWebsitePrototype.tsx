@@ -887,6 +887,8 @@ export default function FrontWebsite({
       supportEmail: systemWebsite?.supportEmail || 'contact@directstay.online',
       contactAddress: systemWebsite?.contactAddress || 'Puri & Bhubaneswar, Odisha, India',
       logoUrl: systemWebsite?.logoUrl || '',
+      seoSettings: systemWebsite?.seoSettings,
+      customPage: activeCustomPage || undefined,
       blogPost: (activeSeoPage === 'blog-article' && activeBlogArticle) ? activeBlogArticle : undefined
     });
     const sectionMap: Partial<Record<PublicSeoPageKey, string>> = {

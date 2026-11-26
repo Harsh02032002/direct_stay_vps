@@ -12267,15 +12267,35 @@ An error occurred while connecting to the Gemini engines: *"${err.message}"*.
           .replace(/"/g, "&quot;")
           .replace(/'/g, "&apos;");
 
-      const urls: Array<{ loc: string; lastmod: string; changefreq: string; priority: string }> = [
-        { loc: `${siteUrl}/`, lastmod: today, changefreq: "daily", priority: "1.0" },
-        { loc: `${siteUrl}/features/`, lastmod: today, changefreq: "weekly", priority: "0.9" },
-        { loc: `${siteUrl}/pricing/`, lastmod: today, changefreq: "weekly", priority: "0.95" },
-        { loc: `${siteUrl}/free-trial/`, lastmod: today, changefreq: "weekly", priority: "0.9" },
-        { loc: `${siteUrl}/blog/`, lastmod: today, changefreq: "weekly", priority: "0.85" },
-        { loc: `${siteUrl}/about/`, lastmod: today, changefreq: "monthly", priority: "0.7" },
-        { loc: `${siteUrl}/contact/`, lastmod: today, changefreq: "monthly", priority: "0.7" },
+      const overrides: Record<string, any> = seoSettings?.pageSeoOverrides || {};
+      const builtInRoutes: Array<{ key: string; path: string; changefreq: string; priority: string }> = [
+        { key: "home", path: "/", changefreq: "daily", priority: "1.0" },
+        { key: "features", path: "/features/", changefreq: "weekly", priority: "0.9" },
+        { key: "gallery", path: "/gallery/", changefreq: "weekly", priority: "0.85" },
+        { key: "pricing", path: "/pricing/", changefreq: "weekly", priority: "0.95" },
+        { key: "free-trial", path: "/free-trial/", changefreq: "weekly", priority: "0.9" },
+        { key: "hotel-reservation-software", path: "/hotel-reservation-software/", changefreq: "weekly", priority: "0.85" },
+        { key: "hotel-billing-software", path: "/hotel-billing-software/", changefreq: "weekly", priority: "0.85" },
+        { key: "blog", path: "/blog/", changefreq: "weekly", priority: "0.85" },
+        { key: "about", path: "/about/", changefreq: "monthly", priority: "0.7" },
+        { key: "contact", path: "/contact/", changefreq: "monthly", priority: "0.7" },
+        { key: "privacy-policy", path: "/privacy-policy/", changefreq: "yearly", priority: "0.5" },
+        { key: "terms-and-conditions", path: "/terms-and-conditions/", changefreq: "yearly", priority: "0.5" },
+        { key: "refund-policy", path: "/refund-policy/", changefreq: "yearly", priority: "0.5" },
+        { key: "data-security", path: "/data-security/", changefreq: "monthly", priority: "0.6" },
       ];
+
+      const urls: Array<{ loc: string; lastmod: string; changefreq: string; priority: string }> = [];
+      for (const route of builtInRoutes) {
+        const ov = overrides[route.key];
+        if (ov?.robotsIndex === "noindex") continue;
+        const customLoc = ov?.canonicalUrl?.trim()
+          ? ov.canonicalUrl.trim()
+          : ov?.customSlug?.trim()
+          ? `${siteUrl}/${String(ov.customSlug).replace(/^\/+|\/+$/g, "")}/`
+          : `${siteUrl}${route.path}`;
+        urls.push({ loc: customLoc, lastmod: today, changefreq: route.changefreq, priority: route.priority });
+      }
 
       const customPages: any[] = Array.isArray(rawData.customPages) ? rawData.customPages : [];
       customPages.forEach((p) => {
