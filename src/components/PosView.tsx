@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
+  HybridSplitPaymentBox,
+  HybridSplitRow,
+  createInitialHybridRows,
+  getValidHybridSplits,
+  formatHybridLabel,
+} from './HybridSplitPaymentBox';
+import {
   PosItem,
   PosOrder,
   PosOrderItem,
@@ -237,7 +244,8 @@ export default function PosView({
   // Settlement Modal State
   const [settlingOrder, setSettlingOrder] = useState<PosOrder | null>(null);
   const [settlementDiscount, setSettlementDiscount] = useState<number>(0);
-  const [settlementPaymentMethod, setSettlementPaymentMethod] = useState<'Cash' | 'Card' | 'UPI' | 'Credit' | 'Room Charge'>('Cash');
+  const [settlementPaymentMethod, setSettlementPaymentMethod] = useState<'Cash' | 'Card' | 'UPI' | 'Credit' | 'Room Charge' | 'Hybrid'>('Cash');
+  const [settleHybridRows, setSettleHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0, ['Cash', 'UPI', 'Card']));
 
   // Receipt Modal State
   const [viewingReceiptOrder, setViewingReceiptOrder] = useState<PosOrder | null>(null);
@@ -1373,7 +1381,13 @@ export default function PosView({
       discount: settledTotals.discount,
       taxAmount: settledTotals.taxAmount,
       grandTotal: settledTotals.grandTotal,
-      paymentMethod: settlementPaymentMethod,
+      paymentMethod:
+        settlementPaymentMethod === 'Hybrid'
+          ? (formatHybridLabel(settleHybridRows) as any)
+          : settlementPaymentMethod,
+      ...(settlementPaymentMethod === 'Hybrid' && getValidHybridSplits(settleHybridRows).length > 0
+        ? { splitPayments: getValidHybridSplits(settleHybridRows) as any }
+        : {}),
       paymentStatus: isRoomChargeSettlement ? 'Posted to Room' : 'Paid',
       status: 'Settled',
       isSettled: true,
@@ -3051,11 +3065,14 @@ export default function PosView({
                 <label className="font-semibold text-slate-600 block mb-1">Payment Method</label>
                 <select
                   value={settlementPaymentMethod}
-                  onChange={e =>
-                    setSettlementPaymentMethod(
-                      e.target.value as 'Cash' | 'Card' | 'UPI' | 'Credit' | 'Room Charge'
-                    )
-                  }
+                  onChange={e => {
+                    const val = e.target.value as 'Cash' | 'Card' | 'UPI' | 'Credit' | 'Room Charge' | 'Hybrid';
+                    if (val === 'Hybrid' && settlingOrder) {
+                      const totals = computeSettledOrderTotals(settlingOrder, settlementDiscount);
+                      setSettleHybridRows(createInitialHybridRows(totals.grandTotal, ['Cash', 'UPI', 'Card']));
+                    }
+                    setSettlementPaymentMethod(val);
+                  }}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
                 >
                   <option value="Cash">Cash Payment</option>
@@ -3063,7 +3080,17 @@ export default function PosView({
                   <option value="Card">Credit / Debit Card</option>
                   <option value="Room Charge">Room Charge (Post to Folio)</option>
                   <option value="Credit">Credit / Postpaid Ledger</option>
+                  <option value="Hybrid">⇄ Hybrid / Split Payment</option>
                 </select>
+                {settlementPaymentMethod === 'Hybrid' && settlingOrder && (
+                  <HybridSplitPaymentBox
+                    rows={settleHybridRows}
+                    onChange={setSettleHybridRows}
+                    modes={['Cash', 'UPI', 'Card']}
+                    targetAmount={computeSettledOrderTotals(settlingOrder, settlementDiscount).grandTotal}
+                    compact
+                  />
+                )}
               </div>
             </div>
 

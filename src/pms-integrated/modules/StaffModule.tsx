@@ -1,5 +1,12 @@
 import React, { useState } from 'react';
 import {
+  HybridSplitPaymentBox,
+  HybridSplitRow,
+  createInitialHybridRows,
+  getValidHybridSplits,
+  formatHybridLabel,
+} from '../../components/HybridSplitPaymentBox';
+import {
   Users,
   ShieldCheck,
   IndianRupee,
@@ -89,6 +96,10 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
   const [payrollMonth, setPayrollMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [payrollAdjustments, setPayrollAdjustments] = useState<Record<string, PayrollAdjustment>>({});
   const [salaryPaymentMode, setSalaryPaymentMode] = useState<PaymentMethod>('UPI');
+  const [isSalaryHybrid, setIsSalaryHybrid] = useState(false);
+  const [salaryHybridRows, setSalaryHybridRows] = useState<HybridSplitRow[]>(() =>
+    createInitialHybridRows(0, ['UPI', 'Cash', 'Bank Transfer'])
+  );
 
   // Helper to open WhatsApp with pre-filled Login ID & Password on the staff member's phone number
   const handleShareCredentialsOnWhatsApp = (member: {
@@ -749,13 +760,22 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
                   className="px-3 py-1.5 rounded-xl border border-slate-200 font-bold"
                 />
                 <select
-                  value={salaryPaymentMode}
-                  onChange={(e) => setSalaryPaymentMode(e.target.value as PaymentMethod)}
+                  value={isSalaryHybrid ? '__HYBRID__' : salaryPaymentMode}
+                  onChange={(e) => {
+                    if (e.target.value === '__HYBRID__') {
+                      setIsSalaryHybrid(true);
+                      setSalaryHybridRows(createInitialHybridRows(0, ['UPI', 'Cash', 'Bank Transfer']));
+                    } else {
+                      setIsSalaryHybrid(false);
+                      setSalaryPaymentMode(e.target.value as PaymentMethod);
+                    }
+                  }}
                   className="px-3 py-1.5 rounded-xl border border-slate-200 font-bold bg-white"
                 >
                   <option value="UPI">Pay via UPI</option>
                   <option value="Bank Transfer">Pay via NEFT / Bank</option>
                   <option value="Cash">Pay via Cash</option>
+                  <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                 </select>
                 <button
                   type="button"
@@ -767,6 +787,16 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
                 </button>
               </div>
             </div>
+            {isSalaryHybrid && (
+              <div className="mb-3 max-w-md">
+                <HybridSplitPaymentBox
+                  rows={salaryHybridRows}
+                  onChange={setSalaryHybridRows}
+                  modes={['UPI', 'Cash', 'Bank Transfer']}
+                  compact
+                />
+              </div>
+            )}
 
             <div className="overflow-x-auto w-full">
               <table className="w-full min-w-[740px] text-left text-xs">
@@ -894,23 +924,41 @@ export const StaffModule: React.FC<StaffModuleProps> = ({
                             <button
                               type="button"
                               onClick={() => {
+                                const hybridSplits = isSalaryHybrid ? getValidHybridSplits(salaryHybridRows) : [];
+                                const modeLabel =
+                                  isSalaryHybrid && hybridSplits.length > 0
+                                    ? (formatHybridLabel(salaryHybridRows) as PaymentMethod)
+                                    : salaryPaymentMode;
                                 updateAdjustment(m.id, {
                                   paidStatus: 'Paid',
                                   paidDate: new Date().toISOString().slice(0, 10),
-                                  paidMode: salaryPaymentMode,
+                                  paidMode: modeLabel,
                                 });
                                 if (onDisburseSalary) {
-                                  onDisburseSalary({
-                                    staffId: m.id,
-                                    staffName: m.name,
-                                    role: m.role,
-                                    month: payrollMonth,
-                                    netAmount: netPay,
-                                    paymentMethod: salaryPaymentMode,
-                                  });
+                                  if (isSalaryHybrid && hybridSplits.length > 0) {
+                                    hybridSplits.forEach((sp) => {
+                                      onDisburseSalary({
+                                        staffId: m.id,
+                                        staffName: m.name,
+                                        role: m.role,
+                                        month: payrollMonth,
+                                        netAmount: sp.amount,
+                                        paymentMethod: sp.method as PaymentMethod,
+                                      });
+                                    });
+                                  } else {
+                                    onDisburseSalary({
+                                      staffId: m.id,
+                                      staffName: m.name,
+                                      role: m.role,
+                                      month: payrollMonth,
+                                      netAmount: netPay,
+                                      paymentMethod: salaryPaymentMode,
+                                    });
+                                  }
                                 }
                                 setActionBanner(
-                                  `Disbursed ₹${netPay.toLocaleString('en-IN')} salary to ${m.name} via ${salaryPaymentMode} & recorded in Finance Hub.`
+                                  `Disbursed ₹${netPay.toLocaleString('en-IN')} salary to ${m.name} via ${modeLabel} & recorded in Finance Hub.`
                                 );
                               }}
                               className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-[11px] cursor-pointer"

@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  HybridSplitPaymentBox,
+  HybridSplitRow,
+  createInitialHybridRows,
+  formatHybridLabel,
+  getHybridTotal,
+} from '../../components/HybridSplitPaymentBox';
+import {
   getTodayIst,
   getYesterdayIst,
   formatDdmmyyyy,
@@ -1317,6 +1324,10 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
   // ===========================================================================
   // FORM STATES & ACTION HANDLERS
   // ===========================================================================
+  // Hybrid / Split Payment state for Finance Hub forms
+  const [finHybridRows, setFinHybridRows] = useState<Record<string, HybridSplitRow[]>>({});
+  const [finHybridActive, setFinHybridActive] = useState<Record<string, boolean>>({});
+
   // Form 1: Miscellaneous Income
   const [miscForm, setMiscForm] = useState({
     incomeCategory: MISC_INCOME_CATEGORIES[0],
@@ -2779,14 +2790,25 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Payment Mode</label>
                 <select
-                  value={miscForm.paymentMode}
-                  onChange={(e) => setMiscForm({ ...miscForm, paymentMode: e.target.value as PaymentMethod })}
+                  value={finHybridActive.misc ? '__HYBRID__' : miscForm.paymentMode}
+                  onChange={(e) => {
+                    if (e.target.value === '__HYBRID__') {
+                      const rows = createInitialHybridRows(Number(miscForm.amount) || 0);
+                      setFinHybridActive((p) => ({ ...p, misc: true }));
+                      setFinHybridRows((p) => ({ ...p, misc: rows }));
+                      setMiscForm({ ...miscForm, paymentMode: formatHybridLabel(rows) as PaymentMethod });
+                    } else {
+                      setFinHybridActive((p) => ({ ...p, misc: false }));
+                      setMiscForm({ ...miscForm, paymentMode: e.target.value as PaymentMethod });
+                    }
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white font-semibold"
                 >
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
                   <option value="Card">Card</option>
                   <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                 </select>
               </div>
               <div>
@@ -2799,6 +2821,17 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                 />
               </div>
             </div>
+            {finHybridActive.misc && (
+              <HybridSplitPaymentBox
+                rows={finHybridRows.misc || createInitialHybridRows(Number(miscForm.amount) || 0)}
+                onChange={(rows) => {
+                  setFinHybridRows((p) => ({ ...p, misc: rows }));
+                  setMiscForm({ ...miscForm, amount: getHybridTotal(rows), paymentMode: formatHybridLabel(rows) as PaymentMethod });
+                }}
+                targetAmount={Number(miscForm.amount) || 0}
+                compact
+              />
+            )}
 
             <div>
               <label className="block font-bold text-slate-700 mb-1">Reference / UTR / Slip No.</label>
@@ -3040,17 +3073,39 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Payment Source (Petty Cash)</label>
                 <select
-                  value={expForm.paymentMethod}
-                  onChange={(e) => setExpForm({ ...expForm, paymentMethod: e.target.value as PaymentMethod })}
+                  value={finHybridActive.exp ? '__HYBRID__' : expForm.paymentMethod}
+                  onChange={(e) => {
+                    if (e.target.value === '__HYBRID__') {
+                      const rows = createInitialHybridRows(Number(expForm.amount) || 0);
+                      setFinHybridActive((p) => ({ ...p, exp: true }));
+                      setFinHybridRows((p) => ({ ...p, exp: rows }));
+                      setExpForm({ ...expForm, paymentMethod: formatHybridLabel(rows) as PaymentMethod });
+                    } else {
+                      setFinHybridActive((p) => ({ ...p, exp: false }));
+                      setExpForm({ ...expForm, paymentMethod: e.target.value as PaymentMethod });
+                    }
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white font-semibold"
                 >
                   <option value="Cash">Petty Cash Drawer (Default)</option>
                   <option value="Bank Transfer">Bank Transfer (Reimbursed to Petty Cash)</option>
                   <option value="UPI">UPI (Petty Cash)</option>
                   <option value="Card">Card</option>
+                  <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                 </select>
               </div>
             </div>
+            {finHybridActive.exp && (
+              <HybridSplitPaymentBox
+                rows={finHybridRows.exp || createInitialHybridRows(Number(expForm.amount) || 0)}
+                onChange={(rows) => {
+                  setFinHybridRows((p) => ({ ...p, exp: rows }));
+                  setExpForm({ ...expForm, amount: getHybridTotal(rows), paymentMethod: formatHybridLabel(rows) as PaymentMethod });
+                }}
+                targetAmount={Number(expForm.amount) || 0}
+                compact
+              />
+            )}
 
             <div>
               <label className="block font-bold text-slate-700 mb-1">Remarks / Particulars</label>
@@ -3714,17 +3769,39 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Payment Mode</label>
                 <select
-                  value={vchForm.paymentMethod}
-                  onChange={(e) => setVchForm({ ...vchForm, paymentMethod: e.target.value as PaymentMethod })}
+                  value={finHybridActive.vch ? '__HYBRID__' : vchForm.paymentMethod}
+                  onChange={(e) => {
+                    if (e.target.value === '__HYBRID__') {
+                      const rows = createInitialHybridRows(Number(vchForm.amount) || 0);
+                      setFinHybridActive((p) => ({ ...p, vch: true }));
+                      setFinHybridRows((p) => ({ ...p, vch: rows }));
+                      setVchForm({ ...vchForm, paymentMethod: formatHybridLabel(rows) as PaymentMethod });
+                    } else {
+                      setFinHybridActive((p) => ({ ...p, vch: false }));
+                      setVchForm({ ...vchForm, paymentMethod: e.target.value as PaymentMethod });
+                    }
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
                 >
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
                   <option value="Bank Transfer">Bank Transfer</option>
                   <option value="Card">Card</option>
+                  <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                 </select>
               </div>
             </div>
+            {finHybridActive.vch && (
+              <HybridSplitPaymentBox
+                rows={finHybridRows.vch || createInitialHybridRows(Number(vchForm.amount) || 0)}
+                onChange={(rows) => {
+                  setFinHybridRows((p) => ({ ...p, vch: rows }));
+                  setVchForm({ ...vchForm, amount: getHybridTotal(rows), paymentMethod: formatHybridLabel(rows) as PaymentMethod });
+                }}
+                targetAmount={Number(vchForm.amount) || 0}
+                compact
+              />
+            )}
 
             <div>
               <label className="block font-bold text-slate-700 mb-1">Reference / Bill / UTR No.</label>
@@ -3935,17 +4012,39 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Payment Mode</label>
                 <select
-                  value={vendorBillForm.paymentMethod}
-                  onChange={(e) => setVendorBillForm({ ...vendorBillForm, paymentMethod: e.target.value as PaymentMethod })}
+                  value={finHybridActive.vendor ? '__HYBRID__' : vendorBillForm.paymentMethod}
+                  onChange={(e) => {
+                    if (e.target.value === '__HYBRID__') {
+                      const rows = createInitialHybridRows(Number(vendorBillForm.amount) || 0);
+                      setFinHybridActive((p) => ({ ...p, vendor: true }));
+                      setFinHybridRows((p) => ({ ...p, vendor: rows }));
+                      setVendorBillForm({ ...vendorBillForm, paymentMethod: formatHybridLabel(rows) as PaymentMethod });
+                    } else {
+                      setFinHybridActive((p) => ({ ...p, vendor: false }));
+                      setVendorBillForm({ ...vendorBillForm, paymentMethod: e.target.value as PaymentMethod });
+                    }
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
                 >
                   <option value="Bank Transfer">Bank Transfer</option>
                   <option value="UPI">UPI</option>
                   <option value="Cash">Cash</option>
                   <option value="Card">Card</option>
+                  <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                 </select>
               </div>
             </div>
+            {finHybridActive.vendor && (
+              <HybridSplitPaymentBox
+                rows={finHybridRows.vendor || createInitialHybridRows(Number(vendorBillForm.amount) || 0)}
+                onChange={(rows) => {
+                  setFinHybridRows((p) => ({ ...p, vendor: rows }));
+                  setVendorBillForm({ ...vendorBillForm, paymentMethod: formatHybridLabel(rows) as PaymentMethod });
+                }}
+                targetAmount={Number(vendorBillForm.amount) || 0}
+                compact
+              />
+            )}
 
             <button
               type="submit"
@@ -4105,16 +4204,39 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Payment Mode</label>
                 <select
-                  value={ownForm.paymentMethod}
-                  onChange={(e) => setOwnForm({ ...ownForm, paymentMethod: e.target.value as PaymentMethod })}
+                  value={finHybridActive.own ? '__HYBRID__' : ownForm.paymentMethod}
+                  onChange={(e) => {
+                    if (e.target.value === '__HYBRID__') {
+                      const rows = createInitialHybridRows(Number(ownForm.amount) || 0, ['Bank Transfer', 'Cash', 'UPI']);
+                      setFinHybridActive((p) => ({ ...p, own: true }));
+                      setFinHybridRows((p) => ({ ...p, own: rows }));
+                      setOwnForm({ ...ownForm, paymentMethod: formatHybridLabel(rows) as PaymentMethod });
+                    } else {
+                      setFinHybridActive((p) => ({ ...p, own: false }));
+                      setOwnForm({ ...ownForm, paymentMethod: e.target.value as PaymentMethod });
+                    }
+                  }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
                 >
                   <option value="Bank Transfer">Bank Transfer</option>
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
+                  <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                 </select>
               </div>
             </div>
+            {finHybridActive.own && (
+              <HybridSplitPaymentBox
+                rows={finHybridRows.own || createInitialHybridRows(Number(ownForm.amount) || 0, ['Bank Transfer', 'Cash', 'UPI'])}
+                onChange={(rows) => {
+                  setFinHybridRows((p) => ({ ...p, own: rows }));
+                  setOwnForm({ ...ownForm, amount: getHybridTotal(rows), paymentMethod: formatHybridLabel(rows) as PaymentMethod });
+                }}
+                modes={['Bank Transfer', 'Cash', 'UPI']}
+                targetAmount={Number(ownForm.amount) || 0}
+                compact
+              />
+            )}
 
             <div>
               <label className="block font-bold text-slate-700 mb-1">Reference / UTR No.</label>
@@ -4738,15 +4860,38 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Payment Mode</label>
                 <select
-                  value={settlePayMethod}
-                  onChange={(e) => setSettlePayMethod(e.target.value as PaymentMethod)}
+                  value={finHybridActive.settle ? '__HYBRID__' : settlePayMethod}
+                  onChange={(e) => {
+                    if (e.target.value === '__HYBRID__') {
+                      const rows = createInitialHybridRows(Number(settlePayAmount) || 0);
+                      setFinHybridActive((p) => ({ ...p, settle: true }));
+                      setFinHybridRows((p) => ({ ...p, settle: rows }));
+                      setSettlePayMethod(formatHybridLabel(rows) as PaymentMethod);
+                    } else {
+                      setFinHybridActive((p) => ({ ...p, settle: false }));
+                      setSettlePayMethod(e.target.value as PaymentMethod);
+                    }
+                  }}
                   className="w-full px-3 py-2 border rounded-xl bg-white font-semibold"
                 >
                   <option value="Bank Transfer">Bank Transfer (NEFT/IMPS)</option>
                   <option value="UPI">UPI</option>
                   <option value="Cash">Cash Drawer</option>
                   <option value="Card">Card</option>
+                  <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                 </select>
+                {finHybridActive.settle && (
+                  <HybridSplitPaymentBox
+                    rows={finHybridRows.settle || createInitialHybridRows(Number(settlePayAmount) || 0)}
+                    onChange={(rows) => {
+                      setFinHybridRows((p) => ({ ...p, settle: rows }));
+                      setSettlePayAmount(getHybridTotal(rows));
+                      setSettlePayMethod(formatHybridLabel(rows) as PaymentMethod);
+                    }}
+                    targetAmount={Number(settlePayAmount) || 0}
+                    compact
+                  />
+                )}
               </div>
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Payment Notes / UTR</label>

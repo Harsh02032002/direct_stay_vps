@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  HybridSplitPaymentBox,
+  HybridSplitRow,
+  createInitialHybridRows,
+  getValidHybridSplits,
+  formatHybridLabel,
+} from './HybridSplitPaymentBox';
+import {
   Room,
   Booking,
   GuestCheckIn,
@@ -270,6 +277,8 @@ export default function CalendarBookingView({
   const [advancePaid, setAdvancePaid] = useState(0);
   const [bkgSource, setBkgSource] = useState<BookingSource>('Walk-in');
   const [payMethod, setPayMethod] = useState<PaymentMethod>('Cash');
+  const [isPayHybrid, setIsPayHybrid] = useState(false);
+  const [payHybridRows, setPayHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0));
   const [instantCheckInNow, setInstantCheckInNow] = useState(false);
   const [createDirtyOverride, setCreateDirtyOverride] = useState(false);
   const [createDirtyReason, setCreateDirtyReason] = useState('');
@@ -908,7 +917,18 @@ export default function CalendarBookingView({
       bookingAmount: netRoomAmt,
       gstRate: gstRateVal,
       gstAmount: gstAmtVal,
-      paymentMethod: payMethod,
+      paymentMethod: isPayHybrid ? (formatHybridLabel(payHybridRows) as any) : payMethod,
+      ...((isPayHybrid && getValidHybridSplits(payHybridRows).length > 0)
+        ? {
+            paymentHistory: getValidHybridSplits(payHybridRows).map((sp, idx) => ({
+              id: `cal-pay-${Date.now()}-${idx}`,
+              date: checkInStr,
+              amount: sp.amount,
+              paymentMethod: sp.method,
+              notes: 'Hybrid split advance payment',
+            })),
+          }
+        : {}),
       bookingSource: bkgSource,
       transactionId: sourceBookingId.trim() || undefined,
       status: checkNow ? ('Checked In' as any) : 'Confirmed',
@@ -3650,17 +3670,38 @@ export default function CalendarBookingView({
                   <div>
                     <label className="font-bold text-slate-600 block mb-1">Payment Mode</label>
                     <select
-                      value={payMethod}
-                      onChange={(e) => setPayMethod(e.target.value as PaymentMethod)}
+                      value={isPayHybrid ? '__HYBRID__' : payMethod}
+                      onChange={(e) => {
+                        if (e.target.value === '__HYBRID__') {
+                          setIsPayHybrid(true);
+                          setPayHybridRows(createInitialHybridRows(advancePaid));
+                        } else {
+                          setIsPayHybrid(false);
+                          setPayMethod(e.target.value as PaymentMethod);
+                        }
+                      }}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold"
                     >
                       <option value="Cash">Cash</option>
                       <option value="UPI">UPI</option>
                       <option value="Card">Card</option>
                       <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                     </select>
                   </div>
                 </div>
+                {isPayHybrid && (
+                  <HybridSplitPaymentBox
+                    rows={payHybridRows}
+                    onChange={(rows) => {
+                      setPayHybridRows(rows);
+                      const sum = Math.round(rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) * 100) / 100;
+                      setAdvancePaid(sum);
+                    }}
+                    targetAmount={advancePaid}
+                    compact
+                  />
+                )}
 
                 {!isUnallocatedCreate && targetDateStr <= todayStr && (
                   <label className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-slate-800 cursor-pointer">

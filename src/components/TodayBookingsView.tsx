@@ -1,4 +1,11 @@
 import React, { useState } from 'react';
+import {
+  HybridSplitPaymentBox,
+  HybridSplitRow,
+  createInitialHybridRows,
+  getValidHybridSplits,
+  formatHybridLabel,
+} from './HybridSplitPaymentBox';
 import { Booking, GuestCheckIn, Room, Staff, Invoice, HotelSettings, PaymentRecord, ExtraCharge, RoomUpgradeRecord, RoomStatus, DeletedItemRecord } from '../types';
 import { 
   FileText, UserCheck, UserX, User, Printer, Phone, Calendar, 
@@ -222,7 +229,9 @@ export default function TodayBookingsView({
 
   // Settle payment form in Checkout Modal
   const [settleAmount, setSettleAmount] = useState<number>(0);
-  const [settleMethod, setSettleMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Bank'>('UPI');
+  const [settleMethod, setSettleMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Bank' | 'Hybrid'>('UPI');
+  const [settleHybridRows, setSettleHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0, ['Cash', 'UPI', 'Card', 'Bank']));
+  const [editHybridRows, setEditHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0, ['Cash', 'UPI', 'Card', 'Online']));
   const [settleNotes, setSettleNotes] = useState('');
   const [checkoutGstRate, setCheckoutGstRate] = useState<number>(
     hotelSettings?.isGstEnabled === false ? 0 : Number(hotelSettings?.defaultGstRate ?? 5)
@@ -888,7 +897,29 @@ export default function TodayBookingsView({
 
   // Settle partial or full payment inside Checkout Modal
   const handleAddLocalPayment = () => {
-    if (!checkoutCheckIn || settleAmount <= 0) return;
+    if (!checkoutCheckIn) return;
+    if (settleMethod === 'Hybrid') {
+      const validSplits = getValidHybridSplits(settleHybridRows);
+      if (validSplits.length === 0) return;
+      const baseTs = Date.now();
+      const newPayments: PaymentRecord[] = validSplits.map((sp, idx) => ({
+        id: `PAY-SETTLE-${baseTs}-${idx}`,
+        amount: sp.amount,
+        paymentMethod: sp.method as any,
+        paymentType: 'Settle Balance',
+        dateTime: new Date().toISOString(),
+        notes: settleNotes ? `${settleNotes} (Hybrid ${sp.method})` : `Hybrid split checkout (${sp.method})`
+      }));
+      setCheckoutCheckIn(prev => {
+        if (!prev) return null;
+        return { ...prev, payments: [...(prev.payments || []), ...newPayments] };
+      });
+      setSettleAmount(0);
+      setSettleNotes('');
+      setSettleMethod('UPI');
+      return;
+    }
+    if (settleAmount <= 0) return;
     const newPayment: PaymentRecord = {
       id: `PAY-SETTLE-${Date.now()}`,
       amount: settleAmount,
@@ -957,13 +988,29 @@ export default function TodayBookingsView({
       setNewChargeDesc('');
     }
 
-    if (Number(settleAmount) > 0) {
+    if (settleMethod === 'Hybrid' && getValidHybridSplits(settleHybridRows).length > 0) {
+      const baseTs = Date.now();
+      workingCheckIn.payments = [
+        ...(workingCheckIn.payments || []),
+        ...getValidHybridSplits(settleHybridRows).map((sp, idx) => ({
+          id: `PAY-SETTLE-${baseTs}-${idx}`,
+          amount: sp.amount,
+          paymentMethod: sp.method as any,
+          paymentType: 'Settle Balance' as const,
+          dateTime: new Date().toISOString(),
+          notes: settleNotes ? `${settleNotes} (Hybrid ${sp.method})` : `Hybrid split checkout (${sp.method})`
+        }))
+      ];
+      setSettleAmount(0);
+      setSettleNotes('');
+      setSettleMethod('UPI');
+    } else if (Number(settleAmount) > 0) {
       workingCheckIn.payments = [
         ...(workingCheckIn.payments || []),
         {
           id: `PAY-SETTLE-${Date.now()}`,
           amount: Number(settleAmount),
-          paymentMethod: settleMethod,
+          paymentMethod: settleMethod as any,
           paymentType: 'Settle Balance',
           dateTime: new Date().toISOString(),
           notes: settleNotes || 'Checkout balance settlement'
@@ -3061,14 +3108,32 @@ export default function TodayBookingsView({
                     <label className="font-mono text-[10px] uppercase font-bold text-luxury-brown-500">Payment Method</label>
                     <select
                       value={editForm.paymentMethod}
-                      onChange={(e) => setEditForm({ ...editForm, paymentMethod: e.target.value as any })}
+                      onChange={(e) => {
+                        const val = e.target.value as any;
+                        if (val === 'Hybrid') {
+                          setEditHybridRows(createInitialHybridRows(Number((editForm as any).advanceAmount) || 0, ['Cash', 'UPI', 'Card', 'Online']));
+                        }
+                        setEditForm({ ...editForm, paymentMethod: val });
+                      }}
                       className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg bg-white text-luxury-brown-900 text-xs focus:ring-1 focus:ring-luxury-gold-500 focus:outline-none"
                     >
                       <option value="Cash">Cash Currency</option>
                       <option value="Online">Online Bank Transfer</option>
                       <option value="Card">Credit/Debit Card</option>
                       <option value="UPI">UPI Digital Payment</option>
+                      <option value="Hybrid">⇄ Hybrid / Split Payment</option>
                     </select>
+                    {editForm.paymentMethod === 'Hybrid' && (
+                      <HybridSplitPaymentBox
+                        rows={editHybridRows}
+                        onChange={(rows) => {
+                          setEditHybridRows(rows);
+                          setEditForm({ ...editForm, transactionId: formatHybridLabel(rows) });
+                        }}
+                        modes={['Cash', 'UPI', 'Card', 'Online']}
+                        compact
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -3962,15 +4027,37 @@ export default function TodayBookingsView({
                         <label className="text-[9px] uppercase font-mono text-emerald-800 font-bold">Method</label>
                         <select
                           value={settleMethod}
-                          onChange={(e) => setSettleMethod(e.target.value as any)}
+                          onChange={(e) => {
+                            const v = e.target.value as any;
+                            if (v === 'Hybrid') {
+                              setSettleHybridRows(createInitialHybridRows(Number(settleAmount) || 0, ['Cash', 'UPI', 'Card', 'Bank']));
+                            }
+                            setSettleMethod(v);
+                          }}
                           className="w-full px-2 py-1.5 border border-emerald-300 rounded bg-white text-xs font-bold text-luxury-brown-950"
                         >
                           <option value="UPI">UPI Digital</option>
                           <option value="Cash">Cash Currency</option>
                           <option value="Card">Credit Card</option>
                           <option value="Bank">Bank Wire</option>
+                          <option value="Hybrid">⇄ Hybrid / Split</option>
                         </select>
                       </div>
+                      {settleMethod === 'Hybrid' && (
+                        <div className="md:col-span-12">
+                          <HybridSplitPaymentBox
+                            rows={settleHybridRows}
+                            onChange={(rows) => {
+                              setSettleHybridRows(rows);
+                              const sum = Math.round(rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) * 100) / 100;
+                              setSettleAmount(sum);
+                            }}
+                            modes={['Cash', 'UPI', 'Card', 'Bank']}
+                            targetAmount={Number(settleAmount) || 0}
+                            compact
+                          />
+                        </div>
+                      )}
 
                       <div className="md:col-span-4 space-y-0.5">
                         <label className="text-[9px] uppercase font-mono text-emerald-800 font-bold">Payment Note / Reference</label>

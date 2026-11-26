@@ -1,5 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import {
+  HybridSplitPaymentBox,
+  HybridSplitRow,
+  createInitialHybridRows,
+  getValidHybridSplits,
+} from './HybridSplitPaymentBox';
+import {
   TravelAgent,
   AgentCommissionPayment,
   Booking,
@@ -101,6 +107,8 @@ export default function TravelAgentManagerView({
   const [payAgent, setPayAgent] = useState<TravelAgent | null>(null);
   const [payAmount, setPayAmount] = useState<string>('');
   const [payMethod, setPayMethod] = useState<string>('UPI');
+  const [isPayHybrid, setIsPayHybrid] = useState<boolean>(false);
+  const [payHybridRows, setPayHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0));
   const [payRef, setPayRef] = useState<string>('');
   const [payDate, setPayDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [payNotes, setPayNotes] = useState<string>('');
@@ -296,6 +304,42 @@ export default function TravelAgentManagerView({
   const handleRecordPayment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!payAgent) return;
+
+    if (isPayHybrid) {
+      const validSplits = getValidHybridSplits(payHybridRows);
+      if (validSplits.length === 0) {
+        showToast('Enter at least one split payout amount greater than ₹0.', 'warning');
+        return;
+      }
+      const totalAmt = Math.round(validSplits.reduce((s, r) => s + r.amount, 0) * 100) / 100;
+      const baseTs = Date.now();
+      const newPayments: AgentCommissionPayment[] = validSplits.map((sp, idx) => ({
+        id: `AGPAY-${baseTs}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
+        hotelId: hotelSettings?.id,
+        agentId: payAgent.id,
+        agentName: payAgent.name,
+        agencyName: payAgent.agencyName,
+        amount: sp.amount,
+        paymentMethod: sp.method,
+        referenceNo: payRef.trim() || undefined,
+        date: payDate || new Date().toISOString().split('T')[0],
+        notes: payNotes.trim()
+          ? `${payNotes.trim()} (Hybrid split ${sp.method})`
+          : `Hybrid split payout (${sp.method})`,
+        recordedBy: loggedInUser || 'Admin',
+      }));
+      onUpdateCommissionPayments([...newPayments, ...commissionPayments]);
+      const summary = validSplits.map((s) => `${s.method} ₹${s.amount}`).join(' + ');
+      onAddAuditLog?.(
+        'Agent Commission Paid',
+        `Paid ₹${totalAmt.toLocaleString('en-IN')} commission to "${payAgent.agencyName}" via ${summary}.`
+      );
+      showToast(`Recorded ₹${totalAmt.toLocaleString('en-IN')} hybrid commission payout to ${payAgent.agencyName}!`, 'success');
+      setIsPayHybrid(false);
+      setPayAgent(null);
+      return;
+    }
+
     const amt = Number(payAmount);
     if (!Number.isFinite(amt) || amt <= 0) {
       showToast('Enter a valid commission payout amount greater than ₹0.', 'warning');
@@ -308,7 +352,7 @@ export default function TravelAgentManagerView({
       agentId: payAgent.id,
       agentName: payAgent.name,
       agencyName: payAgent.agencyName,
-      amount: Math.round(amt),
+      amount: Math.round(amt * 100) / 100,
       paymentMethod: payMethod,
       referenceNo: payRef.trim() || undefined,
       date: payDate || new Date().toISOString().split('T')[0],
@@ -950,8 +994,16 @@ export default function TravelAgentManagerView({
                     Payment Mode *
                   </label>
                   <select
-                    value={payMethod}
-                    onChange={(e) => setPayMethod(e.target.value)}
+                    value={isPayHybrid ? '__HYBRID__' : payMethod}
+                    onChange={(e) => {
+                      if (e.target.value === '__HYBRID__') {
+                        setIsPayHybrid(true);
+                        setPayHybridRows(createInitialHybridRows(Number(payAmount) || 0, ['UPI', 'Cash', 'Bank Transfer', 'Cheque', 'Card']));
+                      } else {
+                        setIsPayHybrid(false);
+                        setPayMethod(e.target.value);
+                      }
+                    }}
                     className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl bg-white"
                   >
                     <option value="UPI">UPI</option>
@@ -959,6 +1011,7 @@ export default function TravelAgentManagerView({
                     <option value="Bank Transfer">Bank Transfer (NEFT/IMPS)</option>
                     <option value="Cheque">Cheque</option>
                     <option value="Card">Card</option>
+                    <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                   </select>
                 </div>
                 <div>
@@ -974,6 +1027,19 @@ export default function TravelAgentManagerView({
                   />
                 </div>
               </div>
+              {isPayHybrid && (
+                <HybridSplitPaymentBox
+                  rows={payHybridRows}
+                  onChange={(rows) => {
+                    setPayHybridRows(rows);
+                    const sum = Math.round(rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) * 100) / 100;
+                    setPayAmount(String(sum));
+                  }}
+                  modes={['UPI', 'Cash', 'Bank Transfer', 'Cheque', 'Card']}
+                  targetAmount={Number(payAmount) || 0}
+                  compact
+                />
+              )}
 
               <div>
                 <label className="block text-[11px] font-bold uppercase text-gray-700 mb-1">

@@ -1,4 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import {
+  HybridSplitPaymentBox,
+  HybridSplitRow,
+  createInitialHybridRows,
+  getValidHybridSplits,
+  formatHybridLabel,
+} from './HybridSplitPaymentBox';
 import { Invoice, GuestCheckIn, Booking, UserRole, Room, PaymentRecord, ExtraCharge, HotelSettings } from '../types';
 import { showToast } from '../utils/toast';
 import { downloadHotelInvoicePdf, invoiceRecordToPrintHtml } from '../utils/pdfDownload';
@@ -78,7 +85,8 @@ export default function InvoiceView({
   // checkout payment settlement state
   const [checkoutPayAmount, setCheckoutPayAmount] = useState<number>(0);
   const [isAmountOverridden, setIsAmountOverridden] = useState<boolean>(false);
-  const [checkoutPayMethod, setCheckoutPayMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Bank'>('UPI');
+  const [checkoutPayMethod, setCheckoutPayMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Bank' | 'Hybrid'>('UPI');
+  const [checkoutHybridRows, setCheckoutHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0, ['Cash', 'UPI', 'Card', 'Bank']));
   const [isFullyPending, setIsFullyPending] = useState<boolean>(false);
   const [checkoutNotes, setCheckoutNotes] = useState('');
   const [checkoutGstRate, setCheckoutGstRate] = useState<number>(configuredDefaultGst || 5);
@@ -102,7 +110,8 @@ export default function InvoiceView({
   const [newInvGstRate, setNewInvGstRate] = useState<number>(configuredDefaultGst);
   const [newInvDiscount, setNewInvDiscount] = useState<number>(0);
   const [newInvAdvancePaid, setNewInvAdvancePaid] = useState<number>(0);
-  const [newInvPaymentMethod, setNewInvPaymentMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Online'>('UPI');
+  const [newInvPaymentMethod, setNewInvPaymentMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Online' | 'Hybrid'>('UPI');
+  const [newInvHybridRows, setNewInvHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0, ['Cash', 'UPI', 'Card', 'Online']));
   const [newInvType, setNewInvType] = useState<'Tax Invoice' | 'Booking Invoice' | 'Proforma Invoice'>('Tax Invoice');
   const [newInvNotes, setNewInvNotes] = useState('');
   const [invoiceCategoryFilter, setInvoiceCategoryFilter] = useState<'All' | 'Booking' | 'Checkout' | 'Due' | 'Superseded'>('All');
@@ -613,11 +622,30 @@ export default function InvoiceView({
 
     let finalDue = remainingDue - amountToRecord;
   
-    if (amountToRecord > 0) {
+    if (checkoutPayMethod === 'Hybrid' && getValidHybridSplits(checkoutHybridRows).length > 0) {
+      const validSplits = getValidHybridSplits(checkoutHybridRows);
+      const splitTotal = Math.round(validSplits.reduce((s, r) => s + r.amount, 0) * 100) / 100;
+      finalDue = remainingDue - splitTotal;
+      const baseTs = Date.now();
+      validSplits.forEach((sp, idx) => {
+        updatedPayments.push({
+          id: `PAY-CO-${baseTs}-${idx}`,
+          amount: sp.amount,
+          paymentMethod: sp.method as any,
+          paymentType: finalDue <= 0 ? 'Settle Balance' : 'Partial Payment',
+          dateTime: new Date().toISOString(),
+          notes: checkoutNotes ? `${checkoutNotes} (Hybrid ${sp.method})` : `Hybrid split (${sp.method})`
+        });
+      });
+      if (finalDue < 0) {
+        newDepositBalance += Math.abs(finalDue);
+        finalDue = 0;
+      }
+    } else if (amountToRecord > 0) {
       const checkoutPayment: PaymentRecord = {
         id: `PAY-CO-${Date.now()}`,
         amount: amountToRecord,
-        paymentMethod: checkoutPayMethod,
+        paymentMethod: checkoutPayMethod as any,
         paymentType: finalDue <= 0 ? 'Settle Balance' : 'Partial Payment',
         dateTime: new Date().toISOString(),
         notes: checkoutNotes || undefined
@@ -728,7 +756,8 @@ export default function InvoiceView({
       isCheckoutTrigger: true,
       overrideDiscount: discount,
       overrideGstRate: isGstBillingEnabled ? checkoutGstRate : 0,
-      overridePaymentMethod: checkoutPayMethod,
+      overridePaymentMethod:
+        checkoutPayMethod === 'Hybrid' ? formatHybridLabel(checkoutHybridRows) : checkoutPayMethod,
       overrideNotes: checkoutNotes,
       invoiceType: 'Tax Invoice'
     });
@@ -1349,7 +1378,8 @@ export default function InvoiceView({
         nights,
         bookingAmount: newInvRoomCharges,
         advanceAmount: newInvAdvancePaid,
-        paymentMethod: newInvPaymentMethod,
+        paymentMethod:
+          newInvPaymentMethod === 'Hybrid' ? (formatHybridLabel(newInvHybridRows) as any) : newInvPaymentMethod,
         status: matchedCheckin ? (matchedCheckin.checkedOutDateTime ? 'CheckedOut' : 'Checked In') : 'Confirmed',
         isCheckedIn: Boolean(matchedCheckin)
       } as Booking),
@@ -1370,7 +1400,8 @@ export default function InvoiceView({
       overrideDiscount: newInvDiscount,
       overrideGstRate: newInvGstRate,
       overrideAdvancePaid: newInvAdvancePaid,
-      overridePaymentMethod: newInvPaymentMethod,
+      overridePaymentMethod:
+        newInvPaymentMethod === 'Hybrid' ? formatHybridLabel(newInvHybridRows) : newInvPaymentMethod,
       overrideNotes: newInvNotes,
       invoiceType: newInvGstRate <= 0 && newInvType === 'Tax Invoice' ? 'Bill of Supply' : newInvType,
       createSeparateInvoice: shouldMintSeparateInvoice,
@@ -3051,13 +3082,20 @@ export default function InvoiceView({
                               <span className="font-bold text-gray-700 block">Payment Method *</span>
                               <select
                                 value={checkoutPayMethod}
-                                onChange={(e) => setCheckoutPayMethod(e.target.value as any)}
+                                onChange={(e) => {
+                                  const v = e.target.value as any;
+                                  if (v === 'Hybrid') {
+                                    setCheckoutHybridRows(createInitialHybridRows(Number(checkoutPayAmount) || 0, ['Cash', 'UPI', 'Card', 'Bank']));
+                                  }
+                                  setCheckoutPayMethod(v);
+                                }}
                                 className="w-full px-3 py-1.5 border bg-white rounded-lg font-bold text-xs"
                               >
                                 <option value="UPI">UPI Sync / QR Scanner</option>
                                 <option value="Cash">Cash Drawer</option>
                                 <option value="Card">Terminal POS Card Reader</option>
                                 <option value="Bank">Direct NetBanking Transfer</option>
+                                <option value="Hybrid">⇄ Hybrid / Split Payment</option>
                               </select>
                             </div>
 
@@ -3071,6 +3109,21 @@ export default function InvoiceView({
                                 className="w-full px-3 py-1.5 border rounded-lg text-xs"
                               />
                             </div>
+                            {checkoutPayMethod === 'Hybrid' && (
+                              <div className="md:col-span-2">
+                                <HybridSplitPaymentBox
+                                  rows={checkoutHybridRows}
+                                  onChange={(rows) => {
+                                    setCheckoutHybridRows(rows);
+                                    const sum = Math.round(rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) * 100) / 100;
+                                    setCheckoutPayAmount(sum);
+                                  }}
+                                  modes={['Cash', 'UPI', 'Card', 'Bank']}
+                                  targetAmount={Number(checkoutPayAmount) || 0}
+                                  compact
+                                />
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -3416,16 +3469,36 @@ export default function InvoiceView({
                   <label className="text-[11px] font-mono text-luxury-brown-600 block uppercase font-bold">Payment Method</label>
                   <select
                     value={newInvPaymentMethod}
-                    onChange={(e) => setNewInvPaymentMethod(e.target.value as any)}
+                    onChange={(e) => {
+                      const v = e.target.value as any;
+                      if (v === 'Hybrid') {
+                        setNewInvHybridRows(createInitialHybridRows(Number(newInvAdvancePaid) || 0, ['Cash', 'UPI', 'Card', 'Online']));
+                      }
+                      setNewInvPaymentMethod(v);
+                    }}
                     className="w-full px-3 py-2 border border-luxury-brown-200 bg-white rounded-lg text-xs"
                   >
                     <option value="UPI">UPI / QR Code</option>
                     <option value="Cash">Cash at Desk</option>
                     <option value="Card">Credit / Debit Card</option>
                     <option value="Online">Online / Bank Wire</option>
+                    <option value="Hybrid">⇄ Hybrid / Split Payment</option>
                   </select>
                 </div>
               </div>
+              {newInvPaymentMethod === 'Hybrid' && (
+                <HybridSplitPaymentBox
+                  rows={newInvHybridRows}
+                  onChange={(rows) => {
+                    setNewInvHybridRows(rows);
+                    const sum = Math.round(rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) * 100) / 100;
+                    setNewInvAdvancePaid(sum);
+                  }}
+                  modes={['Cash', 'UPI', 'Card', 'Online']}
+                  targetAmount={Number(newInvAdvancePaid) || 0}
+                  compact
+                />
+              )}
 
               {/* Live Calculation Preview Card (via single calculateBill() engine) */}
               {(() => {

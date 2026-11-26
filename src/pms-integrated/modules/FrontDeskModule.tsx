@@ -1,5 +1,12 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
+  HybridSplitPaymentBox,
+  HybridSplitRow,
+  createInitialHybridRows,
+  getValidHybridSplits,
+  formatHybridLabel,
+} from '../../components/HybridSplitPaymentBox';
+import {
   Plus,
   Search,
   Eye,
@@ -233,6 +240,8 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
   const [discountValue, setDiscountValue] = useState<number>(0);
   const [advancePaid, setAdvancePaid] = useState<number>(0);
   const [advanceMethod, setAdvanceMethod] = useState<PaymentMethod>('UPI');
+  const [isAdvanceHybrid, setIsAdvanceHybrid] = useState<boolean>(false);
+  const [advanceHybridRows, setAdvanceHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0));
   const [primaryDocType, setPrimaryDocType] = useState<GuestPerson['documentType']>('Aadhaar Card');
   const [primaryDocNumber, setPrimaryDocNumber] = useState<string>('');
   const [primaryDocImage, setPrimaryDocImage] = useState<string | undefined>(undefined);
@@ -272,6 +281,8 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
   const [cancelMode, setCancelMode] = useState<'Cancelled' | 'No-Show'>('Cancelled');
   const [cancelRefundAmt, setCancelRefundAmt] = useState<number>(0);
   const [cancelRefundMethod, setCancelRefundMethod] = useState<PaymentMethod>('UPI');
+  const [isCancelHybrid, setIsCancelHybrid] = useState<boolean>(false);
+  const [cancelHybridRows, setCancelHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0));
   const [cancelRefundRef, setCancelRefundRef] = useState<string>('');
   const [cancelReason, setCancelReason] = useState<string>('Guest requested cancellation prior to arrival');
 
@@ -704,6 +715,21 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
       guests: [primaryGuest, ...coGuests],
       payments: existingBooking
         ? existingBooking.payments
+        : isAdvanceHybrid && getValidHybridSplits(advanceHybridRows).length > 0
+        ? getValidHybridSplits(advanceHybridRows).map((sp, idx) => ({
+            id: `pay-${Date.now()}-${idx}`,
+            bookingId: `bkg-${Date.now()}`,
+            amount: sp.amount,
+            paymentMethod: sp.method as PaymentMethod,
+            transactionId:
+              sp.method === 'Cash'
+                ? 'CASH-ADV'
+                : `UTR${Math.floor(10000000 + Math.random() * 90000000)}`,
+            date: checkInDate,
+            time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+            recordedBy: 'Front Desk',
+            notes: 'Hybrid split advance collected at reservation creation',
+          }))
         : advancePaid > 0
         ? [
             {
@@ -2583,6 +2609,7 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
                   <div className="grid grid-cols-2 gap-2">
                     <input
                       type="number"
+                      step="any"
                       min={0}
                       value={advancePaid}
                       onChange={(e) => setAdvancePaid(Math.max(0, Number(e.target.value)))}
@@ -2590,16 +2617,37 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
                       className="px-3 py-2 rounded-xl border border-emerald-200 bg-white text-xs font-bold"
                     />
                     <select
-                      value={advanceMethod}
-                      onChange={(e) => setAdvanceMethod(e.target.value as PaymentMethod)}
+                      value={isAdvanceHybrid ? '__HYBRID__' : advanceMethod}
+                      onChange={(e) => {
+                        if (e.target.value === '__HYBRID__') {
+                          setIsAdvanceHybrid(true);
+                          setAdvanceHybridRows(createInitialHybridRows(advancePaid));
+                        } else {
+                          setIsAdvanceHybrid(false);
+                          setAdvanceMethod(e.target.value as PaymentMethod);
+                        }
+                      }}
                       className="px-2.5 py-2 rounded-xl border border-emerald-200 bg-white text-xs font-bold"
                     >
                       <option value="UPI">UPI QR</option>
                       <option value="Cash">Cash</option>
                       <option value="Card">Card POS</option>
                       <option value="Bank Transfer">NEFT / Bank</option>
+                      <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
                     </select>
                   </div>
+                  {isAdvanceHybrid && (
+                    <HybridSplitPaymentBox
+                      rows={advanceHybridRows}
+                      onChange={(rows) => {
+                        setAdvanceHybridRows(rows);
+                        const sum = Math.round(rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) * 100) / 100;
+                        setAdvancePaid(sum);
+                      }}
+                      targetAmount={advancePaid}
+                      compact
+                    />
+                  )}
                 </div>
               )}
 
@@ -3605,15 +3653,36 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
                     Refund Payment Mode
                   </label>
                   <select
-                    value={cancelRefundMethod}
-                    onChange={(e) => setCancelRefundMethod(e.target.value as PaymentMethod)}
+                    value={isCancelHybrid ? '__HYBRID__' : cancelRefundMethod}
+                    onChange={(e) => {
+                      if (e.target.value === '__HYBRID__') {
+                        setIsCancelHybrid(true);
+                        setCancelHybridRows(createInitialHybridRows(cancelRefundAmt));
+                      } else {
+                        setIsCancelHybrid(false);
+                        setCancelRefundMethod(e.target.value as PaymentMethod);
+                      }
+                    }}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold bg-white"
                   >
                     <option value="UPI">UPI Refund</option>
                     <option value="Cash">Cash Counter Refund</option>
                     <option value="Bank Transfer">Bank / NEFT Refund</option>
                     <option value="Card">Card Reversal</option>
+                    <option value="__HYBRID__">⇄ Hybrid / Split Refund</option>
                   </select>
+                  {isCancelHybrid && (
+                    <HybridSplitPaymentBox
+                      rows={cancelHybridRows}
+                      onChange={(rows) => {
+                        setCancelHybridRows(rows);
+                        const sum = Math.round(rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) * 100) / 100;
+                        setCancelRefundAmt(Math.min(cancelModalBooking.amountPaid, sum));
+                      }}
+                      targetAmount={cancelRefundAmt}
+                      compact
+                    />
+                  )}
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
@@ -3675,9 +3744,10 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
                     type="button"
                     onClick={() => {
                       if (onCancelOrNoShowBooking) {
+                        const refundModeText = isCancelHybrid ? formatHybridLabel(cancelHybridRows) : cancelRefundMethod;
                         const detailedReason =
                           cancelRefundAmt > 0
-                            ? `${cancelReason} [Refunded ₹${cancelRefundAmt} via ${cancelRefundMethod}${
+                            ? `${cancelReason} [Refunded ₹${cancelRefundAmt} via ${refundModeText}${
                                 cancelRefundRef ? ` • Ref: ${cancelRefundRef}` : ''
                               }]`
                             : cancelReason;
@@ -3690,11 +3760,12 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
                         setLifecycleBanner(
                           `Booking ${cancelModalBooking.bookingNo} marked ${cancelMode}. ${
                             cancelRefundAmt > 0
-                              ? `Refund of ₹${cancelRefundAmt} (${cancelRefundMethod}) recorded in Folio, Reports & Finance Vouchers.`
+                              ? `Refund of ₹${cancelRefundAmt} (${refundModeText}) recorded in Folio, Reports & Finance Vouchers.`
                               : 'Room released to Available.'
                           }`
                         );
                       }
+                      setIsCancelHybrid(false);
                       setCancelRefundRef('');
                       setCancelModalBooking(null);
                     }}

@@ -3753,14 +3753,15 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     );
   };
 
-  // 7. Record Payment (with Finalized Invoice Immutability Guard — BUG-P2-07)
+  // 7. Record Payment (with Finalized Invoice Immutability Guard — BUG-P2-07 + Hybrid Split Support)
   const handleSavePayment = (
     bookingId: string,
     amount: number,
     method: PaymentMethod,
     transactionId: string,
     dateStr: string,
-    completeCheckout?: boolean
+    completeCheckout?: boolean,
+    splitEntries?: Array<{ method: PaymentMethod; amount: number; reference?: string }>
   ) => {
     const finalizedInv =
       findActiveFinalizedInvoiceForBooking(bookingId, appInvoices as any) ||
@@ -3780,26 +3781,35 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       return;
     }
 
+    const effectiveEntries =
+      splitEntries && splitEntries.length > 0
+        ? splitEntries.filter((e) => Number(e.amount) > 0)
+        : [{ method, amount, reference: transactionId }];
+    const totalCollectedNow = Math.round(effectiveEntries.reduce((s, e) => s + Number(e.amount || 0), 0) * 100) / 100;
+    const baseTs = Date.now();
+    const payDatePart = dateStr.split(' ')[0] || new Date().toISOString().slice(0, 10);
+    const payTimePart = dateStr.split(' ').slice(1).join(' ') || new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+
     const nextBookings = bookings.map((b) => {
       if (b.id !== bookingId) return b;
-      const newPaid = b.amountPaid + amount;
+      const newPaid = Math.round((b.amountPaid + totalCollectedNow) * 100) / 100;
       const newDue = Math.max(0, Math.round((b.totalPayable - newPaid) * 100) / 100);
-      const newPayment = {
-        id: `PAY-${Date.now()}`,
+      const newPayments = effectiveEntries.map((entry, idx) => ({
+        id: `PAY-${baseTs}-${idx}`,
         bookingId: b.id,
-        amount,
-        paymentMethod: method,
-        transactionId: transactionId || `TXN-${Date.now()}`,
-        date: dateStr.split(' ')[0] || new Date().toISOString().slice(0, 10),
-        time: dateStr.split(' ').slice(1).join(' ') || new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+        amount: Number(entry.amount),
+        paymentMethod: entry.method,
+        transactionId: entry.reference || transactionId || `TXN-${baseTs}-${idx}`,
+        date: payDatePart,
+        time: payTimePart,
         recordedBy: loggedInUser || 'Reception Desk',
-      };
+      }));
       const updated: BookingRecord = {
         ...b,
         amountPaid: newPaid,
         dueAmount: newDue,
         paymentStatus: newDue <= 0 ? 'Fully Paid' : 'Partially Paid',
-        payments: [newPayment, ...b.payments],
+        payments: [...newPayments, ...b.payments],
         status: completeCheckout ? 'Checked Out' : b.status,
         isCheckedOut: completeCheckout ? true : b.isCheckedOut,
       };
@@ -3813,46 +3823,50 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     const targetBkg = bookings.find((b) => b.id === bookingId);
     if (targetBkg) {
       const todayIso = new Date().toISOString().slice(0, 10);
-      const newVch: FinanceVoucherRecord = {
-        id: `VCH-${Date.now()}`,
-        voucherNo: `RV-${Date.now().toString().slice(-5)}`,
+      const newVchs: FinanceVoucherRecord[] = effectiveEntries.map((entry, idx) => ({
+        id: `VCH-${baseTs}-${idx}`,
+        voucherNo: `RV-${String(baseTs + idx).slice(-5)}`,
         type: 'Receipt Voucher',
         date: todayIso,
         partyName: `${targetBkg.customerName} (Booking ${targetBkg.bookingNo})`,
         category: 'Room & Folio Settlement',
-        amount,
-        paymentMethod: method,
-        referenceNo: transactionId,
-        narration: `Bill payment received via ${method}`,
+        amount: Number(entry.amount),
+        paymentMethod: entry.method,
+        referenceNo: entry.reference || transactionId,
+        narration:
+          effectiveEntries.length > 1
+            ? `Hybrid split bill payment (${entry.method} ₹${entry.amount}) of ₹${totalCollectedNow}`
+            : `Bill payment received via ${entry.method}`,
         preparedBy: loggedInUser || 'Reception Desk',
         sourceType: 'booking_payment',
         sourceId: targetBkg.id,
-      };
-      setVouchers((prev) => [newVch, ...prev]);
+      }));
+      setVouchers((prev) => [...newVchs, ...prev]);
       if (onUpdateVouchers) {
         onUpdateVouchers([
-          {
+          ...newVchs.map((newVch) => ({
             id: newVch.id,
             hotelId: selectedHotelId,
             voucherNumber: newVch.voucherNo,
-            voucherType: 'Receipt',
+            voucherType: 'Receipt' as const,
             date: newVch.date,
             amount: newVch.amount,
-            paymentMode: (method as any) || 'Cash',
+            paymentMode: (newVch.paymentMethod as any) || 'Cash',
             partyName: newVch.partyName,
             category: newVch.category,
             referenceNumber: newVch.referenceNo,
             description: newVch.narration,
             createdBy: newVch.preparedBy,
             ...({ sourceType: 'booking_payment', sourceId: targetBkg.id } as any),
-          },
+          })),
           ...appVouchers,
         ]);
       }
+      const modeSummary = effectiveEntries.map((e) => `${e.method} ₹${e.amount}`).join(' + ');
       logAudit(
         'Payments',
         'Bill Payment Recorded',
-        `Collected ₹${amount.toLocaleString('en-IN')} via ${method} (${transactionId}) for ${targetBkg.customerName}.`,
+        `Collected ₹${totalCollectedNow.toLocaleString('en-IN')} via ${modeSummary} (${transactionId}) for ${targetBkg.customerName}.`,
         'success'
       );
     }
