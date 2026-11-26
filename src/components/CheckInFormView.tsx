@@ -5833,6 +5833,7 @@ export default function CheckInFormView({
                               <input
                                 type="number"
                                 min={0}
+                                step="any"
                                 value={roomRate}
                                 onWheel={(e) => e.currentTarget.blur()}
                                 onChange={(e) => setRoomRate(Math.max(0, Number(e.target.value) || 0))}
@@ -6916,6 +6917,7 @@ export default function CheckInFormView({
                     <input
                       type="number"
                       min={0}
+                      step="any"
                       value={roomRate}
                       onWheel={(e) => e.currentTarget.blur()}
                       onChange={(e) => setRoomRate(Math.max(0, Number(e.target.value) || 0))}
@@ -8607,6 +8609,7 @@ export default function CheckInFormView({
                               <input
                                 type="number"
                                 min={0}
+                                step="any"
                                 value={roomRate || ''}
                                 placeholder="Select room"
                                 onWheel={(e) => e.currentTarget.blur()}
@@ -9442,6 +9445,7 @@ export default function CheckInFormView({
                               <input
                                 type="number"
                                 min={0}
+                                step="any"
                                 value={chargeableWaterRateInput}
                                 onWheel={(e) => e.currentTarget.blur()}
                                 onChange={e => {
