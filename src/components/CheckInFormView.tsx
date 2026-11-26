@@ -21,6 +21,11 @@ import { requestAtomicGrcNumber, toGrcPrintData } from '../utils/stayBilling';
 import { collectStayCharges } from '../utils/folioCollector';
 import { defaultGrcTerms, renderGrcHtml } from '../utils/printTemplates';
 import { openPrintWindow } from '../utils/printDocument';
+import {
+  useHotelPaymentModes,
+  buildPaymentOptions,
+  PaymentModeDetailsCard,
+} from './PaymentModeDetailsCard';
 
 interface CheckInFormViewProps {
   mode?: 'walkin' | 'checkin';
@@ -1401,6 +1406,21 @@ export default function CheckInFormView({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Cash');
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [paymentNotes, setPaymentNotes] = useState('');
+
+  // Hotel's own Configuration → Payment Mode (enabled + custom tenders, live UPI QR / Bank card)
+  const hotelPayModes = useHotelPaymentModes(
+    (hotelSettings as any)?.id,
+    (hotelSettings as any)?.paymentModes
+  );
+  const hotelPayCfg = buildPaymentOptions(hotelPayModes, 'checkin');
+  const useConfiguredPay = hotelPayCfg.configured;
+  useEffect(() => {
+    if (!useConfiguredPay || isHybridCheckInPay || editingCheckIn) return;
+    if (!hotelPayCfg.options.some((o) => o.value === paymentMethod)) {
+      setPaymentMethod(hotelPayCfg.options[0].value as PaymentMethod);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useConfiguredPay, isHybridCheckInPay, paymentMethod, hotelPayModes, editingCheckIn]);
 
   const roomChargesTotal = roomRate * stayNights;
   const extraBedTotal = singleExtraCalc.extraBedTotal;
@@ -10741,11 +10761,15 @@ export default function CheckInFormView({
                                     const rem = Math.max(0, finalAmount - advanceAmount);
                                     const seed = Number(paidAmount) > 0 ? Number(paidAmount) : rem;
                                     const half = Math.floor(seed / 2);
+                                    const hyM1 = (useConfiguredPay ? hotelPayCfg.options[0].value : 'Cash') as PaymentMethod;
+                                    const hyM2 = (useConfiguredPay
+                                      ? (hotelPayCfg.options[1] || hotelPayCfg.options[0]).value
+                                      : 'UPI') as PaymentMethod;
                                     setCheckInSplitRows([
-                                      { id: 'ci-sp-1', method: 'Cash', amount: half, ref: '' },
+                                      { id: 'ci-sp-1', method: hyM1, amount: half, ref: '' },
                                       {
                                         id: 'ci-sp-2',
-                                        method: 'UPI',
+                                        method: hyM2,
                                         amount: Math.max(0, Math.round((seed - half) * 100) / 100),
                                         ref: '',
                                       },
@@ -10757,12 +10781,31 @@ export default function CheckInFormView({
                                 }}
                                 className="w-full px-3 py-2 border border-[#C2CDD9] rounded-xl text-xs font-bold bg-white"
                               >
-                                <option value="Cash">Cash</option>
-                                <option value="UPI">UPI</option>
-                                <option value="Card">Card</option>
-                                <option value="Bank Transfer">Bank Transfer</option>
-                                <option value="Online">Virtual Payment / Online</option>
-                                <option value="Hybrid">⇄ Hybrid / Split Payment</option>
+                                {useConfiguredPay ? (
+                                  <>
+                                    {hotelPayCfg.options.map((o) => (
+                                      <option key={o.value} value={o.value}>
+                                        {o.label}
+                                      </option>
+                                    ))}
+                                    {!isHybridCheckInPay &&
+                                      !hotelPayCfg.options.some((o) => o.value === paymentMethod) && (
+                                        <option value={paymentMethod}>{String(paymentMethod)}</option>
+                                      )}
+                                    {hotelPayCfg.hybridAllowed && (
+                                      <option value="Hybrid">⇄ Hybrid / Split Payment</option>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    <option value="Cash">Cash</option>
+                                    <option value="UPI">UPI</option>
+                                    <option value="Card">Card</option>
+                                    <option value="Bank Transfer">Bank Transfer</option>
+                                    <option value="Online">Virtual Payment / Online</option>
+                                    <option value="Hybrid">⇄ Hybrid / Split Payment</option>
+                                  </>
+                                )}
                               </select>
                             </div>
 
@@ -10797,6 +10840,16 @@ export default function CheckInFormView({
                             </div>
                           </div>
 
+                          {/* Live UPI QR scanner / Bank account card for the selected payment mode */}
+                          {useConfiguredPay && !isHybridCheckInPay && (
+                            <PaymentModeDetailsCard
+                              modes={hotelPayModes}
+                              value={String(paymentMethod)}
+                              amount={Number(paidAmount) || 0}
+                              variant="checkin"
+                            />
+                          )}
+
                           {/* Hybrid / Split Payment Rows */}
                           {isHybridCheckInPay ? (
                             <div className="p-3 rounded-xl bg-white border border-[#C49A3A]/60 space-y-2.5">
@@ -10807,7 +10860,14 @@ export default function CheckInFormView({
                                   onClick={() =>
                                     setCheckInSplitRows(prev => [
                                       ...prev,
-                                      { id: `ci-sp-${Date.now()}`, method: 'Card', amount: '', ref: '' },
+                                      {
+                                        id: `ci-sp-${Date.now()}`,
+                                        method: (useConfiguredPay
+                                          ? (hotelPayCfg.options.find((o) => o.value === 'Card') || hotelPayCfg.options[0]).value
+                                          : 'Card') as PaymentMethod,
+                                        amount: '',
+                                        ref: '',
+                                      },
                                     ])
                                   }
                                   className="px-2.5 py-1 rounded-lg bg-[#F4F6F9] hover:bg-[#FDF8ED] border border-[#C49A3A] text-[11px] font-bold text-[#8B691E] cursor-pointer"
@@ -10826,11 +10886,26 @@ export default function CheckInFormView({
                                     }
                                     className="col-span-4 px-2 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-bold bg-white"
                                   >
-                                    <option value="Cash">Cash</option>
-                                    <option value="UPI">UPI</option>
-                                    <option value="Card">Card</option>
-                                    <option value="Bank Transfer">Bank</option>
-                                    <option value="Online">Virtual</option>
+                                    {useConfiguredPay ? (
+                                      <>
+                                        {hotelPayCfg.options.map((o) => (
+                                          <option key={o.value} value={o.value}>
+                                            {o.value === 'Bank Transfer' ? 'Bank' : o.value === 'Online' ? 'Virtual' : o.label}
+                                          </option>
+                                        ))}
+                                        {!hotelPayCfg.options.some((o) => o.value === sp.method) && (
+                                          <option value={sp.method}>{String(sp.method)}</option>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <>
+                                        <option value="Cash">Cash</option>
+                                        <option value="UPI">UPI</option>
+                                        <option value="Card">Card</option>
+                                        <option value="Bank Transfer">Bank</option>
+                                        <option value="Online">Virtual</option>
+                                      </>
+                                    )}
                                   </select>
                                   <input
                                     type="number"
@@ -10870,6 +10945,17 @@ export default function CheckInFormView({
                                   </button>
                                 </div>
                               ))}
+                              {useConfiguredPay &&
+                                checkInSplitRows.map((sp) => (
+                                  <div key={`ci-card-${sp.id}`}>
+                                    <PaymentModeDetailsCard
+                                      modes={hotelPayModes}
+                                      value={String(sp.method)}
+                                      amount={Number(sp.amount) || 0}
+                                      variant="checkin"
+                                    />
+                                  </div>
+                                ))}
                               <div className="flex justify-between text-[11px] font-mono pt-1 border-t border-[#DCE3EC]">
                                 <span className="text-emerald-700 font-bold">
                                   Combined: ₹{effectiveDeskReceivedNow.toLocaleString('en-IN')}

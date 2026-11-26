@@ -6343,6 +6343,8 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
 
       <CheckoutClearanceModal
         booking={checkoutClearanceBooking}
+        hotelId={(hotelSettings as any)?.id}
+        paymentModes={(hotelSettings as any)?.paymentModes}
         existingInvoice={findPrimaryInvoiceForBooking(checkoutClearanceBooking) || null}
         billSettings={billSettings}
         rawBooking={

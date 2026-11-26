@@ -49,6 +49,11 @@ import {
   Trash2, Tag, ChevronRight, AlertCircle, ShoppingBag, Droplets, Bed, CheckCircle2, X, Receipt, Edit, Undo2, ArrowRightLeft,
   Smartphone, Share2, Copy, ExternalLink, QrCode, UtensilsCrossed
 } from 'lucide-react';
+import {
+  useHotelPaymentModes,
+  buildPaymentOptions,
+  PaymentModeDetailsCard,
+} from './PaymentModeDetailsCard';
 
 interface FrontDeskViewProps {
   currentSubTab: string;
@@ -652,6 +657,38 @@ export default function FrontDeskView({
   const [coPayAmountTouched, setCoPayAmountTouched] = useState<boolean>(false);
   const [coPayMethod, setCoPayMethod] = useState<'UPI' | 'Cash' | 'Card' | 'Bank' | 'Custom'>('UPI');
   const [coCustomPayLabel, setCoCustomPayLabel] = useState<string>('');
+
+  // Hotel's own Configuration → Payment Mode (enabled + custom tenders, live UPI QR / Bank card)
+  const hotelPayModes = useHotelPaymentModes(
+    (hotelSettings as any)?.id,
+    (hotelSettings as any)?.paymentModes
+  );
+  const hotelPayCfg = buildPaymentOptions(hotelPayModes, 'checkout');
+  const useConfiguredPay = hotelPayCfg.configured;
+  const CO_BUILTIN_VALUES = ['Cash', 'UPI', 'Card', 'Bank Transfer'];
+  const coBuiltinEnabled = (v: string) => !useConfiguredPay || hotelPayCfg.options.some((o) => o.value === v);
+  const coConfiguredExtras = useConfiguredPay
+    ? hotelPayCfg.options.filter((o) => !CO_BUILTIN_VALUES.includes(o.value))
+    : [];
+  const coSelectValue =
+    coPayMethod === 'Custom' && coConfiguredExtras.some((o) => o.value === coCustomPayLabel.trim())
+      ? `custom::${coCustomPayLabel.trim()}`
+      : coPayMethod;
+  const coDetailsValue =
+    coPayMethod === 'Custom' ? coCustomPayLabel.trim() : coPayMethod === 'Bank' ? 'Bank Transfer' : coPayMethod;
+  useEffect(() => {
+    if (!useConfiguredPay || coPayMethod === 'Custom') return;
+    const current = coPayMethod === 'Bank' ? 'Bank Transfer' : coPayMethod;
+    if (hotelPayCfg.options.some((o) => o.value === current)) return;
+    const first = hotelPayCfg.options[0];
+    if (CO_BUILTIN_VALUES.includes(first.value)) {
+      setCoPayMethod((first.value === 'Bank Transfer' ? 'Bank' : first.value) as any);
+    } else {
+      setCoPayMethod('Custom');
+      setCoCustomPayLabel(first.value);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useConfiguredPay, coPayMethod, hotelPayModes]);
   const [coHybridPay, setCoHybridPay] = useState<boolean>(false);
   const [coSplit, setCoSplit] = useState<Record<SplitMode, number | ''>>(emptySplit);
   const [coSplitOtherLabel, setCoSplitOtherLabel] = useState<string>('');
@@ -7914,6 +7951,7 @@ export default function FrontDeskView({
                     <span className="text-[11px] font-mono uppercase font-bold text-[#263449]">
                       4. Check-Out Settlement &amp; Hybrid Payment Mode
                     </span>
+                    {(!useConfiguredPay || hotelPayCfg.hybridAllowed) && (
                     <label className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#FDF8ED] hover:bg-[#FBF4E0] border border-[#C49A3A] rounded-lg cursor-pointer select-none font-bold text-[#17120F] text-xs shadow-2xs">
                       <input
                         type="checkbox"
@@ -7935,6 +7973,7 @@ export default function FrontDeskView({
                       />
                       <span>Hybrid / Split Payment (Cash + UPI + Card + Custom)</span>
                     </label>
+                    )}
                   </div>
 
                   {!coHybridPay ? (
@@ -7961,17 +8000,30 @@ export default function FrontDeskView({
                           Settlement Payment Mode
                         </label>
                         <select
-                          value={coPayMethod}
-                          onChange={e => setCoPayMethod(e.target.value as any)}
+                          value={coSelectValue}
+                          onChange={e => {
+                            const v = e.target.value;
+                            if (v.startsWith('custom::')) {
+                              setCoPayMethod('Custom');
+                              setCoCustomPayLabel(v.slice('custom::'.length));
+                            } else {
+                              setCoPayMethod(v as any);
+                            }
+                          }}
                           className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-bold text-xs text-[#263449]"
                         >
-                          <option value="UPI">UPI / QR Scan</option>
-                          <option value="Cash">Cash</option>
-                          <option value="Card">Debit / Credit Card</option>
-                          <option value="Bank">Bank Transfer / NEFT</option>
+                          {coBuiltinEnabled('UPI') && <option value="UPI">UPI / QR Scan</option>}
+                          {coBuiltinEnabled('Cash') && <option value="Cash">Cash</option>}
+                          {coBuiltinEnabled('Card') && <option value="Card">Debit / Credit Card</option>}
+                          {coBuiltinEnabled('Bank Transfer') && <option value="Bank">Bank Transfer / NEFT</option>}
+                          {coConfiguredExtras.map(o => (
+                            <option key={`cfg-${o.value}`} value={`custom::${o.value}`}>
+                              {o.label}
+                            </option>
+                          ))}
                           <option value="Custom">Custom / Type Manually...</option>
                         </select>
-                        {coPayMethod === 'Custom' && (
+                        {coPayMethod === 'Custom' && !coSelectValue.startsWith('custom::') && (
                           <input
                             type="text"
                             value={coCustomPayLabel}
@@ -7981,6 +8033,16 @@ export default function FrontDeskView({
                           />
                         )}
                       </div>
+                      {useConfiguredPay && (
+                        <div className="sm:col-span-2">
+                          <PaymentModeDetailsCard
+                            modes={hotelPayModes}
+                            value={coDetailsValue}
+                            amount={Number(activeCollectAmount) || 0}
+                            variant="checkout"
+                          />
+                        </div>
+                      )}
                     </div>
                   ) : (
                     (() => {

@@ -178,6 +178,15 @@ export default function PaymentModeView({
       };
       onUpdateGlobalHotels([updatedHotel]);
 
+      // Live-sync: Check-In / Check-Out payment dropdowns & UPI/Bank cards refresh instantly (no reload needed)
+      try {
+        window.dispatchEvent(
+          new CustomEvent('directstay:payment-modes-updated', {
+            detail: { hotelId: activeHotel?.id, modes },
+          })
+        );
+      } catch {}
+
       const activeCount = modes.filter((m) => m.enabled).length;
       onAddAuditLog?.(
         'Payment Modes Updated',

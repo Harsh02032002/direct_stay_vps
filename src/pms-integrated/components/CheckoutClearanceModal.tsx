@@ -25,9 +25,16 @@ import {
   r2,
 } from '../../utils/billCalculator';
 import { buildStayBill } from '../../utils/stayBilling';
+import {
+  useHotelPaymentModes,
+  buildPaymentOptions,
+  PaymentModeDetailsCard,
+} from '../../components/PaymentModeDetailsCard';
 
 interface CheckoutClearanceModalProps {
   booking: BookingRecord | null;
+  hotelId?: string;
+  paymentModes?: any[];
   existingInvoice?: InvoiceRecord | null;
   billSettings?: BillSettings;
   rawBooking?: Record<string, any> | null;
@@ -74,6 +81,8 @@ function serviceToChargeKind(serviceType?: string, desc?: string): BillChargeKin
 
 export default function CheckoutClearanceModal({
   booking,
+  hotelId,
+  paymentModes,
   existingInvoice,
   billSettings,
   rawBooking,
@@ -87,6 +96,11 @@ export default function CheckoutClearanceModal({
   onCompleteFinalCheckout,
   onRegisterLostFound,
 }: CheckoutClearanceModalProps) {
+  // Hotel's own Configuration → Payment Mode (enabled + custom tenders, live UPI QR / Bank card)
+  const hotelPayModes = useHotelPaymentModes(hotelId, paymentModes);
+  const hotelPayCfg = buildPaymentOptions(hotelPayModes, 'checkout');
+  const useConfiguredPay = hotelPayCfg.configured;
+
   if (!booking) return null;
 
   const safeRoomNumbers: string[] =
@@ -175,6 +189,11 @@ export default function CheckoutClearanceModal({
   const [secondaryPayAmount, setSecondaryPayAmount] = useState<number>(0);
   const [secondaryRef, setSecondaryRef] = useState<string>(`CASH-${Math.floor(1000 + Math.random() * 9000)}`);
 
+  // Extra Hybrid / Split rows beyond the first two (Cash + UPI + Card + Bank + custom tenders)
+  const [extraSplitRows, setExtraSplitRows] = useState<
+    Array<{ id: string; method: PaymentMethod; amount: number; ref: string }>
+  >([]);
+
   const [refundAmount, setRefundAmount] = useState<number>(0);
   const [allowCreditCheckout, setAllowCreditCheckout] = useState<boolean>(false);
 
@@ -189,6 +208,7 @@ export default function CheckoutClearanceModal({
         setIsGstEnabled(Boolean(booking.gstInvoice && bRate > 0));
       }
       setIsSplitPayment(false);
+      setExtraSplitRows([]);
       setCoMarkPaid(false);
       setPayInputsTouched(false);
       setPrimaryPayAmount(0);
@@ -263,6 +283,24 @@ export default function CheckoutClearanceModal({
   const netOutstanding = bill.balance;
   const refundableExcess = bill.refundDue;
 
+  // Sum of extra Hybrid rows (only when Hybrid / Split is active)
+  const extraSplitSum = isSplitPayment
+    ? r2(extraSplitRows.reduce((s, r) => s + (Number(r.amount) || 0), 0))
+    : 0;
+
+  // If client disabled the currently selected tender in Payment Mode setup, fall back to an enabled one
+  useEffect(() => {
+    if (!useConfiguredPay) return;
+    const opts = hotelPayCfg.options;
+    if (!opts.some((o) => o.value === primaryPayMethod)) {
+      setPrimaryPayMethod(opts[0].value as PaymentMethod);
+    }
+    if (!opts.some((o) => o.value === secondaryPayMethod)) {
+      setSecondaryPayMethod((opts[1] || opts[0]).value as PaymentMethod);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useConfiguredPay, hotelPayModes]);
+
   // Keep payment inputs synchronized with checkbox & net balance without prematurely marking unpaid bills as paid
   useEffect(() => {
     if (netOutstanding <= 0) {
@@ -284,12 +322,12 @@ export default function CheckoutClearanceModal({
       setCoMarkPaid(false);
     } else {
       const currentEntered = r2(
-        (Number(primaryPayAmount) || 0) + (isSplitPayment ? Number(secondaryPayAmount) || 0 : 0)
+        (Number(primaryPayAmount) || 0) + (isSplitPayment ? (Number(secondaryPayAmount) || 0) + extraSplitSum : 0)
       );
       setCoMarkPaid(currentEntered >= r2(netOutstanding));
     }
     setRefundAmount(refundableExcess);
-  }, [netOutstanding, refundableExcess, isSplitPayment, coMarkPaid, payInputsTouched]);
+  }, [netOutstanding, refundableExcess, isSplitPayment, coMarkPaid, payInputsTouched, extraSplitSum]);
 
   const handleAddCharge = (
     descOverride?: string,
@@ -327,7 +365,7 @@ export default function CheckoutClearanceModal({
   };
 
   const totalCollectingNow = r2(
-    (Number(primaryPayAmount) || 0) + (isSplitPayment ? Number(secondaryPayAmount) || 0 : 0)
+    (Number(primaryPayAmount) || 0) + (isSplitPayment ? (Number(secondaryPayAmount) || 0) + extraSplitSum : 0)
   );
   const remainingAfterCollection = Math.max(0, r2(netOutstanding - totalCollectingNow));
 
@@ -347,6 +385,18 @@ export default function CheckoutClearanceModal({
         method: secondaryPayMethod,
         referenceNo: secondaryRef || `SPLIT-${Date.now()}`,
         notes: 'Checkout Split Payment (Part 2)',
+      });
+    }
+    if (isSplitPayment) {
+      extraSplitRows.forEach((row, idx) => {
+        if ((Number(row.amount) || 0) > 0) {
+          paymentsToRecord.push({
+            amount: r2(Number(row.amount)),
+            method: row.method,
+            referenceNo: row.ref || `SPLIT-${Date.now()}-${idx + 3}`,
+            notes: `Checkout Split Payment (Part ${idx + 3})`,
+          });
+        }
       });
     }
 
@@ -906,7 +956,7 @@ export default function CheckoutClearanceModal({
                 Final Payment Clearance (Cash / UPI / Card Swipe / Split Mode)
               </h4>
 
-              {netOutstanding > 0 && (
+              {netOutstanding > 0 && (!useConfiguredPay || hotelPayCfg.hybridAllowed) && (
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -918,7 +968,7 @@ export default function CheckoutClearanceModal({
                     }`}
                   >
                     <Split className="w-3.5 h-3.5" />
-                    {isSplitPayment ? 'Split Payment Active (2 Modes)' : 'Enable Split Payment (Cash + UPI)'}
+                    {isSplitPayment ? 'Hybrid / Split Payment Active' : 'Enable Hybrid / Split Payment'}
                   </button>
                 </div>
               )}
@@ -994,13 +1044,41 @@ export default function CheckoutClearanceModal({
                     </label>
                     <select
                       value={primaryPayMethod}
-                      onChange={(e) => setPrimaryPayMethod(e.target.value as PaymentMethod)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '__hybrid__') {
+                          setIsSplitPayment(true);
+                        } else if (v === '__single__') {
+                          setIsSplitPayment(false);
+                        } else {
+                          setPrimaryPayMethod(v as PaymentMethod);
+                        }
+                      }}
                       className="w-full px-3 py-2 border rounded-lg font-bold text-xs bg-white"
                     >
-                      <option value="UPI">UPI / QR Scan</option>
-                      <option value="Cash">Cash Drawer</option>
-                      <option value="Card">POS Card Swipe</option>
-                      <option value="Bank Transfer">NEFT / IMPS Bank Transfer</option>
+                      {useConfiguredPay ? (
+                        <>
+                          {hotelPayCfg.options.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                          {!hotelPayCfg.options.some((o) => o.value === primaryPayMethod) && (
+                            <option value={primaryPayMethod}>{String(primaryPayMethod)}</option>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <option value="UPI">UPI / QR Scan</option>
+                          <option value="Cash">Cash Drawer</option>
+                          <option value="Card">POS Card Swipe</option>
+                          <option value="Bank Transfer">NEFT / IMPS Bank Transfer</option>
+                        </>
+                      )}
+                      {!isSplitPayment && (!useConfiguredPay || hotelPayCfg.hybridAllowed) && (
+                        <option value="__hybrid__">⇄ Hybrid / Split Payment</option>
+                      )}
+                      {isSplitPayment && <option value="__single__">← Back to Single Payment</option>}
                     </select>
                   </div>
                   <div>
@@ -1015,7 +1093,9 @@ export default function CheckoutClearanceModal({
                         const val = Math.max(0, r2(Number(e.target.value) || 0));
                         setPayInputsTouched(true);
                         setPrimaryPayAmount(val);
-                        const nextTotal = r2(val + (isSplitPayment ? Number(secondaryPayAmount) || 0 : 0));
+                        const nextTotal = r2(
+                          val + (isSplitPayment ? (Number(secondaryPayAmount) || 0) + extraSplitSum : 0)
+                        );
                         setCoMarkPaid(netOutstanding <= 0 || nextTotal >= r2(netOutstanding));
                       }}
                       className="w-full px-3 py-2 border rounded-lg font-mono font-bold text-xs text-emerald-800"
@@ -1034,6 +1114,16 @@ export default function CheckoutClearanceModal({
                   </div>
                 </div>
 
+                {/* Live UPI QR scanner / Bank account card for the selected payment mode */}
+                {useConfiguredPay && (
+                  <PaymentModeDetailsCard
+                    modes={hotelPayModes}
+                    value={String(primaryPayMethod)}
+                    amount={Number(primaryPayAmount) || 0}
+                    variant="checkout"
+                  />
+                )}
+
                 {/* Secondary Split Payment Row */}
                 {isSplitPayment && (
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-amber-50/50 p-3 rounded-xl border border-amber-200">
@@ -1046,10 +1136,25 @@ export default function CheckoutClearanceModal({
                         onChange={(e) => setSecondaryPayMethod(e.target.value as PaymentMethod)}
                         className="w-full px-3 py-2 border rounded-lg font-bold text-xs bg-white"
                       >
-                        <option value="Cash">Cash Drawer</option>
-                        <option value="UPI">UPI / QR Scan</option>
-                        <option value="Card">POS Card Swipe</option>
-                        <option value="Bank Transfer">Bank Transfer</option>
+                        {useConfiguredPay ? (
+                          <>
+                            {hotelPayCfg.options.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                            {!hotelPayCfg.options.some((o) => o.value === secondaryPayMethod) && (
+                              <option value={secondaryPayMethod}>{String(secondaryPayMethod)}</option>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <option value="Cash">Cash Drawer</option>
+                            <option value="UPI">UPI / QR Scan</option>
+                            <option value="Card">POS Card Swipe</option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                          </>
+                        )}
                       </select>
                     </div>
                     <div>
@@ -1064,7 +1169,7 @@ export default function CheckoutClearanceModal({
                           const val = Math.max(0, r2(Number(e.target.value) || 0));
                           setPayInputsTouched(true);
                           setSecondaryPayAmount(val);
-                          const nextTotal = r2((Number(primaryPayAmount) || 0) + val);
+                          const nextTotal = r2((Number(primaryPayAmount) || 0) + val + extraSplitSum);
                           setCoMarkPaid(netOutstanding <= 0 || nextTotal >= r2(netOutstanding));
                         }}
                         className="w-full px-3 py-2 border rounded-lg font-mono font-bold text-xs text-emerald-800 bg-white"
@@ -1081,6 +1186,142 @@ export default function CheckoutClearanceModal({
                         className="w-full px-3 py-2 border rounded-lg font-mono text-xs bg-white"
                       />
                     </div>
+                  </div>
+                )}
+
+                {/* Live UPI QR / Bank card for Hybrid Mode 2 + extra Hybrid rows (+ Add Method) */}
+                {isSplitPayment && useConfiguredPay && (
+                  <PaymentModeDetailsCard
+                    modes={hotelPayModes}
+                    value={String(secondaryPayMethod)}
+                    amount={Number(secondaryPayAmount) || 0}
+                    variant="checkout"
+                  />
+                )}
+
+                {isSplitPayment && (
+                  <div className="space-y-2">
+                    {extraSplitRows.map((row, idx) => (
+                      <React.Fragment key={row.id}>
+                        <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_auto] gap-3 bg-amber-50/50 p-3 rounded-xl border border-amber-200 items-end">
+                          <div>
+                            <label className="block text-[10px] font-mono uppercase font-bold text-amber-900 mb-1">
+                              Split Payment Mode {idx + 3}
+                            </label>
+                            <select
+                              value={row.method}
+                              onChange={(e) =>
+                                setExtraSplitRows((prev) =>
+                                  prev.map((r) =>
+                                    r.id === row.id ? { ...r, method: e.target.value as PaymentMethod } : r
+                                  )
+                                )
+                              }
+                              className="w-full px-3 py-2 border rounded-lg font-bold text-xs bg-white"
+                            >
+                              {useConfiguredPay ? (
+                                <>
+                                  {hotelPayCfg.options.map((o) => (
+                                    <option key={o.value} value={o.value}>
+                                      {o.label}
+                                    </option>
+                                  ))}
+                                  {!hotelPayCfg.options.some((o) => o.value === row.method) && (
+                                    <option value={row.method}>{String(row.method)}</option>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  <option value="Cash">Cash Drawer</option>
+                                  <option value="UPI">UPI / QR Scan</option>
+                                  <option value="Card">POS Card Swipe</option>
+                                  <option value="Bank Transfer">Bank Transfer</option>
+                                </>
+                              )}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono uppercase font-bold text-amber-900 mb-1">
+                              Split Amount {idx + 3} (₹)
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={row.amount}
+                              onChange={(e) => {
+                                const val = Math.max(0, r2(Number(e.target.value) || 0));
+                                setPayInputsTouched(true);
+                                const nextRows = extraSplitRows.map((r) =>
+                                  r.id === row.id ? { ...r, amount: val } : r
+                                );
+                                setExtraSplitRows(nextRows);
+                                const nextExtra = r2(nextRows.reduce((s, r) => s + (Number(r.amount) || 0), 0));
+                                const nextTotal = r2(
+                                  (Number(primaryPayAmount) || 0) + (Number(secondaryPayAmount) || 0) + nextExtra
+                                );
+                                setCoMarkPaid(netOutstanding <= 0 || nextTotal >= r2(netOutstanding));
+                              }}
+                              className="w-full px-3 py-2 border rounded-lg font-mono font-bold text-xs text-emerald-800 bg-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono uppercase font-bold text-amber-900 mb-1">
+                              Split Reference {idx + 3}
+                            </label>
+                            <input
+                              type="text"
+                              value={row.ref}
+                              onChange={(e) =>
+                                setExtraSplitRows((prev) =>
+                                  prev.map((r) => (r.id === row.id ? { ...r, ref: e.target.value } : r))
+                                )
+                              }
+                              className="w-full px-3 py-2 border rounded-lg font-mono text-xs bg-white"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setExtraSplitRows((prev) => prev.filter((r) => r.id !== row.id))}
+                            className="px-2.5 py-2 rounded-lg text-rose-700 hover:bg-rose-50 border border-rose-200 font-bold text-xs cursor-pointer"
+                            title="Remove this payment row"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {useConfiguredPay && (
+                          <PaymentModeDetailsCard
+                            modes={hotelPayModes}
+                            value={String(row.method)}
+                            amount={Number(row.amount) || 0}
+                            variant="checkout"
+                          />
+                        )}
+                      </React.Fragment>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExtraSplitRows((prev) => [
+                          ...prev,
+                          {
+                            id: `co-split-${Date.now()}-${prev.length}`,
+                            method: (useConfiguredPay
+                              ? (hotelPayCfg.options.find((o) => o.value === 'Card') || hotelPayCfg.options[0]).value
+                              : 'Card') as PaymentMethod,
+                            amount: 0,
+                            ref: '',
+                          },
+                        ])
+                      }
+                      className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#FFF6DF] border border-[#C49A3A] text-xs font-bold text-[#8B691E] cursor-pointer"
+                    >
+                      + Add Method
+                    </button>
+                    {extraSplitRows.length > 0 && (
+                      <div className="text-[11px] font-mono font-bold text-emerald-700">
+                        Hybrid Total Collecting: {formatINRDecimal(totalCollectingNow)}
+                      </div>
+                    )}
                   </div>
                 )}
 
