@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+﻿import React, { useState, useEffect, useMemo } from 'react';
 import { Booking, GuestCheckIn, Room, RoomCategory, UserRole, Staff, BookedRoom, SecondaryGuest, HotelSettings, PaymentRecord, CFormData, WaterBottleRecord, AllocatedGuestService, ExtraCharge, Invoice, TravelAgent, MealPlanType, PaymentMethod, BookingSource, BookingStatus, InventoryProduct, InventoryStockMovement, PosOrder } from '../types';
 import { 
   Contact, Printer, Check, Receipt, RefreshCw, FileCheck, Users, 
@@ -126,7 +126,7 @@ const getFutureDateStr = (daysAhead: number, baseDateStr?: string) => {
 
 const formatDdmmyyyy = (ymd?: string): string => {
   const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!m) return String(ymd || '—');
+  if (!m) return String(ymd || 'â€”');
   return `${m[3]}-${m[2]}-${m[1]}`;
 };
 
@@ -316,7 +316,7 @@ export default function CheckInFormView({
         time: new Date().toLocaleTimeString(),
         referenceType: 'Purchase' as any,
         referenceId: `QUICK-CI-${Date.now()}`,
-        notes: `Quick restock from Check-In (+${qtyToAdd} bottles @ ₹${sellRate}/bottle)`,
+        notes: `Quick restock from Check-In (+${qtyToAdd} bottles @ â‚¹${sellRate}/bottle)`,
         performedBy: loggedInUser || 'Admin',
         hotelId: currentHotelId,
       } as unknown as InventoryStockMovement;
@@ -328,7 +328,7 @@ export default function CheckInFormView({
     }
     setShowQuickAddWaterStock(false);
     showToast(
-      `Added ${qtyToAdd} water bottles to Inventory (Stock: ${prevStock} → ${nextStock}, Rate: ₹${sellRate}/bottle).`,
+      `Added ${qtyToAdd} water bottles to Inventory (Stock: ${prevStock} â†’ ${nextStock}, Rate: â‚¹${sellRate}/bottle).`,
       'success'
     );
   };
@@ -686,7 +686,7 @@ export default function CheckInFormView({
     const selectedRoom = rooms.find(r => r.number === selectedRoomNumber);
     const catalogRate = selectedRoom?.rate || standardRate || 2000;
     setRoomRate(catalogRate);
-    showToast(`Room tariff reset to fixed catalog rate (₹${catalogRate}/night).`, 'info');
+    showToast(`Room tariff reset to fixed catalog rate (â‚¹${catalogRate}/night).`, 'info');
   };
 
   // Sync prefill from PMS Overview Quick Walk-In / Check-In
@@ -734,7 +734,7 @@ export default function CheckInFormView({
     return () => window.removeEventListener('directstay:checkin-nav', handleSidebarCheckInNav);
   }, []);
 
-  // Sync pricing upon room selection (only when selectedRoomNumber or booking identity changes — never wipe manual edits on background polls)
+  // Sync pricing upon room selection (only when selectedRoomNumber or booking identity changes â€” never wipe manual edits on background polls)
   const lastSyncedSingleRoomRef = React.useRef<string>('');
   useEffect(() => {
     if (!selectedRoomNumber) {
@@ -849,7 +849,7 @@ export default function CheckInFormView({
     extraChargeTouchedRef.current = false;
   }, [selectedRoomNumber, rooms, selectedBooking, editingCheckIn]);
 
-  // Negotiated room rate is the direct base room tariff (e.g. ₹1800 instead of ₹2000 rack); discount applies ONLY when explicitly enabled
+  // Negotiated room rate is the direct base room tariff (e.g. â‚¹1800 instead of â‚¹2000 rack); discount applies ONLY when explicitly enabled
   const discountPerNight = discountEnabled && Number(discountInputValue) > 0
     ? Math.max(0, standardRate - roomRate)
     : 0;
@@ -1084,7 +1084,7 @@ export default function CheckInFormView({
     }
   };
 
-  // 7. Extra Person & Extra Bed/Mattress State (Both strictly OFF by default — independent checkboxes!)
+  // 7. Extra Person & Extra Bed/Mattress State (Both strictly OFF by default â€” independent checkboxes!)
   const [applyExtraPersonCharge, setApplyExtraPersonCharge] = useState<boolean>(false);
   const [extraPersonQty, setExtraPersonQty] = useState<number>(1);
   const [extraPersonNightsOverride, setExtraPersonNightsOverride] = useState<number | ''>('');
@@ -1407,7 +1407,7 @@ export default function CheckInFormView({
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [paymentNotes, setPaymentNotes] = useState('');
 
-  // Hotel's own Configuration → Payment Mode (enabled + custom tenders, live UPI QR / Bank card)
+  // Hotel's own Configuration â†’ Payment Mode (enabled + custom tenders, live UPI QR / Bank card)
   const hotelPayModes = useHotelPaymentModes(
     (hotelSettings as any)?.id,
     (hotelSettings as any)?.paymentModes
@@ -1520,7 +1520,7 @@ export default function CheckInFormView({
     .map(r => ({
       id: `ci-cx-${r.id}`,
       kind: 'service' as const,
-      description: `${String(r.label).trim()} × ${Math.max(1, Number(r.qty) || 1)}`,
+      description: `${String(r.label).trim()} Ã— ${Math.max(1, Number(r.qty) || 1)}`,
       amount: Math.round(Math.max(1, Number(r.qty) || 1) * (Number(r.rate) || 0) * 100) / 100,
     }));
   const customExtraRowsTotal = customExtraRowCharges.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
@@ -1552,7 +1552,7 @@ export default function CheckInFormView({
     return 'gst_extra';
   });
 
-  // Collect existing folio charges already attached to this booking/stay (POS Room Service orders, chargeable water, laundry, booking otherServices) — strictly deduplicated by sourceKey
+  // Collect existing folio charges already attached to this booking/stay (POS Room Service orders, chargeable water, laundry, booking otherServices) â€” strictly deduplicated by sourceKey
   const existingStayFolioCharges: BillCharge[] = React.useMemo(() => {
     if (!selectedBooking && !editingCheckIn) return [];
     const existingOtherServiceIds = new Set(
@@ -1701,7 +1701,7 @@ export default function CheckInFormView({
                 {
                   id: 'ci-xpax',
                   kind: 'extra_person' as const,
-                  description: `Extra Person (${singleExtraCalc.extraPersonQty} × ₹${singleExtraCalc.extraPersonRate} × ${singleExtraCalc.extraPersonNights}N)`,
+                  description: `Extra Person (${singleExtraCalc.extraPersonQty} Ã— â‚¹${singleExtraCalc.extraPersonRate} Ã— ${singleExtraCalc.extraPersonNights}N)`,
                   amount: extraPersonChargesTotal,
                   roomNumber: selectedRoomNumber || '101',
                 },
@@ -1712,7 +1712,7 @@ export default function CheckInFormView({
                 {
                   id: 'ci-xbed',
                   kind: 'extra_bed' as const,
-                  description: `Extra Bed / Mattress (${singleExtraCalc.extraBedQty} × ₹${singleExtraCalc.extraBedRate} × ${singleExtraCalc.extraBedNights}N)`,
+                  description: `Extra Bed / Mattress (${singleExtraCalc.extraBedQty} Ã— â‚¹${singleExtraCalc.extraBedRate} Ã— ${singleExtraCalc.extraBedNights}N)`,
                   amount: extraBedTotal,
                   roomNumber: selectedRoomNumber || '101',
                 },
@@ -1723,7 +1723,7 @@ export default function CheckInFormView({
             return {
               id: `ci-svc-${s.id || idx}`,
               kind: 'service' as const,
-              description: qty > 1 ? `${String(s.serviceName || 'Service')} × ${qty}` : String(s.serviceName || 'Service'),
+              description: qty > 1 ? `${String(s.serviceName || 'Service')} Ã— ${qty}` : String(s.serviceName || 'Service'),
               amount: serviceLineTotalOf(s),
               roomNumber: selectedRoomNumber || '101',
             };
@@ -1733,7 +1733,7 @@ export default function CheckInFormView({
                 {
                   id: 'ci-custom-addon',
                   kind: 'service' as const,
-                  description: `${customAddonLabel.trim()} × ${Math.max(1, Number(customAddonQty) || 1)}`,
+                  description: `${customAddonLabel.trim()} Ã— ${Math.max(1, Number(customAddonQty) || 1)}`,
                   amount: customAddonSingleTotal,
                   roomNumber: selectedRoomNumber || '101',
                 },
@@ -1767,7 +1767,7 @@ export default function CheckInFormView({
                 {
                   id: 'ci-water-chg',
                   kind: 'water' as const,
-                  description: `Water Bottles (${chargeableWaterBottles} × ₹${effectiveChargeableWaterRate})`,
+                  description: `Water Bottles (${chargeableWaterBottles} Ã— â‚¹${effectiveChargeableWaterRate})`,
                   amount: chargeableWaterTotal,
                   quantity: chargeableWaterBottles,
                   rate: effectiveChargeableWaterRate,
@@ -1792,7 +1792,7 @@ export default function CheckInFormView({
                 {
                   id: 'ci-gr-xpax',
                   kind: 'extra_person' as const,
-                  description: `Extra Person (${Math.max(1, Number(extraPersonQty) || 1)} × ₹${effectiveExtraPaxRate} × ${effectiveExtraPaxNights}N)`,
+                  description: `Extra Person (${Math.max(1, Number(extraPersonQty) || 1)} Ã— â‚¹${effectiveExtraPaxRate} Ã— ${effectiveExtraPaxNights}N)`,
                   amount: groupExtraPersonChargesTotal,
                 },
               ]
@@ -1802,7 +1802,7 @@ export default function CheckInFormView({
             .map((gr, idx) => ({
               id: `ci-gr-xbed-${idx}`,
               kind: 'extra_bed' as const,
-              description: `Extra Bed / Mattress (${Number(gr.extraBedCount) || 1} × ₹${Number(gr.extraBedRate) || 0} × ${effectiveExtraBedNights}N)`,
+              description: `Extra Bed / Mattress (${Number(gr.extraBedCount) || 1} Ã— â‚¹${Number(gr.extraBedRate) || 0} Ã— ${effectiveExtraBedNights}N)`,
               amount: (Number(gr.extraBedCount) || 1) * Number(gr.extraBedRate || 0) * effectiveExtraBedNights,
               roomNumber: gr.roomNumber,
             })),
@@ -1811,7 +1811,7 @@ export default function CheckInFormView({
             return {
               id: `ci-gr-svc-${s.id || idx}`,
               kind: 'service' as const,
-              description: qty > 1 ? `${String(s.serviceName || 'Service')} × ${qty}` : String(s.serviceName || 'Service'),
+              description: qty > 1 ? `${String(s.serviceName || 'Service')} Ã— ${qty}` : String(s.serviceName || 'Service'),
               amount: serviceLineTotalOf(s),
             };
           }),
@@ -1820,7 +1820,7 @@ export default function CheckInFormView({
                 {
                   id: 'ci-gr-custom-addon',
                   kind: 'service' as const,
-                  description: `${customAddonLabel.trim()} × ${Math.max(1, Number(customAddonQty) || 1)}`,
+                  description: `${customAddonLabel.trim()} Ã— ${Math.max(1, Number(customAddonQty) || 1)}`,
                   amount: customAddonSingleTotal,
                 },
               ]
@@ -1851,7 +1851,7 @@ export default function CheckInFormView({
                 {
                   id: 'ci-gr-water-chg',
                   kind: 'water' as const,
-                  description: `Water Bottles (${chargeableWaterBottles} × ₹${effectiveChargeableWaterRate})`,
+                  description: `Water Bottles (${chargeableWaterBottles} Ã— â‚¹${effectiveChargeableWaterRate})`,
                   amount: chargeableWaterTotal,
                   quantity: chargeableWaterBottles,
                   rate: effectiveChargeableWaterRate,
@@ -2548,7 +2548,7 @@ export default function CheckInFormView({
     setCustomExtraRows(
       editableCustomExtras.map((ec, idx) => {
         const rawDesc = String(ec.description || ec.category || 'Extra Charge').trim();
-        const qtyMatch = rawDesc.match(/^(.*?)\s*[×x]\s*(\d+)\s*$/i);
+        const qtyMatch = rawDesc.match(/^(.*?)\s*[Ã—x]\s*(\d+)\s*$/i);
         const parsedLabel = qtyMatch ? qtyMatch[1].trim() : rawDesc;
         const parsedQty = qtyMatch ? Math.max(1, parseInt(qtyMatch[2], 10) || 1) : 1;
         const parsedAmount = Math.max(0, Number(ec.amount) || 0);
@@ -2700,7 +2700,7 @@ export default function CheckInFormView({
     }
     showToast(
       viewOnlyMode
-        ? `Viewing Stay Details #${c.id} (${c.guestName}, Room ${c.roomNumber}) — Read-Only.`
+        ? `Viewing Stay Details #${c.id} (${c.guestName}, Room ${c.roomNumber}) â€” Read-Only.`
         : `Editing Stay Record #${c.id} (${c.guestName}, Room ${c.roomNumber}).`,
       'info'
     );
@@ -2954,7 +2954,7 @@ export default function CheckInFormView({
         const rmObj = rooms.find(r => r.number === rNum);
         if (!rmObj || !isRoomTrulyAvailable(rmObj, checkInDate, checkOutDate)) {
           showToast(
-            `Room ${rNum} is not available for ${formatDdmmyyyy(checkInDate)} → ${formatDdmmyyyy(checkOutDate)}. Please choose another room or date range.`,
+            `Room ${rNum} is not available for ${formatDdmmyyyy(checkInDate)} â†’ ${formatDdmmyyyy(checkOutDate)}. Please choose another room or date range.`,
             'error'
           );
           return;
@@ -2963,7 +2963,7 @@ export default function CheckInFormView({
     }
 
     if (isHybridCheckInPay && effectiveDeskReceivedNow > 0 && activeCheckInSplits.length < 2) {
-      showToast('Hybrid payment requires at least two payment methods with amounts greater than ₹0.', 'error');
+      showToast('Hybrid payment requires at least two payment methods with amounts greater than â‚¹0.', 'error');
       return;
     }
     if (advanceAmount + effectiveDeskReceivedNow > finalAmount + 0.5) {
@@ -3012,7 +3012,7 @@ export default function CheckInFormView({
             dateTime: `${payDateLocal}T12:00:00`,
             referenceId: sp.ref || (sp as any).reference || undefined,
             notes: (sp.ref || (sp as any).reference)
-              ? `Advance Hybrid (${sp.method}) • Ref: ${sp.ref || (sp as any).reference}`
+              ? `Advance Hybrid (${sp.method}) â€¢ Ref: ${sp.ref || (sp as any).reference}`
               : `Advance Hybrid (${sp.method})`,
           });
         });
@@ -3026,13 +3026,13 @@ export default function CheckInFormView({
           date: payDateLocal,
           dateTime: `${payDateLocal}T12:00:00`,
           referenceId: singlePaymentRef || undefined,
-          notes: singlePaymentRef ? `Advance Payment (${paymentMethod}) • Ref: ${singlePaymentRef}` : `Advance Payment (${paymentMethod})`,
+          notes: singlePaymentRef ? `Advance Payment (${paymentMethod}) â€¢ Ref: ${singlePaymentRef}` : `Advance Payment (${paymentMethod})`,
         });
       }
 
       const resolvedMethodLabel =
         isHybridCheckInPay && activeCheckInSplits.length > 0
-          ? activeCheckInSplits.map(sp => `${sp.method} ₹${sp.amount}`).join(' + ')
+          ? activeCheckInSplits.map(sp => `${sp.method} â‚¹${sp.amount}`).join(' + ')
           : paymentMethod;
 
       const bookedRoomsPayload = isMulti
@@ -3193,7 +3193,7 @@ export default function CheckInFormView({
 
       onAddAuditLog(
         resolvedLabel,
-        `${resolvedLabel} #${newResId} for ${guestName.trim()} (${allocatedRoomNumbers.join(', ') || 'Room TBD'}, ${formatDdmmyyyy(checkInDate)} → ${formatDdmmyyyy(checkOutDate)}, ₹${finalAmount}).`
+        `${resolvedLabel} #${newResId} for ${guestName.trim()} (${allocatedRoomNumbers.join(', ') || 'Room TBD'}, ${formatDdmmyyyy(checkInDate)} â†’ ${formatDdmmyyyy(checkOutDate)}, â‚¹${finalAmount}).`
       );
 
       setInlineBookingSuccess({
@@ -3209,7 +3209,7 @@ export default function CheckInFormView({
       });
 
       showToast(
-        `${resolvedLabel}: #${newResId} for ${guestName.trim()} (${formatDdmmyyyy(checkInDate)} → ${formatDdmmyyyy(checkOutDate)}).`,
+        `${resolvedLabel}: #${newResId} for ${guestName.trim()} (${formatDdmmyyyy(checkInDate)} â†’ ${formatDdmmyyyy(checkOutDate)}).`,
         'success'
       );
 
@@ -3277,7 +3277,7 @@ export default function CheckInFormView({
 
     // Validate Hybrid / Split Payment if enabled
     if (isHybridCheckInPay && effectiveDeskReceivedNow > 0 && activeCheckInSplits.length < 2) {
-      showToast('Hybrid payment requires at least two payment methods with amounts greater than ₹0.', 'error');
+      showToast('Hybrid payment requires at least two payment methods with amounts greater than â‚¹0.', 'error');
       setWizardStep(4);
       return;
     }
@@ -3314,7 +3314,7 @@ export default function CheckInFormView({
       return;
     }
 
-    // 2. Walk-In guests are fresh arrivals — never auto-link them to an advance reservation.
+    // 2. Walk-In guests are fresh arrivals â€” never auto-link them to an advance reservation.
     //    Only an explicitly selected advance booking OR a Draft/Waitlist booking created in this exact form session is converted in-place.
     const effectiveBooking: Booking | null = editingCheckIn
       ? (bookings.find(b => b.id === editingCheckIn.id || (editingCheckIn.bookingId && b.id === editingCheckIn.bookingId) || (b.roomNumber === editingCheckIn.roomNumber && b.guestName === editingCheckIn.guestName && !b.isCompleted)) || null)
@@ -3387,7 +3387,7 @@ export default function CheckInFormView({
         !prevEditingRooms.includes(rNum)
       ) {
         showToast(
-          `Room ${rNum} is already Advance Booked for ${conflictingAdvBooking.guestName} (${conflictingAdvBooking.checkInDate} → ${conflictingAdvBooking.checkOutDate}). Please select another room or check in that reservation.`,
+          `Room ${rNum} is already Advance Booked for ${conflictingAdvBooking.guestName} (${conflictingAdvBooking.checkInDate} â†’ ${conflictingAdvBooking.checkOutDate}). Please select another room or check in that reservation.`,
           'error'
         );
         return;
@@ -3523,7 +3523,7 @@ export default function CheckInFormView({
           referenceNo: spRef || undefined,
           notes:
             sp.sourceNotes ||
-            `Check-in Hybrid Payment (${sp.method}${spRef ? ` • Ref: ${spRef}` : ''})`,
+            `Check-in Hybrid Payment (${sp.method}${spRef ? ` â€¢ Ref: ${spRef}` : ''})`,
         });
       });
     } else if (effectiveDeskReceivedNow > 0) {
@@ -3551,7 +3551,7 @@ export default function CheckInFormView({
     );
     const resolvedSummaryPaymentMethod: any =
       isHybridCheckInPay && activeCheckInSplits.length > 0
-        ? activeCheckInSplits.map(sp => `${sp.method} ₹${sp.amount}`).join(' + ')
+        ? activeCheckInSplits.map(sp => `${sp.method} â‚¹${sp.amount}`).join(' + ')
         : paymentMethod;
     const cashDeskNow = isHybridCheckInPay
       ? activeCheckInSplits
@@ -3645,7 +3645,7 @@ export default function CheckInFormView({
       return {
         id: `ALLOC-CHK-${s.id}`,
         serviceId: String(s.id),
-        serviceName: qty > 1 ? `${String(s.serviceName || 'Service')} × ${qty}` : String(s.serviceName || 'Service'),
+        serviceName: qty > 1 ? `${String(s.serviceName || 'Service')} Ã— ${qty}` : String(s.serviceName || 'Service'),
         configuredAmount: serviceAmountOf(s),
         chargedAmount: serviceLineTotalOf(s),
         isChargeable: true,
@@ -3671,7 +3671,7 @@ export default function CheckInFormView({
       stayServiceExtraCharges.push({
         id: `ADDON-CHK-${resolvedCheckInId}`,
         category: 'Other' as const,
-        description: `${customAddonLabel.trim()} × ${Math.max(1, Number(customAddonQty) || 1)}${customAddonNotes.trim() ? ` (${customAddonNotes.trim()})` : ''}`,
+        description: `${customAddonLabel.trim()} Ã— ${Math.max(1, Number(customAddonQty) || 1)}${customAddonNotes.trim() ? ` (${customAddonNotes.trim()})` : ''}`,
         amount: customAddonSingleTotal,
         dateTime: nowIsoSrv,
       });
@@ -3684,7 +3684,7 @@ export default function CheckInFormView({
         stayServiceExtraCharges.push({
           id: r.sourceExtraId || `ci-cx-${r.id}-${resolvedCheckInId}`,
           category: r.sourceCategory || ('Other' as const),
-          description: `${String(r.label).trim()} × ${qty}`,
+          description: `${String(r.label).trim()} Ã— ${qty}`,
           amount: amt,
           dateTime: r.sourceDateTime || nowIsoSrv,
         });
@@ -3706,7 +3706,7 @@ export default function CheckInFormView({
       stayServiceExtraCharges.push({
         id: `EC-WB-${chgWaterRecordId}`,
         category: 'Water Bottle',
-        description: `Water Bottles (${chargeableWaterBottles} × ₹${effectiveChargeableWaterRate})`,
+        description: `Water Bottles (${chargeableWaterBottles} Ã— â‚¹${effectiveChargeableWaterRate})`,
         amount: chargeableWaterTotal,
         dateTime: nowIsoSrv,
         sourceType: 'water_bottle',
@@ -3744,7 +3744,7 @@ export default function CheckInFormView({
       .filter(Boolean)
       .join(', ');
     const composedGuestAddress = composeFullAddress(combinedPrimaryAddr, city, state, country);
-    const resolvedCheckInTimestamp = editingCheckIn?.checkInTimestamp || `${autoNowDateStr} • ${autoNowTimeStr}`;
+    const resolvedCheckInTimestamp = editingCheckIn?.checkInTimestamp || `${autoNowDateStr} â€¢ ${autoNowTimeStr}`;
     const resolvedWalkInSource: BookingSource =
       selectedAgentId && walkInBookingSource === 'Walk-in' ? 'Travel Agent' : walkInBookingSource;
 
@@ -4083,7 +4083,7 @@ export default function CheckInFormView({
 
     // Generate or update GST Tax Invoice / Folio immediately for this check-in
     // STRICT RULE: If an invoice was ALREADY generated for this booking with a different GST/No-GST mode,
-    // NEVER edit or flip GST on that existing invoice — generate a SEPARATE invoice instead!
+    // NEVER edit or flip GST on that existing invoice â€” generate a SEPARATE invoice instead!
     const existingPrimaryInvForStay = (invoices || []).find(
       i => !i.isSeparateInvoice && (i.bookingId === newCheckIn.id || i.checkInId === newCheckIn.id)
     );
@@ -4192,7 +4192,7 @@ export default function CheckInFormView({
         if (onUpdateInventoryMovements && inventoryStockMovements) {
           const noteParts: string[] = [];
           if (complimentaryWaterBottles > 0) noteParts.push(`${complimentaryWaterBottles} Complimentary`);
-          if (chargeableWaterBottles > 0) noteParts.push(`${chargeableWaterBottles} Chargeable @ ₹${effectiveChargeableWaterRate}`);
+          if (chargeableWaterBottles > 0) noteParts.push(`${chargeableWaterBottles} Chargeable @ â‚¹${effectiveChargeableWaterRate}`);
           const movement = {
             id: `MOV-WB-CI-${Date.now()}`,
             productId: waterBottleInventoryProduct.id,
@@ -4262,7 +4262,7 @@ export default function CheckInFormView({
         }
 
         if (newStock === 0) {
-          showToast('Check-In completed! Note: Water Bottle stock in Inventory is now 0 — use "+ Add Water Stock" or Inventory Store to restock.', 'warning');
+          showToast('Check-In completed! Note: Water Bottle stock in Inventory is now 0 â€” use "+ Add Water Stock" or Inventory Store to restock.', 'warning');
         } else if (newStock <= minAlert) {
           showToast(`Low Stock Alert: Only ${newStock} water bottle(s) remaining in Inventory.`, 'warning');
         }
@@ -4472,7 +4472,7 @@ export default function CheckInFormView({
     if (!activePrintDocument) return;
     setWhatsappStatus('Processing digital layout and routing PDF via WhatsApp...');
     setTimeout(() => {
-      setWhatsappStatus(`✅ Registration Form PDF compiled and sent successfully to ${activePrintDocument.guestName}'s WhatsApp on: +91 ${activePrintDocument.mobile}!`);
+      setWhatsappStatus(`âœ… Registration Form PDF compiled and sent successfully to ${activePrintDocument.guestName}'s WhatsApp on: +91 ${activePrintDocument.mobile}!`);
       setTimeout(() => setWhatsappStatus(null), 5000);
     }, 1500);
   };
@@ -4566,8 +4566,8 @@ export default function CheckInFormView({
                         </span>
                       )}
                       {hotelSettings.phoneNumber && <span>Ph: {hotelSettings.phoneNumber}</span>}
-                      {hotelSettings.emailAddress && <span>• Email: {hotelSettings.emailAddress}</span>}
-                      {hotelSettings.website && <span>• Web: {hotelSettings.website}</span>}
+                      {hotelSettings.emailAddress && <span>â€¢ Email: {hotelSettings.emailAddress}</span>}
+                      {hotelSettings.website && <span>â€¢ Web: {hotelSettings.website}</span>}
                     </div>
                   </div>
                 </div>
@@ -4623,22 +4623,22 @@ export default function CheckInFormView({
                   </div>
                   <div>
                     <span className="block text-[8.5px] font-mono uppercase tracking-wider text-[#8A7A6D] font-semibold">D.O.B & Purpose of Visit</span>
-                    <span className="text-xs text-[#17120F]">{livePrintDoc.dob || 'N/A'} • {livePrintDoc.purposeOfVisit || 'Leisure'}</span>
+                    <span className="text-xs text-[#17120F]">{livePrintDoc.dob || 'N/A'} â€¢ {livePrintDoc.purposeOfVisit || 'Leisure'}</span>
                   </div>
                   <div>
-                    <span className="block text-[8.5px] font-mono uppercase tracking-wider text-[#8A7A6D] font-semibold">Coming From → Going To</span>
-                    <span className="text-xs text-[#17120F]">{livePrintDoc.comingFrom || '—'} → {livePrintDoc.goingTo || '—'}</span>
+                    <span className="block text-[8.5px] font-mono uppercase tracking-wider text-[#8A7A6D] font-semibold">Coming From â†’ Going To</span>
+                    <span className="text-xs text-[#17120F]">{livePrintDoc.comingFrom || 'â€”'} â†’ {livePrintDoc.goingTo || 'â€”'}</span>
                   </div>
                   {(livePrintDoc.arrivalDateInIndia || livePrintDoc.durationOfStayInIndia) && (
                     <div className="col-span-2">
                       <span className="block text-[8.5px] font-mono uppercase tracking-wider text-[#8A7A6D] font-semibold">Arrival in India & Duration of Stay in India</span>
-                      <span className="text-xs text-[#17120F]">{livePrintDoc.arrivalDateInIndia || '—'} • {livePrintDoc.durationOfStayInIndia || '—'}</span>
+                      <span className="text-xs text-[#17120F]">{livePrintDoc.arrivalDateInIndia || 'â€”'} â€¢ {livePrintDoc.durationOfStayInIndia || 'â€”'}</span>
                     </div>
                   )}
                   <div>
                     <span className="block text-[8.5px] font-mono uppercase tracking-wider text-[#8A7A6D] font-semibold">No. of Persons (M / F / Ch) & Plan</span>
                     <span className="text-xs font-mono font-bold text-[#17120F]">
-                      M:{livePrintDoc.maleCount ?? 1} / F:{livePrintDoc.femaleCount ?? 0} / Ch:{livePrintDoc.childCount ?? 0} • Plan: {livePrintDoc.mealPlan || 'EP'}
+                      M:{livePrintDoc.maleCount ?? 1} / F:{livePrintDoc.femaleCount ?? 0} / Ch:{livePrintDoc.childCount ?? 0} â€¢ Plan: {livePrintDoc.mealPlan || 'EP'}
                     </span>
                   </div>
                   <div>
@@ -4714,7 +4714,7 @@ export default function CheckInFormView({
                     </div>
                     <div className="bg-white border border-[#EBE3D5] rounded-lg p-2 shadow-2xs">
                       <strong className="block text-[8px] text-[#8A7A6D] uppercase font-mono tracking-wider">Room Charge</strong>
-                      <span className="text-xs font-bold font-mono text-[#8B691E]">₹{(livePrintDoc.roomRate || livePrintDoc.rate || livePrintDoc.tariff || 0).toLocaleString('en-IN')}/N</span>
+                      <span className="text-xs font-bold font-mono text-[#8B691E]">â‚¹{(livePrintDoc.roomRate || livePrintDoc.rate || livePrintDoc.tariff || 0).toLocaleString('en-IN')}/N</span>
                     </div>
                     <div className="bg-white border border-[#EBE3D5] rounded-lg p-2 shadow-2xs">
                       <strong className="block text-[8px] text-[#8A7A6D] uppercase font-mono tracking-wider">Total Occupants</strong>
@@ -4728,11 +4728,11 @@ export default function CheckInFormView({
                   <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#EFE8DE]">
                     <div className="bg-white/80 border border-[#EBE3D5] rounded-md p-2">
                       <strong className="block text-[8px] text-[#8A7A6D] uppercase font-mono">Arrival Date / Check-In Time</strong>
-                      <span className="text-xs font-bold text-[#17120F]">{livePrintDoc.checkInDate} • {arrivalTime}</span>
+                      <span className="text-xs font-bold text-[#17120F]">{livePrintDoc.checkInDate} â€¢ {arrivalTime}</span>
                     </div>
                     <div className="bg-white/80 border border-[#EBE3D5] rounded-md p-2">
                       <strong className="block text-[8px] text-[#8A7A6D] uppercase font-mono">Departure Date / Check-Out Time</strong>
-                      <span className="text-xs font-bold text-[#17120F]">{livePrintDoc.checkOutDate} • {departureTime}</span>
+                      <span className="text-xs font-bold text-[#17120F]">{livePrintDoc.checkOutDate} â€¢ {departureTime}</span>
                     </div>
                   </div>
 
@@ -4760,14 +4760,14 @@ export default function CheckInFormView({
                         docAllocatedServices.map(srv => (
                           <tr key={srv.id} className="even:bg-[#FAF7F2]">
                             <td className="p-1 px-3 border-r border-[#EFE8DE] font-bold text-[#17120F]">{srv.serviceName}</td>
-                            <td className="p-1 px-3 border-r border-[#EFE8DE] font-mono text-[#554637]">₹{Number(srv.configuredAmount || 0).toLocaleString()}</td>
+                            <td className="p-1 px-3 border-r border-[#EFE8DE] font-mono text-[#554637]">â‚¹{Number(srv.configuredAmount || 0).toLocaleString()}</td>
                             <td className="p-1 px-3 border-r border-[#EFE8DE]">
                               <span className={`px-2 py-0.5 rounded text-[8.5px] font-bold uppercase ${srv.isChargeable ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-900'}`}>
                                 {srv.isChargeable ? 'Chargeable' : 'Complimentary'}
                               </span>
                             </td>
                             <td className="p-1 px-3 text-right font-mono font-bold text-[#17120F]">
-                              {srv.isChargeable ? `₹${Number(srv.chargedAmount || 0).toLocaleString()}` : '₹0 (Complimentary)'}
+                              {srv.isChargeable ? `â‚¹${Number(srv.chargedAmount || 0).toLocaleString()}` : 'â‚¹0 (Complimentary)'}
                             </td>
                           </tr>
                         ))
@@ -4795,40 +4795,40 @@ export default function CheckInFormView({
                     <tbody className="divide-y divide-[#EFE8DE]">
                       <tr className="bg-[#FDFBF7]">
                         <td className="p-1.5 px-3 border-r border-[#EFE8DE] w-1/2 text-[#554637]">Room Tariff Rate (Per Night):</td>
-                        <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">₹{Number(livePrintDoc.roomRate || 0).toLocaleString()} / Night</td>
+                        <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">â‚¹{Number(livePrintDoc.roomRate || 0).toLocaleString()} / Night</td>
                       </tr>
                       <tr className="bg-white">
                         <td className="p-1.5 px-3 border-r border-[#EFE8DE] text-[#554637]">Accommodations Total ({stayNights} Night{stayNights > 1 ? 's' : ''}):</td>
-                        <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">₹{Number((livePrintDoc.roomRate || 0) * stayNights).toLocaleString()}</td>
+                        <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">â‚¹{Number((livePrintDoc.roomRate || 0) * stayNights).toLocaleString()}</td>
                       </tr>
                       {extraPersonChargesTotal > 0 && (
                         <tr className="bg-[#FDFBF7]">
                           <td className="p-1.5 px-3 border-r border-[#EFE8DE] text-[#554637]">Extra Guest Charge Total:</td>
-                          <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">+ ₹{extraPersonChargesTotal.toLocaleString()}</td>
+                          <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">+ â‚¹{extraPersonChargesTotal.toLocaleString()}</td>
                         </tr>
                       )}
                       {(docExtrasSum > 0 || otherCharges > 0) && (
                         <tr className="bg-white">
                           <td className="p-1.5 px-3 border-r border-[#EFE8DE] text-[#554637]">Auxiliary Services & Extra Charges:</td>
-                          <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">+ ₹{(docExtrasSum || otherCharges).toLocaleString()}</td>
+                          <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">+ â‚¹{(docExtrasSum || otherCharges).toLocaleString()}</td>
                         </tr>
                       )}
                       <tr className="bg-[#FDFBF7]">
                         <td className="p-1.5 px-3 border-r border-[#EFE8DE] text-[#554637]">GST Amount:</td>
-                        <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">+ ₹{Number(gstTax || 0).toLocaleString()}</td>
+                        <td className="p-1.5 px-3 text-right font-semibold text-[#17120F]">+ â‚¹{Number(gstTax || 0).toLocaleString()}</td>
                       </tr>
                       <tr className="bg-[#17120F] text-[#E5C378] font-bold">
                         <td className="p-1.5 px-3 border-r border-[#2A201A] text-xs font-serif uppercase tracking-wider">GRAND TOTAL LIABILITY AMOUNT:</td>
-                        <td className="p-1.5 px-3 text-right text-xs">₹{Number((livePrintDoc.totalAmount || 0) + docPostCheckInExtrasSum).toLocaleString()}</td>
+                        <td className="p-1.5 px-3 text-right text-xs">â‚¹{Number((livePrintDoc.totalAmount || 0) + docPostCheckInExtrasSum).toLocaleString()}</td>
                       </tr>
                       <tr className="bg-emerald-50 text-emerald-900 font-bold">
                         <td className="p-1.5 px-3 border-r border-emerald-100">Pre-Advance / Check-In Amount Paid:</td>
-                        <td className="p-1.5 px-3 text-right text-emerald-700">- ₹{Number((livePrintDoc.advanceAmount || 0) + (livePrintDoc.cashAmountPaid || 0) + (livePrintDoc.onlineAmountPaid || 0)).toLocaleString()}</td>
+                        <td className="p-1.5 px-3 text-right text-emerald-700">- â‚¹{Number((livePrintDoc.advanceAmount || 0) + (livePrintDoc.cashAmountPaid || 0) + (livePrintDoc.onlineAmountPaid || 0)).toLocaleString()}</td>
                       </tr>
                       <tr className={`${livePrintDoc.pendingAmount > 0 ? 'bg-amber-50 text-amber-950' : 'bg-emerald-50/60 text-emerald-950'} font-bold`}>
                         <td className="p-2 px-3 border-r border-amber-200 text-xs font-serif uppercase tracking-wider">OUTSTANDING BALANCE DUE AT DESK:</td>
                         <td className={`p-2 px-3 text-right text-sm font-bold ${livePrintDoc.pendingAmount > 0 ? 'text-[#8B691E]' : 'text-emerald-700'}`}>
-                          ₹{Number(livePrintDoc.pendingAmount || 0).toLocaleString()}
+                          â‚¹{Number(livePrintDoc.pendingAmount || 0).toLocaleString()}
                         </td>
                       </tr>
                     </tbody>
@@ -5026,7 +5026,7 @@ export default function CheckInFormView({
             <div className="flex justify-between items-start">
               <div className="space-y-1">
                 <span className="bg-white/20 text-white font-mono text-[9px] font-bold tracking-widest px-2 py-0.5 rounded uppercase">Guest Registration Slip</span>
-                <h3 className="text-base font-serif font-bold">Guest Slip & Registration Summary — Room {liveDoc.roomNumber}</h3>
+                <h3 className="text-base font-serif font-bold">Guest Slip & Registration Summary â€” Room {liveDoc.roomNumber}</h3>
                 <p className="text-xs text-emerald-50 leading-relaxed max-w-xl">
                   Guest <span className="font-bold underline">{liveDoc.guestName}</span> is recorded in Room <span className="font-bold">{liveDoc.roomNumber}</span> ({liveDoc.checkInDate} to {liveDoc.checkOutDate}). Print this slip below or download A4 PDF.
                 </p>
@@ -5046,7 +5046,7 @@ export default function CheckInFormView({
                     Allocated Room Services on Guest Slip ({docServices.length})
                   </span>
                   <span className="text-[11px] font-mono font-bold text-emerald-800">
-                    Total Charged to Guest: ₹{docServices.reduce((sum, s) => sum + (s.isChargeable ? Number(s.chargedAmount || 0) : 0), 0).toLocaleString()}
+                    Total Charged to Guest: â‚¹{docServices.reduce((sum, s) => sum + (s.isChargeable ? Number(s.chargedAmount || 0) : 0), 0).toLocaleString()}
                   </span>
                 </div>
                 <div className="overflow-x-auto">
@@ -5063,7 +5063,7 @@ export default function CheckInFormView({
                       {docServices.map((srv) => (
                         <tr key={srv.id}>
                           <td className="p-2 font-sans font-bold text-slate-900">{srv.serviceName}</td>
-                          <td className="p-2 text-right text-slate-600">₹{Number(srv.configuredAmount ?? srv.amount ?? 0).toLocaleString()}</td>
+                          <td className="p-2 text-right text-slate-600">â‚¹{Number(srv.configuredAmount ?? srv.amount ?? 0).toLocaleString()}</td>
                           <td className="p-2 text-center">
                             {srv.isChargeable ? (
                               <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">Chargeable</span>
@@ -5072,7 +5072,7 @@ export default function CheckInFormView({
                             )}
                           </td>
                           <td className="p-2 text-right font-bold">
-                            {srv.isChargeable ? `₹${Number(srv.chargedAmount ?? srv.amount ?? 0).toLocaleString()}` : '₹0 (Complimentary)'}
+                            {srv.isChargeable ? `â‚¹${Number(srv.chargedAmount ?? srv.amount ?? 0).toLocaleString()}` : 'â‚¹0 (Complimentary)'}
                           </td>
                         </tr>
                       ))}
@@ -5187,7 +5187,7 @@ export default function CheckInFormView({
                         onClick={() => setActiveSubTab('folios')}
                         className="px-3 py-1 bg-white border border-luxury-brown-200 hover:bg-luxury-beige-100 text-[#263449] rounded-lg text-xs font-bold shrink-0 cursor-pointer"
                       >
-                        View All Folios & Services →
+                        View All Folios & Services â†’
                       </button>
                     </div>
                   </div>
@@ -5208,7 +5208,7 @@ export default function CheckInFormView({
                           After Check-In Edit
                         </span>
                         <h3 className="text-xs sm:text-sm font-serif font-bold text-[#263449]">
-                          Currently Checked-In Guests ({activeCheckedInGuests.length}) — Click to Edit Stay, Transfer Room, or Update Tariff
+                          Currently Checked-In Guests ({activeCheckedInGuests.length}) â€” Click to Edit Stay, Transfer Room, or Update Tariff
                         </h3>
                       </div>
                       <p className="text-[11px] text-slate-600 mt-0.5">
@@ -5245,7 +5245,7 @@ export default function CheckInFormView({
                         onClick={() => setActiveSubTab('folios')}
                         className="px-3 py-1.5 bg-white border border-luxury-brown-200 hover:bg-luxury-beige-100 text-[#263449] rounded-lg text-xs font-bold shrink-0 cursor-pointer"
                       >
-                        View All Folios & Services →
+                        View All Folios & Services â†’
                       </button>
                     </div>
                   </div>
@@ -5269,7 +5269,7 @@ export default function CheckInFormView({
                             )}
                           </div>
                           <div className="text-[10px] font-mono text-slate-500">
-                            Out: {c.checkOutDate} • ₹{(c.roomRate || 0).toLocaleString()}/night
+                            Out: {c.checkOutDate} â€¢ â‚¹{(c.roomRate || 0).toLocaleString()}/night
                           </div>
                         </div>
                         <button
@@ -5318,7 +5318,7 @@ export default function CheckInFormView({
                   <div className="flex items-center gap-2">
                     <span className="bg-amber-700 text-white text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded">Edit Mode Active</span>
                     <h3 className="text-sm font-serif font-bold text-amber-950">
-                      Editing Walk-In / Stay Record #{editingCheckIn.id} — {editingCheckIn.guestName} (Room {editingCheckIn.roomNumber})
+                      Editing Walk-In / Stay Record #{editingCheckIn.id} â€” {editingCheckIn.guestName} (Room {editingCheckIn.roomNumber})
                     </h3>
                   </div>
                   <p className="text-xs text-amber-900">
@@ -5433,7 +5433,7 @@ export default function CheckInFormView({
                       <div className="flex flex-wrap items-center gap-2">
                         {selectedBooking && (
                           <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
-                            ✓ Loaded: {selectedBooking.guestName} ({selectedBooking.id})
+                            âœ“ Loaded: {selectedBooking.guestName} ({selectedBooking.id})
                           </span>
                         )}
                         <div className="inline-flex items-center gap-1 rounded-lg border border-[#C49A3A]/50 bg-white p-1 text-[10px] font-mono">
@@ -5519,7 +5519,7 @@ export default function CheckInFormView({
                           </option>
                           {filteredEligibleReservations.map((b) => (
                             <option key={b.id} value={b.id}>
-                              {b.id} — {b.guestName} • Rm {b.roomNumber || 'TBD'}{(b.bookedRooms || []).length > 1 ? ` [${(b.bookedRooms || []).length} Rooms]` : ''} ({b.checkInDate} to {b.checkOutDate || 'Open'}) • 📞 {b.mobile} (Adv: ₹{Number(b.advanceAmount || 0).toLocaleString('en-IN')}) [{b.status}]
+                              {b.id} â€” {b.guestName} â€¢ Rm {b.roomNumber || 'TBD'}{(b.bookedRooms || []).length > 1 ? ` [${(b.bookedRooms || []).length} Rooms]` : ''} ({b.checkInDate} to {b.checkOutDate || 'Open'}) â€¢ ðŸ“ž {b.mobile} (Adv: â‚¹{Number(b.advanceAmount || 0).toLocaleString('en-IN')}) [{b.status}]
                             </option>
                           ))}
                         </select>
@@ -5533,7 +5533,7 @@ export default function CheckInFormView({
                       <div className="bg-white border border-[#C49A3A]/50 rounded-xl p-3 space-y-2 animate-fade-in">
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#EFE8DE] pb-1.5">
                           <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-[#8B691E]">
-                            Existing Advance Reservation Details (Auto-Loaded — No Duplicate Booking Created)
+                            Existing Advance Reservation Details (Auto-Loaded â€” No Duplicate Booking Created)
                           </span>
                           <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
                             Status: {selectedBooking.status || 'Confirmed'}
@@ -5546,7 +5546,7 @@ export default function CheckInFormView({
                           </div>
                           <div>
                             <span className="text-[9px] font-mono uppercase text-slate-500 block">Booking Date</span>
-                            <span className="font-mono font-semibold text-[#17120F]">{selectedBooking.bookingDate || selectedBooking.checkInDate || '—'}</span>
+                            <span className="font-mono font-semibold text-[#17120F]">{selectedBooking.bookingDate || selectedBooking.checkInDate || 'â€”'}</span>
                           </div>
                           <div>
                             <span className="text-[9px] font-mono uppercase text-slate-500 block">Booking Source</span>
@@ -5562,7 +5562,7 @@ export default function CheckInFormView({
                           </div>
                           <div>
                             <span className="text-[9px] font-mono uppercase text-slate-500 block">Advance Already Paid</span>
-                            <span className="font-mono font-bold text-emerald-700">₹{Number(selectedBooking.advanceAmount || 0).toLocaleString('en-IN')}</span>
+                            <span className="font-mono font-bold text-emerald-700">â‚¹{Number(selectedBooking.advanceAmount || 0).toLocaleString('en-IN')}</span>
                           </div>
                           <div>
                             <span className="text-[9px] font-mono uppercase text-slate-500 block">Arrival Date</span>
@@ -5676,15 +5676,15 @@ export default function CheckInFormView({
                               {matchingExistingReservation.id}
                             </span>
                             <span className="text-[11px] font-mono font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                              Advance Paid: ₹{Number(matchingExistingReservation.advanceAmount || 0).toLocaleString('en-IN')}
+                              Advance Paid: â‚¹{Number(matchingExistingReservation.advanceAmount || 0).toLocaleString('en-IN')}
                             </span>
                           </div>
                           <p className="text-xs text-[#263449]">
-                            <strong>{matchingExistingReservation.guestName}</strong> ({matchingExistingReservation.mobile}) •{' '}
+                            <strong>{matchingExistingReservation.guestName}</strong> ({matchingExistingReservation.mobile}) â€¢{' '}
                             {matchingExistingReservation.roomNumber
                               ? `Room ${matchingExistingReservation.roomNumber}`
                               : matchingExistingReservation.roomType}{' '}
-                            • Stay: <strong>{matchingExistingReservation.checkInDate}</strong> to{' '}
+                            â€¢ Stay: <strong>{matchingExistingReservation.checkInDate}</strong> to{' '}
                             <strong>{matchingExistingReservation.checkOutDate || 'Open'}</strong>
                           </p>
                           <p className="text-[11px] text-slate-600">
@@ -5745,8 +5745,8 @@ export default function CheckInFormView({
                                   const statusLabel = isCurrentEditedRoom
                                     ? '(Current Room - Editing)'
                                     : isSelectedAdvRoom
-                                    ? `(Advance Booked — ${selectedBooking?.guestName})`
-                                    : `(Available - Std: ₹${r.rate})`;
+                                    ? `(Advance Booked â€” ${selectedBooking?.guestName})`
+                                    : `(Available - Std: â‚¹${r.rate})`;
                                   return (
                                     <option key={r.number} value={r.number}>
                                       Rm {r.number} - {r.category} {statusLabel}
@@ -5812,13 +5812,13 @@ export default function CheckInFormView({
                                 Fixed Room Rack Rate
                               </span>
                               <div className="px-3 py-2 rounded-lg bg-white/80 border border-slate-200 font-mono font-bold text-sm text-slate-600">
-                                ₹{standardRate.toLocaleString('en-IN')} / Night
+                                â‚¹{standardRate.toLocaleString('en-IN')} / Night
                               </div>
                             </div>
                             <div className="space-y-1">
                               <div className="flex items-center justify-between gap-1">
                                 <label className="text-[10px] font-mono uppercase font-bold text-[#9E2A2B]">
-                                  Check-In Room Tariff (₹/Night) *
+                                  Check-In Room Tariff (â‚¹/Night) *
                                 </label>
                                 {roomRate !== standardRate && (
                                   <button
@@ -5826,7 +5826,7 @@ export default function CheckInFormView({
                                     onClick={handleRenewPrice}
                                     className="text-[9.5px] font-mono font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded cursor-pointer"
                                   >
-                                    ↺ Reset
+                                    â†º Reset
                                   </button>
                                 )}
                               </div>
@@ -5843,7 +5843,7 @@ export default function CheckInFormView({
                             </div>
                             <div className="space-y-1">
                               <label className="text-[10px] font-mono uppercase font-bold text-emerald-800 block">
-                                Additional Discount (₹)
+                                Additional Discount (â‚¹)
                               </label>
                               <input
                                 type="number"
@@ -5860,10 +5860,10 @@ export default function CheckInFormView({
                                 Effective Room Total ({stayNights}N)
                               </span>
                               <div className="px-3 py-2 rounded-lg bg-white border border-slate-300 font-mono font-bold text-sm text-slate-900 flex items-center justify-between">
-                                <span>₹{Math.max(0, roomRate * stayNights - manualDiscount).toLocaleString('en-IN')}</span>
+                                <span>â‚¹{Math.max(0, roomRate * stayNights - manualDiscount).toLocaleString('en-IN')}</span>
                                 {roomRate !== standardRate && (
                                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${roomRate < standardRate ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>
-                                    {roomRate < standardRate ? `-₹${standardRate - roomRate}/N` : `+₹${roomRate - standardRate}/N`}
+                                    {roomRate < standardRate ? `-â‚¹${standardRate - roomRate}/N` : `+â‚¹${roomRate - standardRate}/N`}
                                   </span>
                                 )}
                               </div>
@@ -5907,7 +5907,7 @@ export default function CheckInFormView({
                             </div>
                             {hasExtraBed && (
                               <span className="text-xs font-mono font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
-                                Auto-added to Guest Bill: + ₹{extraBedTotal} ({stayNights} Nights)
+                                Auto-added to Guest Bill: + â‚¹{extraBedTotal} ({stayNights} Nights)
                               </span>
                             )}
                           </div>
@@ -5926,9 +5926,10 @@ export default function CheckInFormView({
                                 />
                               </div>
                               <div className="space-y-1">
-                                <label className="text-[10px] font-mono text-amber-900 block uppercase font-bold">Price per Bed / Night (₹)</label>
+                                <label className="text-[10px] font-mono text-amber-900 block uppercase font-bold">Price per Bed / Night (â‚¹)</label>
                                 <input
                                   type="number"
+                                  step="any"
                                   min={0}
                                   value={extraBedRate}
                                   onChange={(e) => setExtraBedRate(Number(e.target.value))}
@@ -6013,19 +6014,20 @@ export default function CheckInFormView({
                                 <td className="p-2 text-gray-600 font-semibold">{gr.category}</td>
                                 <td className="p-2 font-mono font-bold">
                                   <div className="flex items-center gap-1">
-                                    <span>₹</span>
+                                    <span>â‚¹</span>
                                     <input
                                       type="number"
+                                      step="any"
                                       min={0}
                                       value={gr.rate}
                                       onChange={(e) => handleUpdateGroupRoom(gr.id, 'rate', Math.max(0, Number(e.target.value) || 0))}
                                       className="w-20 px-1.5 py-0.5 border border-[#9E2A2B] rounded text-xs font-bold text-[#9E2A2B] bg-white"
-                                      title={`Fixed Rack Rate: ₹${gr.originalRate}`}
+                                      title={`Fixed Rack Rate: â‚¹${gr.originalRate}`}
                                     />
                                   </div>
                                   {gr.originalRate > 0 && gr.rate !== gr.originalRate && (
                                     <span className={`block text-[9.5px] mt-0.5 ${gr.rate < gr.originalRate ? 'text-rose-600' : 'text-blue-600'}`}>
-                                      Fixed: ₹{gr.originalRate} ({gr.rate < gr.originalRate ? `-₹${gr.originalRate - gr.rate}` : `+₹${gr.rate - gr.originalRate}`})
+                                      Fixed: â‚¹{gr.originalRate} ({gr.rate < gr.originalRate ? `-â‚¹${gr.originalRate - gr.rate}` : `+â‚¹${gr.rate - gr.originalRate}`})
                                     </span>
                                   )}
                                 </td>
@@ -6036,7 +6038,7 @@ export default function CheckInFormView({
                                     if (!canExtra) {
                                       return (
                                         <span className="text-[10px] text-rose-700 font-bold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200" title="Extra bed not possible for this room">
-                                          ✕ No Bed
+                                          âœ• No Bed
                                         </span>
                                       );
                                     }
@@ -6068,9 +6070,10 @@ export default function CheckInFormView({
                                         />
                                         {gr.hasExtraBed && (
                                           <div className="flex items-center gap-0.5 text-[10px] text-amber-900 font-bold">
-                                            <span>+₹</span>
+                                            <span>+â‚¹</span>
                                             <input
                                               type="number"
+                                              step="any"
                                               min={0}
                                               value={gr.extraBedRate}
                                               onChange={(e) =>
@@ -6135,8 +6138,8 @@ export default function CheckInFormView({
 
                       <div className="p-2.5 bg-amber-100/60 border border-amber-300 rounded-lg flex flex-wrap justify-between items-center text-xs font-mono font-bold text-amber-950">
                         <span>Group Summary: {groupRooms.length} Room(s) | {groupTotalGuests} Guest(s)</span>
-                        <span>Nightly Tariff: ₹{groupRoomChargesPerNight} | Extra Beds: +₹{groupExtraBedPerNight}</span>
-                        <span>Stay Total ({stayNights} Nights): ₹{groupRoomChargesTotal + groupExtraBedChargesTotal}</span>
+                        <span>Nightly Tariff: â‚¹{groupRoomChargesPerNight} | Extra Beds: +â‚¹{groupExtraBedPerNight}</span>
+                        <span>Stay Total ({stayNights} Nights): â‚¹{groupRoomChargesTotal + groupExtraBedChargesTotal}</span>
                       </div>
                     </div>
                   </div>
@@ -6261,10 +6264,11 @@ export default function CheckInFormView({
                               className="px-2 py-1.5 border border-luxury-brown-200 rounded-lg text-xs font-bold bg-white"
                             >
                               <option value="percentage">% of Tariff</option>
-                              <option value="fixed">Fixed ₹</option>
+                              <option value="fixed">Fixed â‚¹</option>
                             </select>
                             <input
                               type="number"
+                              step="any"
                               min={0}
                               value={commissionValue}
                               onChange={(e) => setCommissionValue(Math.max(0, Number(e.target.value) || 0))}
@@ -6275,7 +6279,7 @@ export default function CheckInFormView({
                         <div className="flex items-end">
                           <div className="w-full px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-lg text-xs font-mono font-bold text-amber-900 flex justify-between items-center">
                             <span>Agent Comm.:</span>
-                            <span>₹{computedAgentCommission.toLocaleString('en-IN')}</span>
+                            <span>â‚¹{computedAgentCommission.toLocaleString('en-IN')}</span>
                           </div>
                         </div>
                       </>
@@ -6355,7 +6359,7 @@ export default function CheckInFormView({
                         <div className="flex items-center gap-2">
                           <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
                           <div>
-                            <strong>⚡ Early Check-In Detected:</strong> Arrival at <strong>{arrivalTime}</strong> is before standard check-in ({hotelSettings?.checkInTime || '12:00 PM'}) by <strong>{earlyCheckInInfo.earlyHours} or(s)</strong>.
+                            <strong>âš¡ Early Check-In Detected:</strong> Arrival at <strong>{arrivalTime}</strong> is before standard check-in ({hotelSettings?.checkInTime || '12:00 PM'}) by <strong>{earlyCheckInInfo.earlyHours} or(s)</strong>.
                           </div>
                         </div>
                         <label className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-white border border-amber-300 cursor-pointer font-bold text-amber-900 select-none shadow-2xs">
@@ -6372,12 +6376,13 @@ export default function CheckInFormView({
                       {applyEarlyCheckInCharge ? (
                         <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-amber-200 text-xs font-mono">
                           <span className="text-amber-900 font-semibold">
-                            Surcharge ({earlyCheckInInfo.earlyHours}h @ ₹{Number(hotelSettings?.earlyCheckInHourlyRate) || 0}/h):
+                            Surcharge ({earlyCheckInInfo.earlyHours}h @ â‚¹{Number(hotelSettings?.earlyCheckInHourlyRate) || 0}/h):
                           </span>
                           <div className="flex items-center gap-1.5">
-                            <span className="font-bold">₹</span>
+                            <span className="font-bold">â‚¹</span>
                             <input
                               type="number"
+                              step="any"
                               min={0}
                               value={earlyCheckInCustomRate !== '' ? earlyCheckInCustomRate : earlyCheckInInfo.chargeAmount}
                               onChange={(e) => setEarlyCheckInCustomRate(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))}
@@ -6388,19 +6393,19 @@ export default function CheckInFormView({
                               onClick={() => setApplyEarlyCheckInCharge(false)}
                               className="text-[10px] text-rose-700 hover:text-rose-900 underline ml-1 cursor-pointer font-sans"
                             >
-                              Waive Surcharge (₹0)
+                              Waive Surcharge (â‚¹0)
                             </button>
                           </div>
                         </div>
                       ) : (
                         <div className="text-[11px] text-emerald-800 font-medium italic pt-1 border-t border-amber-200/60 flex items-center justify-between">
-                          <span>✓ Early check-in surcharge waived (Included in agreed room tariff at ₹0 extra).</span>
+                          <span>âœ“ Early check-in surcharge waived (Included in agreed room tariff at â‚¹0 extra).</span>
                           <button
                             type="button"
                             onClick={() => setApplyEarlyCheckInCharge(true)}
                             className="text-[10px] text-amber-800 hover:text-amber-950 underline font-bold cursor-pointer font-sans not-italic"
                           >
-                            + Add Surcharge (+₹{earlyCheckInInfo.chargeAmount})
+                            + Add Surcharge (+â‚¹{earlyCheckInInfo.chargeAmount})
                           </button>
                         </div>
                       )}
@@ -6662,7 +6667,7 @@ export default function CheckInFormView({
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-luxury-brown-950">
-                        {idProofFileName ? `✓ Selected: ${idProofFileName}` : 'Drag & Drop ID Proof File here'}
+                        {idProofFileName ? `âœ“ Selected: ${idProofFileName}` : 'Drag & Drop ID Proof File here'}
                       </p>
                       <p className="text-xs text-luxury-brown-500 mt-1">
                         {idProofFileName ? 'Click to change document' : 'or click to browse from local files'}
@@ -6897,7 +6902,7 @@ export default function CheckInFormView({
                   <div className="space-y-1">
                     <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Standard Catalog Rate</label>
                     <span className="w-full px-3 py-2 border border-luxury-brown-100 bg-gray-100 text-luxury-brown-500 rounded-lg text-sm block font-mono font-bold">
-                      ₹{standardRate} / Night
+                      â‚¹{standardRate} / Night
                     </span>
                     <p className="text-[10px] text-gray-400 italic">Default category rack rate</p>
                   </div>
@@ -6911,7 +6916,7 @@ export default function CheckInFormView({
                         title="Renew/Reset room rate back to standard catalog rate (Point 6)"
                         className="text-[10px] font-mono font-bold text-amber-700 hover:text-amber-900 bg-amber-100/70 hover:bg-amber-200/80 px-2 py-0.5 rounded cursor-pointer transition-colors"
                       >
-                        ↺ Renew Price
+                        â†º Renew Price
                       </button>
                     </div>
                     <input
@@ -6928,7 +6933,7 @@ export default function CheckInFormView({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-xs font-mono text-emerald-800 block uppercase font-bold">Discount Concession (₹)</label>
+                    <label className="text-xs font-mono text-emerald-800 block uppercase font-bold">Discount Concession (â‚¹)</label>
                     <input
                       type="number"
                       min={0}
@@ -6944,11 +6949,11 @@ export default function CheckInFormView({
                   <div className="space-y-1">
                     <label className="text-xs font-mono text-slate-700 block uppercase font-bold">Net Room Charges</label>
                     <span className="w-full px-3 py-2 border border-slate-200 bg-white text-slate-900 font-mono font-bold text-sm rounded-lg block">
-                      ₹{Math.max(0, (roomRate * stayNights) - manualDiscount)} ({stayNights} N)
+                      â‚¹{Math.max(0, (roomRate * stayNights) - manualDiscount)} ({stayNights} N)
                     </span>
                     <p className="text-[10px] text-slate-500 italic">
-                      {roomRate !== standardRate ? `Agreed room tariff: ₹${roomRate}/N` : 'Standard catalog rate'}
-                      {manualDiscount > 0 ? ` | Extra Disc: -₹${manualDiscount}` : ''}
+                      {roomRate !== standardRate ? `Agreed room tariff: â‚¹${roomRate}/N` : 'Standard catalog rate'}
+                      {manualDiscount > 0 ? ` | Extra Disc: -â‚¹${manualDiscount}` : ''}
                     </p>
                   </div>
                 </div>
@@ -6957,12 +6962,12 @@ export default function CheckInFormView({
                   <div className="space-y-1">
                     <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Group Nightly Room Tariff</label>
                     <span className="w-full px-3 py-2 border border-luxury-brown-100 bg-white text-luxury-brown-900 rounded-lg text-sm block font-mono font-bold">
-                      ₹{groupRoomChargesPerNight.toLocaleString('en-IN')} / Night ({groupRooms.length} Rooms)
+                      â‚¹{groupRoomChargesPerNight.toLocaleString('en-IN')} / Night ({groupRooms.length} Rooms)
                     </span>
                     <p className="text-[10px] text-gray-500 italic">Edit per-room tariff in the Group Allocation table above.</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-mono text-emerald-800 block uppercase font-bold">Discount Concession (₹)</label>
+                    <label className="text-xs font-mono text-emerald-800 block uppercase font-bold">Discount Concession (â‚¹)</label>
                     <input
                       type="number"
                       min={0}
@@ -6976,16 +6981,16 @@ export default function CheckInFormView({
                   <div className="space-y-1">
                     <label className="text-xs font-mono text-slate-700 block uppercase font-bold">Net Group Room Charges</label>
                     <span className="w-full px-3 py-2 border border-slate-200 bg-white text-slate-900 font-mono font-bold text-sm rounded-lg block">
-                      ₹{Math.max(0, groupRoomChargesTotal - manualDiscount).toLocaleString('en-IN')} ({stayNights} N)
+                      â‚¹{Math.max(0, groupRoomChargesTotal - manualDiscount).toLocaleString('en-IN')} ({stayNights} N)
                     </span>
                     <p className="text-[10px] text-slate-500 italic">
-                      {groupRooms.map(gr => `Rm ${gr.roomNumber}: ₹${gr.rate}`).join(' + ')}
+                      {groupRooms.map(gr => `Rm ${gr.roomNumber}: â‚¹${gr.rate}`).join(' + ')}
                     </p>
                   </div>
                 </div>
               )}
 
-              {/* Occupancy and Extra Guest charges review (Strictly Opt-In — ₹0 unless ticked) */}
+              {/* Occupancy and Extra Guest charges review (Strictly Opt-In â€” â‚¹0 unless ticked) */}
               <div className="p-4 bg-gray-50 border border-slate-300 rounded-xl space-y-3">
                 <div className="flex flex-wrap justify-between items-center gap-2 text-xs">
                   <div className="flex items-center gap-2">
@@ -7000,15 +7005,15 @@ export default function CheckInFormView({
                       }`}
                     >
                       {applyExtraPersonCharge && effectiveExtraPersonChargesTotal > 0
-                        ? `+ ₹${effectiveExtraPersonChargesTotal} Added to Bill`
-                        : '₹0 (Included in Room Tariff)'}
+                        ? `+ â‚¹${effectiveExtraPersonChargesTotal} Added to Bill`
+                        : 'â‚¹0 (Included in Room Tariff)'}
                     </span>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[10px] font-mono text-gray-600 font-bold bg-white px-2 py-1 border border-gray-200 rounded">
                       {checkInMode === 'single'
-                        ? `Guests: ${totalOccupants} · Capacity: ${baseOccupancy} Base / ${selectedRoomMaxOccupancy} Max`
-                        : `Guests: ${effectiveTotalOccupants} · Base: ${effectiveBaseOccupancy} (${groupRooms.length} Rooms)`}
+                        ? `Guests: ${totalOccupants} Â· Capacity: ${baseOccupancy} Base / ${selectedRoomMaxOccupancy} Max`
+                        : `Guests: ${effectiveTotalOccupants} Â· Base: ${effectiveBaseOccupancy} (${groupRooms.length} Rooms)`}
                     </span>
                     <label className="inline-flex items-center gap-2 px-3 py-1 bg-white border border-purple-300 rounded-lg cursor-pointer font-bold text-xs select-none shadow-2xs hover:bg-purple-50">
                       <input
@@ -7058,7 +7063,7 @@ export default function CheckInFormView({
                       </div>
                     )}
                     <div className="space-y-1">
-                      <span className="text-gray-500 block text-[9px] uppercase font-bold">Extra Person Rate / Night (₹)</span>
+                      <span className="text-gray-500 block text-[9px] uppercase font-bold">Extra Person Rate / Night (â‚¹)</span>
                       <input
                         type="number"
                         min={0}
@@ -7069,7 +7074,7 @@ export default function CheckInFormView({
                     </div>
                     <div>
                       <span className="text-teal-800 block text-[9px] font-sans font-bold uppercase">Extra Person Total ({stayNights}N)</span>
-                      <span className="text-sm font-bold block text-teal-700 pt-1.5">+ ₹{effectiveExtraPersonChargesTotal}</span>
+                      <span className="text-sm font-bold block text-teal-700 pt-1.5">+ â‚¹{effectiveExtraPersonChargesTotal}</span>
                     </div>
                   </div>
                 )}
@@ -7086,7 +7091,7 @@ export default function CheckInFormView({
                       </span>
                     </div>
                     <span className="text-[11px] font-mono font-bold text-teal-700 bg-white px-2 py-0.5 border border-teal-200 rounded">
-                      Services Total: + ₹{servicesTotal.toLocaleString('en-IN')}
+                      Services Total: + â‚¹{servicesTotal.toLocaleString('en-IN')}
                     </span>
                   </div>
                   {serviceCatalog.length === 0 ? (
@@ -7119,7 +7124,7 @@ export default function CheckInFormView({
                               {s.serviceName}
                             </span>
                             <span className="font-mono font-bold text-[#263449] text-xs">
-                              ₹{serviceAmountOf(s).toLocaleString('en-IN')}
+                              â‚¹{serviceAmountOf(s).toLocaleString('en-IN')}
                             </span>
                           </label>
                         );
@@ -7135,18 +7140,18 @@ export default function CheckInFormView({
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-amber-950 font-mono uppercase text-[10.5px] flex items-center gap-1">
-                        ⚡ Early Check-In ({earlyCheckInInfo.earlyHours}h before {hotelSettings?.checkInTime || '12:00 PM'})
+                        âš¡ Early Check-In ({earlyCheckInInfo.earlyHours}h before {hotelSettings?.checkInTime || '12:00 PM'})
                       </span>
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                         applyEarlyCheckInCharge
                           ? 'bg-amber-200 text-amber-900 border border-amber-300'
                           : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                       }`}>
-                        {applyEarlyCheckInCharge ? `+₹${effectiveEarlyCheckInCharge} Added to Bill` : 'Waived (₹0 / In Room Tariff)'}
+                        {applyEarlyCheckInCharge ? `+â‚¹${effectiveEarlyCheckInCharge} Added to Bill` : 'Waived (â‚¹0 / In Room Tariff)'}
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-600">
-                      Standard hourly rate is ₹{Number(hotelSettings?.earlyCheckInHourlyRate) || 0}/or. Default is waived so agreed room rate (₹{roomRate}) stays exact.
+                      Standard hourly rate is â‚¹{Number(hotelSettings?.earlyCheckInHourlyRate) || 0}/or. Default is waived so agreed room rate (â‚¹{roomRate}) stays exact.
                     </p>
                   </div>
                   <label className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-amber-300 rounded-lg cursor-pointer font-bold text-xs select-none shadow-2xs hover:bg-amber-50">
@@ -7157,7 +7162,7 @@ export default function CheckInFormView({
                       className="w-4 h-4 accent-amber-600 cursor-pointer"
                     />
                     <span className="text-slate-800">
-                      {applyEarlyCheckInCharge ? `Apply Surcharge (+₹${effectiveEarlyCheckInCharge})` : 'Keep Waived (₹0 Extra)'}
+                      {applyEarlyCheckInCharge ? `Apply Surcharge (+â‚¹${effectiveEarlyCheckInCharge})` : 'Keep Waived (â‚¹0 Extra)'}
                     </span>
                   </label>
                 </div>
@@ -7169,6 +7174,7 @@ export default function CheckInFormView({
                   <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Other auxiliary charges</label>
                   <input
                     type="number"
+                    step="any"
                     min={0}
                     value={otherCharges || ''}
                     onChange={(e) => setOtherCharges(Number(e.target.value))}
@@ -7190,6 +7196,7 @@ export default function CheckInFormView({
                   </div>
                   <input
                     type="number"
+                    step="any"
                     min={0}
                     readOnly={Boolean(selectedBooking && Number(selectedBooking.advanceAmount) > 0)}
                     value={advanceAmount || ''}
@@ -7207,6 +7214,7 @@ export default function CheckInFormView({
                   <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Paid Amount (Check-In Payment)</label>
                   <input
                     type="number"
+                    step="any"
                     min={0}
                     readOnly={isHybridCheckInPay}
                     value={isHybridCheckInPay ? effectiveDeskReceivedNow : (paidAmount || '')}
@@ -7249,7 +7257,7 @@ export default function CheckInFormView({
                       <option value="UPI">UPI</option>
                       <option value="Card">Card</option>
                       <option value="Bank Transfer">Bank Transfer</option>
-                      <option value="Hybrid">⇄ Hybrid / Split</option>
+                      <option value="Hybrid">â‡„ Hybrid / Split</option>
                       <option value="Voucher">Voucher</option>
                       <option value="Online">Online</option>
                     </select>
@@ -7262,10 +7270,10 @@ export default function CheckInFormView({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <span className="text-xs font-serif font-bold text-luxury-brown-950 block">
-                        ⇄ Hybrid / Split Payment Breakdown
+                        â‡„ Hybrid / Split Payment Breakdown
                       </span>
                       <span className="text-[11px] text-slate-600">
-                        Combine Cash, UPI, Card, or Bank Transfer. At least 2 methods with ₹ &gt; 0 required.
+                        Combine Cash, UPI, Card, or Bank Transfer. At least 2 methods with â‚¹ &gt; 0 required.
                       </span>
                     </div>
                     <button
@@ -7306,7 +7314,7 @@ export default function CheckInFormView({
                           </select>
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">Received ₹</label>
+                          <label className="text-[10px] font-mono uppercase text-slate-500 font-bold block">Received â‚¹</label>
                           <input
                             type="number"
                             min={0}
@@ -7343,7 +7351,7 @@ export default function CheckInFormView({
                           onClick={() => setCheckInSplitRows((prev) => prev.filter((r) => r.id !== sp.id))}
                           className="px-2.5 py-2 rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-30 text-xs font-bold cursor-pointer"
                         >
-                          ✕
+                          âœ•
                         </button>
                       </div>
                     ))}
@@ -7351,10 +7359,10 @@ export default function CheckInFormView({
 
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-luxury-brown-200/70 text-xs font-mono">
                     <span className="text-slate-600">
-                      Combined Check-In Payment: <strong className="text-emerald-700">₹{effectiveDeskReceivedNow.toLocaleString('en-IN')}</strong>
+                      Combined Check-In Payment: <strong className="text-emerald-700">â‚¹{effectiveDeskReceivedNow.toLocaleString('en-IN')}</strong>
                     </span>
                     <span className={balanceAmount > 0 ? 'text-rose-700 font-bold' : 'text-emerald-700 font-bold'}>
-                      Remaining Balance Due: ₹{balanceAmount.toLocaleString('en-IN')}
+                      Remaining Balance Due: â‚¹{balanceAmount.toLocaleString('en-IN')}
                     </span>
                   </div>
                 </div>
@@ -7382,13 +7390,13 @@ export default function CheckInFormView({
                     </label>
                     {isCheckInGstLockedByExistingInvoice && existingStayPrimaryInvoice && (
                       <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded">
-                        🔒 Locked by Invoice #{existingStayPrimaryInvoice.invoiceNumber}
+                        ðŸ”’ Locked by Invoice #{existingStayPrimaryInvoice.invoiceNumber}
                       </span>
                     )}
                   </div>
                   {isCheckInGstLockedByExistingInvoice && existingStayPrimaryInvoice ? (
                     <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 font-medium">
-                      Invoice <strong>#{existingStayPrimaryInvoice.invoiceNumber}</strong> is already generated ({gstPercent > 0 ? `With GST ${gstPercent}%` : 'No GST 0%'}). GST cannot be edited on a generated invoice — generate a separate invoice from Billing &amp; Invoices if needed.
+                      Invoice <strong>#{existingStayPrimaryInvoice.invoiceNumber}</strong> is already generated ({gstPercent > 0 ? `With GST ${gstPercent}%` : 'No GST 0%'}). GST cannot be edited on a generated invoice â€” generate a separate invoice from Billing &amp; Invoices if needed.
                     </div>
                   ) : (
                     <>
@@ -7425,7 +7433,7 @@ export default function CheckInFormView({
                             }`}
                           >
                             <div className="text-xs font-bold">1. Non-GST (0%)</div>
-                            <div className="text-[10px] text-slate-500 mt-0.5">Bill of Supply • No Tax</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">Bill of Supply â€¢ No Tax</div>
                           </button>
                           <button
                             type="button"
@@ -7455,7 +7463,7 @@ export default function CheckInFormView({
                             }`}
                           >
                             <div className="text-xs font-bold">3. Including GST ({configuredDefaultGst > 0 ? configuredDefaultGst : 5}%)</div>
-                            <div className="text-[10px] text-slate-500 mt-0.5">Tariff Includes GST (Net ₹{roomRate || 0})</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">Tariff Includes GST (Net â‚¹{roomRate || 0})</div>
                           </button>
                         </div>
                       </div>
@@ -7475,12 +7483,12 @@ export default function CheckInFormView({
                 <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-1.5 text-xs font-mono">
                   <div className="flex items-center justify-between text-[10px] uppercase font-bold text-amber-900">
                     <span>Existing Booking / POS Room Folio Charges (Carried Forward)</span>
-                    <span>+ ₹{existingStayFolioSubtotal.toLocaleString('en-IN')}</span>
+                    <span>+ â‚¹{existingStayFolioSubtotal.toLocaleString('en-IN')}</span>
                   </div>
                   {existingStayFolioCharges.map((fc, idx) => (
                     <div key={`${fc.id}-${idx}`} className="flex items-center justify-between text-[11px] text-slate-700">
-                      <span>• {fc.description}</span>
-                      <span className="font-bold text-slate-900">₹{Number(fc.amount || 0).toLocaleString('en-IN')}</span>
+                      <span>â€¢ {fc.description}</span>
+                      <span className="font-bold text-slate-900">â‚¹{Number(fc.amount || 0).toLocaleString('en-IN')}</span>
                     </div>
                   ))}
                 </div>
@@ -7490,42 +7498,42 @@ export default function CheckInFormView({
               <div className="text-[11px] font-mono text-slate-700 bg-white p-3 rounded-xl border border-luxury-brown-200 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
                 <div className="flex flex-wrap items-center gap-3">
                   <span>
-                    Room Tariff: <strong className="text-slate-900">₹{effectiveRoomChargesTotal.toLocaleString('en-IN')}</strong>{' '}
+                    Room Tariff: <strong className="text-slate-900">â‚¹{effectiveRoomChargesTotal.toLocaleString('en-IN')}</strong>{' '}
                     ({checkInMode === 'group'
-                      ? `${groupRooms.length} Rooms × ${stayNights} Night${stayNights > 1 ? 's' : ''}`
-                      : `${stayNights} Night${stayNights > 1 ? 's' : ''} × ₹${roomRate}`})
+                      ? `${groupRooms.length} Rooms Ã— ${stayNights} Night${stayNights > 1 ? 's' : ''}`
+                      : `${stayNights} Night${stayNights > 1 ? 's' : ''} Ã— â‚¹${roomRate}`})
                   </span>
                   {earlyCheckInInfo.isEarly && (
                     effectiveEarlyCheckInCharge > 0 ? (
-                      <span className="text-amber-700 font-semibold">+ Early Check-In: <strong>₹{effectiveEarlyCheckInCharge}</strong></span>
+                      <span className="text-amber-700 font-semibold">+ Early Check-In: <strong>â‚¹{effectiveEarlyCheckInCharge}</strong></span>
                     ) : (
-                      <span className="text-emerald-700 font-medium">Early Check-In: <strong>₹0 (Waived)</strong></span>
+                      <span className="text-emerald-700 font-medium">Early Check-In: <strong>â‚¹0 (Waived)</strong></span>
                     )
                   )}
                   {effectiveExtraBedTotal > 0 && (
-                    <span className="text-amber-800 font-semibold">+ Extra Bed: <strong>₹{effectiveExtraBedTotal}</strong></span>
+                    <span className="text-amber-800 font-semibold">+ Extra Bed: <strong>â‚¹{effectiveExtraBedTotal}</strong></span>
                   )}
                   {effectiveExtraPersonChargesTotal > 0 && (
-                    <span className="text-purple-700 font-semibold">+ Extra Person: <strong>₹{effectiveExtraPersonChargesTotal}</strong></span>
+                    <span className="text-purple-700 font-semibold">+ Extra Person: <strong>â‚¹{effectiveExtraPersonChargesTotal}</strong></span>
                   )}
                   {servicesTotal > 0 && (
-                    <span className="text-teal-700 font-semibold">+ Services: <strong>₹{servicesTotal}</strong></span>
+                    <span className="text-teal-700 font-semibold">+ Services: <strong>â‚¹{servicesTotal}</strong></span>
                   )}
                   {existingStayFolioSubtotal > 0 && (
-                    <span className="text-orange-700 font-semibold">+ POS / Folio: <strong>₹{existingStayFolioSubtotal}</strong></span>
+                    <span className="text-orange-700 font-semibold">+ POS / Folio: <strong>â‚¹{existingStayFolioSubtotal}</strong></span>
                   )}
                   {otherCharges > 0 && (
-                    <span className="text-slate-700 font-semibold">+ Auxiliary: <strong>₹{otherCharges}</strong></span>
+                    <span className="text-slate-700 font-semibold">+ Auxiliary: <strong>â‚¹{otherCharges}</strong></span>
                   )}
                   {manualDiscount > 0 && (
-                    <span className="text-rose-700 font-semibold">- Discount: <strong>₹{manualDiscount}</strong></span>
+                    <span className="text-rose-700 font-semibold">- Discount: <strong>â‚¹{manualDiscount}</strong></span>
                   )}
                   {gstPercent > 0 && (
-                    <span className="text-emerald-700 font-semibold">+ GST ({gstPercent}%): <strong>₹{gstTax}</strong></span>
+                    <span className="text-emerald-700 font-semibold">+ GST ({gstPercent}%): <strong>â‚¹{gstTax}</strong></span>
                   )}
                 </div>
                 <div className="font-bold text-slate-900 border-l border-slate-300 pl-3">
-                  Grand Total: <strong className="text-emerald-800 text-xs">₹{finalAmount.toLocaleString('en-IN')}</strong>
+                  Grand Total: <strong className="text-emerald-800 text-xs">â‚¹{finalAmount.toLocaleString('en-IN')}</strong>
                 </div>
               </div>
 
@@ -7533,22 +7541,22 @@ export default function CheckInFormView({
               <div className="p-4 bg-[#FAF7F2] text-slate-900 rounded-2xl grid grid-cols-2 md:grid-cols-4 gap-4 font-mono text-xs border border-luxury-brown-200/90 shadow-2xs">
                 <div className="border-r border-slate-200/80 pr-3 text-center md:text-left">
                   <span className="text-luxury-brown-550 uppercase block text-[9px] font-bold">Final Amount</span>
-                  <span className="text-lg font-bold text-slate-900">₹{finalAmount.toLocaleString()}</span>
+                  <span className="text-lg font-bold text-slate-900">â‚¹{finalAmount.toLocaleString()}</span>
                   <span className="text-[9px] text-slate-500 block pt-0.5">Stay with {gstPercent > 0 ? 'GST' : 'no GST'} & extras</span>
                 </div>
                 <div className="border-r border-slate-200/80 pr-3 text-center md:text-left">
                   <span className="text-luxury-brown-550 uppercase block text-[9px] font-bold">Paid Amount</span>
-                  <span className="text-lg font-bold text-emerald-700">₹{effectiveDeskReceivedNow.toLocaleString()}</span>
+                  <span className="text-lg font-bold text-emerald-700">â‚¹{effectiveDeskReceivedNow.toLocaleString()}</span>
                   <span className="text-[9px] text-slate-500 block pt-0.5">Paid at desk check-in</span>
                 </div>
                 <div className="border-r border-slate-200/80 pr-3 text-center md:text-left">
                   <span className="text-luxury-brown-550 uppercase block text-[9px] font-bold">Already Paid / Advance</span>
-                  <span className="text-lg font-bold text-slate-800">₹{advanceAmount.toLocaleString()}</span>
+                  <span className="text-lg font-bold text-slate-800">â‚¹{advanceAmount.toLocaleString()}</span>
                   <span className="text-[9px] text-slate-500 block pt-0.5">Prepaid booking amount</span>
                 </div>
                 <div className="text-center md:text-left">
                   <span className="text-[#8B691E] uppercase block text-[9px] font-bold tracking-widest">Balance Due</span>
-                  <span className="text-xl font-bold text-slate-900">₹{balanceAmount.toLocaleString()}</span>
+                  <span className="text-xl font-bold text-slate-900">â‚¹{balanceAmount.toLocaleString()}</span>
                   <span className="text-[9px] text-slate-500 block pt-0.5">Outstanding balance due</span>
                 </div>
               </div>
@@ -7583,10 +7591,10 @@ export default function CheckInFormView({
                   <h2 className="text-base sm:text-lg font-serif font-bold text-[#263449]">
                     {editingCheckIn
                       ? isViewOnly
-                        ? `View Stay Details — #${editingCheckIn.id}`
-                        : `Edit Stay — #${editingCheckIn.id}`
+                        ? `View Stay Details â€” #${editingCheckIn.id}`
+                        : `Edit Stay â€” #${editingCheckIn.id}`
                       : selectedBooking
-                      ? `Check-In Reservation — #${selectedBooking.id}`
+                      ? `Check-In Reservation â€” #${selectedBooking.id}`
                       : isFutureAdvanceArrival
                       ? 'New Advance Reservation'
                       : 'New Check-In & Reservation'}
@@ -7637,7 +7645,7 @@ export default function CheckInFormView({
                       onClick={() => setActiveSubTab('folios')}
                       className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#F4F6F9] border border-[#DCE3EC] text-xs font-bold text-[#263449] cursor-pointer"
                     >
-                      ← Folios &amp; History
+                      â† Folios &amp; History
                     </button>
                   )}
 
@@ -7710,20 +7718,20 @@ export default function CheckInFormView({
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="px-2 py-0.5 rounded bg-emerald-700 text-white text-[10px] font-mono font-bold uppercase">
-                        ✓ Confirmed by Server
+                        âœ“ Confirmed by Server
                       </span>
                       <span className="text-sm font-serif font-bold text-emerald-950">
-                        {inlineBookingSuccess.actionLabel} — #{inlineBookingSuccess.id}
+                        {inlineBookingSuccess.actionLabel} â€” #{inlineBookingSuccess.id}
                       </span>
                     </div>
                     <p className="text-xs text-emerald-900 font-mono">
-                      Guest: <strong>{inlineBookingSuccess.guestName}</strong> • Room(s):{' '}
-                      <strong>{inlineBookingSuccess.roomsLabel}</strong> • Stay:{' '}
+                      Guest: <strong>{inlineBookingSuccess.guestName}</strong> â€¢ Room(s):{' '}
+                      <strong>{inlineBookingSuccess.roomsLabel}</strong> â€¢ Stay:{' '}
                       <strong>
-                        {formatDdmmyyyy(inlineBookingSuccess.checkInDate)} → {formatDdmmyyyy(inlineBookingSuccess.checkOutDate)}
+                        {formatDdmmyyyy(inlineBookingSuccess.checkInDate)} â†’ {formatDdmmyyyy(inlineBookingSuccess.checkOutDate)}
                       </strong>{' '}
-                      • Total: <strong>₹{inlineBookingSuccess.totalAmount.toLocaleString('en-IN')}</strong> • Paid:{' '}
-                      <strong>₹{inlineBookingSuccess.paidAmount.toLocaleString('en-IN')}</strong> ({inlineBookingSuccess.status})
+                      â€¢ Total: <strong>â‚¹{inlineBookingSuccess.totalAmount.toLocaleString('en-IN')}</strong> â€¢ Paid:{' '}
+                      <strong>â‚¹{inlineBookingSuccess.paidAmount.toLocaleString('en-IN')}</strong> ({inlineBookingSuccess.status})
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -7793,7 +7801,7 @@ export default function CheckInFormView({
                         <div className="flex justify-between gap-2">
                           <span className="text-slate-500">Dates:</span>
                           <strong className="text-[#263449] text-right">
-                            {formatDdmmyyyy(checkInDate)} → {formatDdmmyyyy(checkOutDate)}
+                            {formatDdmmyyyy(checkInDate)} â†’ {formatDdmmyyyy(checkOutDate)}
                           </strong>
                         </div>
                         <div className="flex justify-between gap-2">
@@ -7828,17 +7836,17 @@ export default function CheckInFormView({
                         <div className="flex items-center justify-between text-slate-600">
                           <span>Room Tariff:</span>
                           <strong className="text-[#263449]">
-                            ₹{effectiveRoomChargesTotal.toLocaleString('en-IN')}
+                            â‚¹{effectiveRoomChargesTotal.toLocaleString('en-IN')}
                           </strong>
                         </div>
 
                         {applyExtraPersonCharge && (
                           <div className="flex items-center justify-between text-[#8B691E]">
                             <span className="truncate pr-1">
-                              Extra Person ({Math.max(1, Number(extraPersonQty) || 1)}×₹{effectiveExtraPaxRate}×{effectiveExtraPaxNights}N):
+                              Extra Person ({Math.max(1, Number(extraPersonQty) || 1)}Ã—â‚¹{effectiveExtraPaxRate}Ã—{effectiveExtraPaxNights}N):
                             </span>
                             <strong className="shrink-0">
-                              ₹{effectiveExtraPersonChargesTotal.toLocaleString('en-IN')}
+                              â‚¹{effectiveExtraPersonChargesTotal.toLocaleString('en-IN')}
                             </strong>
                           </div>
                         )}
@@ -7849,20 +7857,20 @@ export default function CheckInFormView({
                             <span className="truncate pr-1">
                               Extra Bed/Mattress
                               {checkInMode === 'single'
-                                ? ` (${singleExtraCalc.extraBedQty}×₹${singleExtraCalc.extraBedRate}×${singleExtraCalc.extraBedNights}N)`
+                                ? ` (${singleExtraCalc.extraBedQty}Ã—â‚¹${singleExtraCalc.extraBedRate}Ã—${singleExtraCalc.extraBedNights}N)`
                                 : ''}
                               :
                             </span>
                             <strong className="shrink-0">
-                              ₹{effectiveExtraBedTotal.toLocaleString('en-IN')}
+                              â‚¹{effectiveExtraBedTotal.toLocaleString('en-IN')}
                             </strong>
                           </div>
                         )}
 
                         {!editingCheckIn && chargeableWaterBottles > 0 && chargeableWaterTotal > 0 && (
                           <div className="flex items-center justify-between text-sky-800">
-                            <span>Water Bottles ({chargeableWaterBottles} × ₹{effectiveChargeableWaterRate}):</span>
-                            <strong>₹{chargeableWaterTotal.toLocaleString('en-IN')}</strong>
+                            <span>Water Bottles ({chargeableWaterBottles} Ã— â‚¹{effectiveChargeableWaterRate}):</span>
+                            <strong>â‚¹{chargeableWaterTotal.toLocaleString('en-IN')}</strong>
                           </div>
                         )}
 
@@ -7870,7 +7878,7 @@ export default function CheckInFormView({
                           <div className="flex items-center justify-between text-slate-600">
                             <span>Add-ons / Folio:</span>
                             <strong className="text-[#263449]">
-                              ₹{(otherCharges + servicesTotal + customAddonTotal + earlyCheckInCharge + existingStayFolioSubtotal).toLocaleString('en-IN')}
+                              â‚¹{(otherCharges + servicesTotal + customAddonTotal + earlyCheckInCharge + existingStayFolioSubtotal).toLocaleString('en-IN')}
                             </strong>
                           </div>
                         )}
@@ -7878,27 +7886,27 @@ export default function CheckInFormView({
                         {totalEffectiveDiscount > 0 && (
                           <div className="flex items-center justify-between text-rose-700">
                             <span>Discount / Adj.:</span>
-                            <strong>− ₹{totalEffectiveDiscount.toLocaleString('en-IN')}</strong>
+                            <strong>âˆ’ â‚¹{totalEffectiveDiscount.toLocaleString('en-IN')}</strong>
                           </div>
                         )}
 
                         <div className="flex items-center justify-between text-slate-600">
                           <span>GST ({gstPercent}%):</span>
-                          <strong className="text-[#263449]">₹{gstTax.toLocaleString('en-IN')}</strong>
+                          <strong className="text-[#263449]">â‚¹{gstTax.toLocaleString('en-IN')}</strong>
                         </div>
 
                         <div className="flex items-center justify-between pt-1.5 border-t border-[#DCE3EC]">
                           <span className="text-xs font-bold text-[#263449]">Final Settlement:</span>
                           <strong className="text-base font-extrabold text-[#8B691E]">
-                            ₹{finalAmount.toLocaleString('en-IN')}
+                            â‚¹{finalAmount.toLocaleString('en-IN')}
                           </strong>
                         </div>
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-emerald-700 font-semibold">
-                            Paid: ₹{(advanceAmount + effectiveDeskReceivedNow).toLocaleString('en-IN')}
+                            Paid: â‚¹{(advanceAmount + effectiveDeskReceivedNow).toLocaleString('en-IN')}
                           </span>
                           <span className={balanceAmount > 0 ? 'text-amber-700 font-bold' : 'text-emerald-700 font-bold'}>
-                            {balanceAmount > 0 ? `Pending: ₹${balanceAmount.toLocaleString('en-IN')}` : 'SETTLED'}
+                            {balanceAmount > 0 ? `Pending: â‚¹${balanceAmount.toLocaleString('en-IN')}` : 'SETTLED'}
                           </span>
                         </div>
                       </div>
@@ -7922,19 +7930,19 @@ export default function CheckInFormView({
                           {
                             id: 'group',
                             title: 'Group',
-                            sub: 'Block of rooms • rooming list',
+                            sub: 'Block of rooms â€¢ rooming list',
                             icon: Users,
                           },
                           {
                             id: 'corporate',
                             title: 'Corporate',
-                            sub: 'Negotiated rate • direct bill',
+                            sub: 'Negotiated rate â€¢ direct bill',
                             icon: Building,
                           },
                           {
                             id: 'event',
                             title: 'Event / Banquet',
-                            sub: 'Venue • catering + AV',
+                            sub: 'Venue â€¢ catering + AV',
                             icon: Sparkles,
                           },
                         ] as const
@@ -7986,7 +7994,7 @@ export default function CheckInFormView({
                           Stay &amp; rate
                         </h3>
                         <p className="text-xs text-slate-500">
-                          Stay dates (Asia/Kolkata • DD-MM-YYYY), room allocation, meal plan &amp; rate plan
+                          Stay dates (Asia/Kolkata â€¢ DD-MM-YYYY), room allocation, meal plan &amp; rate plan
                         </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -8000,7 +8008,7 @@ export default function CheckInFormView({
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-300 text-indigo-900 text-xs font-mono font-bold hover:bg-indigo-100 transition-all cursor-pointer shadow-xs"
                             title="Switch to overnight stay (1 night)"
                           >
-                            <span>🌙 Switch to Overnight (1 Night)</span>
+                            <span>ðŸŒ™ Switch to Overnight (1 Night)</span>
                           </button>
                         ) : (
                           <button
@@ -8017,12 +8025,12 @@ export default function CheckInFormView({
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-[#C49A3A]/60 text-amber-900 text-xs font-mono font-bold hover:bg-amber-100 transition-all cursor-pointer shadow-xs"
                             title="Set same-day hourly stay"
                           >
-                            <span>⚡ Same-Day Stay</span>
+                            <span>âš¡ Same-Day Stay</span>
                           </button>
                         )}
                         {isFutureAdvanceArrival && (
                           <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-mono font-bold">
-                            Advance Booking Mode • Room stays Available until Check-In
+                            Advance Booking Mode â€¢ Room stays Available until Check-In
                           </span>
                         )}
                       </div>
@@ -8108,7 +8116,7 @@ export default function CheckInFormView({
                               </option>
                               {filteredEligibleReservations.map(b => (
                                 <option key={b.id} value={b.id}>
-                                  {b.id} — {b.guestName} • Rm {b.roomNumber || 'TBD'} ({formatDdmmyyyy(b.checkInDate)} → {formatDdmmyyyy(b.checkOutDate)}) • Adv ₹{Number(b.advanceAmount || 0).toLocaleString('en-IN')}
+                                  {b.id} â€” {b.guestName} â€¢ Rm {b.roomNumber || 'TBD'} ({formatDdmmyyyy(b.checkInDate)} â†’ {formatDdmmyyyy(b.checkOutDate)}) â€¢ Adv â‚¹{Number(b.advanceAmount || 0).toLocaleString('en-IN')}
                                 </option>
                               ))}
                             </select>
@@ -8117,7 +8125,7 @@ export default function CheckInFormView({
                       </div>
                     )}
 
-                    {/* Row 1: Arrival Date & Time | Departure Date & Time (Spacious 2-Column Row — Zero Overlap!) */}
+                    {/* Row 1: Arrival Date & Time | Departure Date & Time (Spacious 2-Column Row â€” Zero Overlap!) */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
                       <div className="space-y-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
@@ -8230,7 +8238,7 @@ export default function CheckInFormView({
                         <div className="flex flex-wrap items-center justify-between gap-1.5">
                           <div className="flex items-center gap-1.5">
                             <span className="text-[10.5px] font-mono font-extrabold uppercase px-2 py-0.5 rounded bg-indigo-700 text-white tracking-wider">
-                              ⚡ Day-Use / Hourly Stay (Same Date)
+                              âš¡ Day-Use / Hourly Stay (Same Date)
                             </span>
                             <span className="text-[10px] font-mono text-slate-600">
                               (Check-in &amp; Check-out on {formatDdmmyyyy(checkInDate)})
@@ -8322,14 +8330,15 @@ export default function CheckInFormView({
                           <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#E6D3A7]/70 font-mono">
                             <span className="text-[11px] text-[#7A5915] font-semibold">
                               {(hotelSettings?.earlyCheckInType || 'hourly') === 'fixed'
-                                ? `Fixed Policy Fee: ₹${Number(hotelSettings?.earlyCheckInFixedRate || 0).toLocaleString('en-IN')}`
-                                : `Hourly Policy: ${earlyCheckInInfo.earlyHours}h × ₹${Number(hotelSettings?.earlyCheckInHourlyRate || 0).toLocaleString('en-IN')}/hr`}
-                              {' '}• Editable here:
+                                ? `Fixed Policy Fee: â‚¹${Number(hotelSettings?.earlyCheckInFixedRate || 0).toLocaleString('en-IN')}`
+                                : `Hourly Policy: ${earlyCheckInInfo.earlyHours}h Ã— â‚¹${Number(hotelSettings?.earlyCheckInHourlyRate || 0).toLocaleString('en-IN')}/hr`}
+                              {' '}â€¢ Editable here:
                             </span>
                             <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-[#263449]">₹</span>
+                              <span className="text-xs font-bold text-[#263449]">â‚¹</span>
                               <input
                                 type="number"
+                                step="any"
                                 min={0}
                                 value={earlyCheckInCustomRate !== '' ? earlyCheckInCustomRate : earlyCheckInInfo.chargeAmount}
                                 onWheel={(e) => e.currentTarget.blur()}
@@ -8353,14 +8362,14 @@ export default function CheckInFormView({
                         ) : (
                           <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#E6D3A7]/60 text-[11px]">
                             <span className="text-emerald-800 font-medium">
-                              ✓ Waived by default (₹0 extra added to room tariff).
+                              âœ“ Waived by default (â‚¹0 extra added to room tariff).
                             </span>
                             <button
                               type="button"
                               onClick={() => setApplyEarlyCheckInCharge(true)}
                               className="text-[#8B691E] hover:underline font-bold cursor-pointer"
                             >
-                              + Add Early Charge (₹{earlyCheckInInfo.chargeAmount.toLocaleString('en-IN')})
+                              + Add Early Charge (â‚¹{earlyCheckInInfo.chargeAmount.toLocaleString('en-IN')})
                             </button>
                           </div>
                         )}
@@ -8387,7 +8396,7 @@ export default function CheckInFormView({
                             ))}
                         </select>
                         {travelAgents.length === 0 && (
-                          <span className="text-[10px] text-amber-700 block">No agents found. Add agents under Front Desk → Travel Agents / Partners.</span>
+                          <span className="text-[10px] text-amber-700 block">No agents found. Add agents under Front Desk â†’ Travel Agents / Partners.</span>
                         )}
                       </div>
                       {selectedAgentId && (
@@ -8400,13 +8409,14 @@ export default function CheckInFormView({
                               className="w-full px-2 py-2 border border-[#DCE3EC] rounded-xl text-xs font-bold bg-white"
                             >
                               <option value="percentage">%</option>
-                              <option value="fixed">Fixed ₹</option>
+                              <option value="fixed">Fixed â‚¹</option>
                             </select>
                           </div>
                           <div className="md:col-span-2 space-y-1">
                             <label className="text-[11px] font-bold text-[#263449] block">Value</label>
                             <input
                               type="number"
+                              step="any"
                               min={0}
                               value={commissionValue}
                               onChange={e => setCommissionValue(Math.max(0, Number(e.target.value) || 0))}
@@ -8414,7 +8424,7 @@ export default function CheckInFormView({
                             />
                           </div>
                           <div className="md:col-span-3 text-right text-xs font-mono font-bold text-[#8B691E] pb-2">
-                            Agent commission: ₹{computedAgentCommission.toLocaleString('en-IN')}
+                            Agent commission: â‚¹{computedAgentCommission.toLocaleString('en-IN')}
                           </div>
                         </>
                       )}
@@ -8503,7 +8513,7 @@ export default function CheckInFormView({
                       </div>
                     )}
 
-                    {/* ROOM CONFIGURATION BOX — STRICT INDIVIDUAL vs GROUP LOGIC */}
+                    {/* ROOM CONFIGURATION BOX â€” STRICT INDIVIDUAL vs GROUP LOGIC */}
                     {checkInMode === 'single' ? (
                       /* INDIVIDUAL / SINGLE-ROOM BOX: NO Add Room / Add Group Rooms buttons! */
                       <div className="p-4 rounded-xl bg-[#F4F6F9]/80 border border-[#DCE3EC] space-y-3">
@@ -8520,7 +8530,7 @@ export default function CheckInFormView({
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                           <div className="space-y-1 sm:col-span-2">
                             <label className="text-[11px] font-bold text-[#263449] block">
-                              Select Room ({formatDdmmyyyy(checkInDate)} → {formatDdmmyyyy(checkOutDate)}) <span className="text-[#A8812B]">*</span>
+                              Select Room ({formatDdmmyyyy(checkInDate)} â†’ {formatDdmmyyyy(checkOutDate)}) <span className="text-[#A8812B]">*</span>
                             </label>
                             <select
                               value={selectedRoomNumber}
@@ -8541,11 +8551,11 @@ export default function CheckInFormView({
                                     ? `(Dirty - ${r.cleaningStatus || 'Needs Cleaning'})`
                                     : `(${r.status})`
                                   : unreadyWarn
-                                  ? `(⚠ ${isRoomOutOfOrderForCheckIn(r) ? r.status : r.cleaningStatus || 'Dirty'} - Override Req.)`
-                                  : '(Available • Clean)';
+                                  ? `(âš  ${isRoomOutOfOrderForCheckIn(r) ? r.status : r.cleaningStatus || 'Dirty'} - Override Req.)`
+                                  : '(Available â€¢ Clean)';
                                 return (
                                   <option key={r.number} value={r.number} disabled={!avail}>
-                                    Room {r.number} — {r.category} • ₹{r.rate}/nt {statusSuffix}
+                                    Room {r.number} â€” {r.category} â€¢ â‚¹{r.rate}/nt {statusSuffix}
                                   </option>
                                 );
                               })}
@@ -8568,7 +8578,7 @@ export default function CheckInFormView({
                               return (
                                 <div className="mt-2 p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-[11px] space-y-1.5">
                                   <div className="font-bold text-amber-950">
-                                    ⚠ Room {selRm.number} is marked "{stLabel}" in Housekeeping
+                                    âš  Room {selRm.number} is marked "{stLabel}" in Housekeeping
                                   </div>
                                   {canAuthoriseHkOverride ? (
                                     <>
@@ -8603,7 +8613,7 @@ export default function CheckInFormView({
 
                           <div className="space-y-1">
                             <label className="text-[11px] font-bold text-[#263449] block">
-                              Tariff / Night (₹)
+                              Tariff / Night (â‚¹)
                             </label>
                             <div className="flex items-center gap-1">
                               <input
@@ -8620,7 +8630,7 @@ export default function CheckInFormView({
                                 <button
                                   type="button"
                                   onClick={handleRenewPrice}
-                                  title={`Reset to rack rate ₹${standardRate}`}
+                                  title={`Reset to rack rate â‚¹${standardRate}`}
                                   className="p-2 rounded-lg bg-white border border-[#DCE3EC] hover:bg-amber-50 text-[#8B691E] cursor-pointer"
                                 >
                                   <RefreshCw className="w-3.5 h-3.5" />
@@ -8735,7 +8745,7 @@ export default function CheckInFormView({
                           <div className="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-center gap-2">
                             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
                             <span>
-                              <strong>Capacity Alert:</strong> {singleTotalOccupants} Occupants exceeds Room {selectedRoomNumber} standard Max Capacity ({selectedRoomMaxOccupancy} Max). Extra person fee (₹{effectiveExtraPaxRate.toLocaleString('en-IN')}/night) applied automatically.
+                              <strong>Capacity Alert:</strong> {singleTotalOccupants} Occupants exceeds Room {selectedRoomNumber} standard Max Capacity ({selectedRoomMaxOccupancy} Max). Extra person fee (â‚¹{effectiveExtraPaxRate.toLocaleString('en-IN')}/night) applied automatically.
                             </span>
                           </div>
                         )}
@@ -8761,14 +8771,14 @@ export default function CheckInFormView({
                             <div>
                               <div className="flex items-center justify-between">
                                 <label className="text-[10px] font-mono uppercase text-[#8B691E] font-bold">
-                                  Price / Night (₹)
+                                  Price / Night (â‚¹)
                                 </label>
                                 {extraPersonRateOverride !== '' && Number(extraPersonRateOverride) !== extraPersonCharge && (
                                   <button
                                     type="button"
                                     onClick={() => setExtraPersonRateOverride('')}
                                     className="text-[9.5px] font-mono text-[#8B691E] underline cursor-pointer"
-                                    title={`Reset to default ₹${extraPersonCharge}`}
+                                    title={`Reset to default â‚¹${extraPersonCharge}`}
                                   >
                                     Reset
                                   </button>
@@ -8776,6 +8786,7 @@ export default function CheckInFormView({
                               </div>
                               <input
                                 type="number"
+                                step="any"
                                 min={0}
                                 value={extraPersonRateOverride !== '' ? extraPersonRateOverride : extraPersonCharge}
                                 onChange={e =>
@@ -8804,10 +8815,10 @@ export default function CheckInFormView({
                             </div>
                             <div className="flex flex-col justify-end text-right font-mono pb-1">
                               <span className="text-[9.5px] text-slate-400">
-                                {singleExtraCalc.extraPersonQty} × ₹{singleExtraCalc.extraPersonRate} × {singleExtraCalc.extraPersonNights}N
+                                {singleExtraCalc.extraPersonQty} Ã— â‚¹{singleExtraCalc.extraPersonRate} Ã— {singleExtraCalc.extraPersonNights}N
                               </span>
                               <strong className="text-sm font-extrabold text-[#8B691E]">
-                                Total: ₹{extraPersonChargesTotal.toLocaleString('en-IN')}
+                                Total: â‚¹{extraPersonChargesTotal.toLocaleString('en-IN')}
                               </strong>
                             </div>
                           </div>
@@ -8831,7 +8842,7 @@ export default function CheckInFormView({
                             <div>
                               <div className="flex items-center justify-between">
                                 <label className="text-[10px] font-mono uppercase text-amber-800 font-bold">
-                                  Price / Night (₹)
+                                  Price / Night (â‚¹)
                                 </label>
                                 {extraBedRate !== (extraPersonCharge || 500) && (
                                   <button
@@ -8845,6 +8856,7 @@ export default function CheckInFormView({
                               </div>
                               <input
                                 type="number"
+                                step="any"
                                 min={0}
                                 value={extraBedRate}
                                 onChange={e => setExtraBedRate(Math.max(0, Number(e.target.value) || 0))}
@@ -8869,10 +8881,10 @@ export default function CheckInFormView({
                             </div>
                             <div className="flex flex-col justify-end text-right font-mono pb-1">
                               <span className="text-[9.5px] text-slate-400">
-                                {singleExtraCalc.extraBedQty} × ₹{singleExtraCalc.extraBedRate} × {singleExtraCalc.extraBedNights}N
+                                {singleExtraCalc.extraBedQty} Ã— â‚¹{singleExtraCalc.extraBedRate} Ã— {singleExtraCalc.extraBedNights}N
                               </span>
                               <strong className="text-sm font-extrabold text-amber-800">
-                                Total: ₹{extraBedTotal.toLocaleString('en-IN')}
+                                Total: â‚¹{extraBedTotal.toLocaleString('en-IN')}
                               </strong>
                             </div>
                           </div>
@@ -8909,7 +8921,7 @@ export default function CheckInFormView({
                                 }}
                                 className="px-3 py-1.5 rounded-lg bg-white hover:bg-[#F4F6F9] border border-[#DCE3EC] text-xs font-bold text-[#263449] cursor-pointer"
                               >
-                                ← Single Room
+                                â† Single Room
                               </button>
                             )}
                             <button
@@ -8934,7 +8946,7 @@ export default function CheckInFormView({
                           <div className="p-3 rounded-xl bg-white border-2 border-[#C49A3A] space-y-2.5">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-bold text-[#263449]">
-                                Select multiple available rooms for {formatDdmmyyyy(checkInDate)} → {formatDdmmyyyy(checkOutDate)}
+                                Select multiple available rooms for {formatDdmmyyyy(checkInDate)} â†’ {formatDdmmyyyy(checkOutDate)}
                               </span>
                               <button
                                 type="button"
@@ -8970,7 +8982,7 @@ export default function CheckInFormView({
                                         }}
                                         className="accent-[#B5822D]"
                                       />
-                                      Rm {r.number} ({r.category} • ₹{r.rate})
+                                      Rm {r.number} ({r.category} â€¢ â‚¹{r.rate})
                                     </label>
                                   );
                                 })}
@@ -9033,6 +9045,7 @@ export default function CheckInFormView({
                                       <td className="p-2">
                                         <input
                                           type="number"
+                                          step="any"
                                           min={0}
                                           value={gr.rate}
                                           onChange={e => handleUpdateGroupRoom(gr.id, 'rate', Number(e.target.value) || 0)}
@@ -9059,14 +9072,15 @@ export default function CheckInFormView({
                                                 className="w-10 px-1 py-0.5 border border-amber-300 rounded font-mono text-[10px] text-center bg-amber-50/50"
                                                 title="Extra Bed Qty"
                                               />
-                                              <span className="text-[10px] text-slate-400">×</span>
+                                              <span className="text-[10px] text-slate-400">Ã—</span>
                                               <input
                                                 type="number"
+                                                step="any"
                                                 min={0}
                                                 value={gr.extraBedRate}
                                                 onChange={e => handleUpdateGroupRoom(gr.id, 'extraBedRate', Math.max(0, Number(e.target.value) || 0))}
                                                 className="w-14 px-1 py-0.5 border border-amber-300 rounded font-mono text-[10px] font-bold bg-white"
-                                                title="Extra Bed Rate / Night (₹)"
+                                                title="Extra Bed Rate / Night (â‚¹)"
                                               />
                                             </div>
                                           )}
@@ -9109,7 +9123,7 @@ export default function CheckInFormView({
                                         />
                                       </td>
                                       <td className="p-2 text-right font-mono font-bold text-[#263449]">
-                                        ₹{rmSubtotal.toLocaleString('en-IN')}
+                                        â‚¹{rmSubtotal.toLocaleString('en-IN')}
                                       </td>
                                       <td className="p-2 text-center">
                                         <button
@@ -9128,12 +9142,12 @@ export default function CheckInFormView({
                             </table>
                             <div className="px-3 py-2 bg-[#FDF8ED] border-t border-[#DCE3EC] flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
                               <span className="text-[#263449] font-bold">
-                                Combined Group Charges ({groupRooms.length} Room{groupRooms.length > 1 ? 's' : ''} × {stayNights} Night{stayNights > 1 ? 's' : ''})
+                                Combined Group Charges ({groupRooms.length} Room{groupRooms.length > 1 ? 's' : ''} Ã— {stayNights} Night{stayNights > 1 ? 's' : ''})
                               </span>
                               <span className="text-[#8B691E] font-extrabold">
-                                Rooms: ₹{effectiveRoomChargesTotal.toLocaleString('en-IN')}
-                                {effectiveExtraPersonChargesTotal > 0 ? ` + Extra Person: ₹${effectiveExtraPersonChargesTotal.toLocaleString('en-IN')}` : ''}
-                                {effectiveExtraBedTotal > 0 ? ` + Extra Beds: ₹${effectiveExtraBedTotal.toLocaleString('en-IN')}` : ''}
+                                Rooms: â‚¹{effectiveRoomChargesTotal.toLocaleString('en-IN')}
+                                {effectiveExtraPersonChargesTotal > 0 ? ` + Extra Person: â‚¹${effectiveExtraPersonChargesTotal.toLocaleString('en-IN')}` : ''}
+                                {effectiveExtraBedTotal > 0 ? ` + Extra Beds: â‚¹${effectiveExtraBedTotal.toLocaleString('en-IN')}` : ''}
                               </span>
                             </div>
                           </div>
@@ -9184,10 +9198,11 @@ export default function CheckInFormView({
                                 </div>
                                 <div>
                                   <label className="text-[10px] font-mono uppercase text-[#8B691E] font-bold block">
-                                    Price / Night (₹)
+                                    Price / Night (â‚¹)
                                   </label>
                                   <input
                                     type="number"
+                                    step="any"
                                     min={0}
                                     value={extraPersonRateOverride !== '' ? extraPersonRateOverride : extraPersonCharge}
                                     onChange={e =>
@@ -9216,7 +9231,7 @@ export default function CheckInFormView({
                                 </div>
                                 <div className="flex flex-col justify-end text-right font-mono pb-1">
                                   <strong className="text-sm font-extrabold text-[#8B691E]">
-                                    Total: ₹{groupExtraPersonChargesTotal.toLocaleString('en-IN')}
+                                    Total: â‚¹{groupExtraPersonChargesTotal.toLocaleString('en-IN')}
                                   </strong>
                                 </div>
                               </div>
@@ -9253,7 +9268,7 @@ export default function CheckInFormView({
                               </span>
                             </h3>
                             <p className="text-[11px] text-slate-500">
-                              Issue complimentary (₹0) and/or chargeable water bottles • Auto-deducts from Inventory on Check-In
+                              Issue complimentary (â‚¹0) and/or chargeable water bottles â€¢ Auto-deducts from Inventory on Check-In
                             </p>
                           </div>
                         </div>
@@ -9281,7 +9296,7 @@ export default function CheckInFormView({
                             <span className="text-xs font-bold text-[#263449]">
                               {waterBottleInventoryProduct
                                 ? `Quick Restock: ${waterBottleInventoryProduct.name} (Current: ${availableWaterStock})`
-                                : 'Water Bottle item not found in Inventory — Quick Add SKU (WATER-1L) directly here:'}
+                                : 'Water Bottle item not found in Inventory â€” Quick Add SKU (WATER-1L) directly here:'}
                             </span>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-end">
@@ -9301,10 +9316,11 @@ export default function CheckInFormView({
                             </div>
                             <div>
                               <label className="text-[10px] font-mono font-bold uppercase text-[#8B691E] block">
-                                Selling Rate / Bottle (₹) *
+                                Selling Rate / Bottle (â‚¹) *
                               </label>
                               <input
                                 type="number"
+                                step="any"
                                 min={0}
                                 value={quickWaterSellRate}
                                 onWheel={(e) => e.currentTarget.blur()}
@@ -9315,10 +9331,11 @@ export default function CheckInFormView({
                             </div>
                             <div>
                               <label className="text-[10px] font-mono font-bold uppercase text-[#8B691E] block">
-                                Cost Price / Bottle (₹)
+                                Cost Price / Bottle (â‚¹)
                               </label>
                               <input
                                 type="number"
+                                step="any"
                                 min={0}
                                 value={quickWaterCostRate}
                                 onWheel={(e) => e.currentTarget.blur()}
@@ -9345,10 +9362,10 @@ export default function CheckInFormView({
                           <div className="flex items-center justify-between gap-2">
                             <div>
                               <span className="text-xs font-bold text-[#263449] block">Complimentary Bottles</span>
-                              <span className="text-[10.5px] text-slate-500">Free welcome water • Deducted from stock</span>
+                              <span className="text-[10.5px] text-slate-500">Free welcome water â€¢ Deducted from stock</span>
                             </div>
                             <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold border border-emerald-200">
-                              ₹0 Free
+                              â‚¹0 Free
                             </span>
                           </div>
                           <div className="flex items-center justify-between gap-2">
@@ -9398,10 +9415,10 @@ export default function CheckInFormView({
                           <div className="flex items-center justify-between gap-2">
                             <div>
                               <span className="text-xs font-bold text-[#263449] block">Chargeable Bottles</span>
-                              <span className="text-[10.5px] text-slate-500">Rate auto-fills from Inventory • Editable here</span>
+                              <span className="text-[10.5px] text-slate-500">Rate auto-fills from Inventory â€¢ Editable here</span>
                             </div>
                             <span className="px-2 py-0.5 rounded-md bg-[#F6E9C8] text-[#8B691E] text-[10px] font-mono font-extrabold border border-[#C49A3A]/50">
-                              Bill: ₹{chargeableWaterTotal.toLocaleString('en-IN')}
+                              Bill: â‚¹{chargeableWaterTotal.toLocaleString('en-IN')}
                             </span>
                           </div>
                           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -9441,7 +9458,7 @@ export default function CheckInFormView({
                               </button>
                             </div>
                             <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] font-mono font-bold text-[#8B691E] uppercase">Rate ₹</span>
+                              <span className="text-[10px] font-mono font-bold text-[#8B691E] uppercase">Rate â‚¹</span>
                               <input
                                 type="number"
                                 min={0}
@@ -9495,7 +9512,7 @@ export default function CheckInFormView({
                       <div className="flex items-center gap-2 shrink-0">
                         {(otherCharges + customExtraRowsTotal) > 0 && (
                           <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-mono font-bold">
-                            ₹{(otherCharges + customExtraRowsTotal).toLocaleString('en-IN')} added
+                            â‚¹{(otherCharges + customExtraRowsTotal).toLocaleString('en-IN')} added
                           </span>
                         )}
                         <span className="px-3 py-1 rounded-lg border border-[#DCE3EC] bg-white text-xs font-bold text-[#263449] inline-flex items-center gap-1">
@@ -9509,9 +9526,10 @@ export default function CheckInFormView({
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-[11px] font-bold text-[#263449] block">Other / auxiliary charge (₹)</label>
+                        <label className="text-[11px] font-bold text-[#263449] block">Other / auxiliary charge (â‚¹)</label>
                         <input
                           type="number"
+                          step="any"
                           min={0}
                           value={otherCharges || ''}
                           placeholder="0"
@@ -9556,12 +9574,12 @@ export default function CheckInFormView({
                               type="number"
                               min={0}
                               value={row.rate}
-                              placeholder="Price ₹"
+                              placeholder="Price â‚¹"
                               onChange={e => setCustomExtraRows(prev => prev.map(r => (r.id === row.id ? { ...r, rate: e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0) } : r)))}
                               className="col-span-4 sm:col-span-3 px-2 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
                             />
                             <span className="col-span-3 sm:col-span-1 text-right text-[11px] font-mono font-bold text-[#263449]">
-                              ₹{((Number(row.qty) || 0) * (Number(row.rate) || 0)).toLocaleString('en-IN')}
+                              â‚¹{((Number(row.qty) || 0) * (Number(row.rate) || 0)).toLocaleString('en-IN')}
                             </span>
                             <button
                               type="button"
@@ -9657,7 +9675,7 @@ export default function CheckInFormView({
                                   >
                                     <div className="font-bold text-[#263449]">{m.name}</div>
                                     <div className="text-[10px] font-mono text-slate-500">
-                                      {m.mobile} {m.email ? `• ${m.email}` : ''}
+                                      {m.mobile} {m.email ? `â€¢ ${m.email}` : ''}
                                     </div>
                                   </button>
                                 ))}
@@ -9692,7 +9710,7 @@ export default function CheckInFormView({
                           }`}
                         >
                           <FileText className="w-3.5 h-3.5" />
-                          {idProofFileName ? 'ID Attached ✓' : 'Attach ID'}
+                          {idProofFileName ? 'ID Attached âœ“' : 'Attach ID'}
                         </button>
                         <button
                           type="button"
@@ -9878,7 +9896,7 @@ export default function CheckInFormView({
 
                     {idProofFileName && (
                       <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
-                        <span className="font-mono font-bold text-emerald-900">✓ Attached ID Scan: {idProofFileName}</span>
+                        <span className="font-mono font-bold text-emerald-900">âœ“ Attached ID Scan: {idProofFileName}</span>
                         <button
                           type="button"
                           onClick={() => {
@@ -10053,7 +10071,7 @@ export default function CheckInFormView({
                       <div className="flex items-center gap-2 shrink-0">
                         {(selectedServiceIds.length > 0 || customAddonTotal > 0 || earlyCheckInCharge > 0) && (
                           <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-mono font-bold">
-                            ₹{(servicesTotal + customAddonTotal + earlyCheckInCharge).toLocaleString('en-IN')} added
+                            â‚¹{(servicesTotal + customAddonTotal + earlyCheckInCharge).toLocaleString('en-IN')} added
                           </span>
                         )}
                         <span className="px-3 py-1 rounded-lg border border-[#DCE3EC] bg-white text-xs font-bold text-[#263449] inline-flex items-center gap-1">
@@ -10093,7 +10111,7 @@ export default function CheckInFormView({
                                     <div>
                                       <span className="text-xs font-bold text-[#263449] block">{s.serviceName}</span>
                                       <span className="text-[10px] font-mono text-slate-600">
-                                        {unitAmt > 0 ? `₹${unitAmt.toLocaleString('en-IN')} / unit` : 'Complimentary'}
+                                        {unitAmt > 0 ? `â‚¹${unitAmt.toLocaleString('en-IN')} / unit` : 'Complimentary'}
                                       </span>
                                     </div>
                                   </label>
@@ -10111,10 +10129,11 @@ export default function CheckInFormView({
                                       />
                                       <input
                                         type="number"
+                                        step="any"
                                         min={0}
                                         value={servicePriceMap[sid] ?? ''}
                                         placeholder={String(serviceAmountOf(s))}
-                                        title="Unit price override (₹)"
+                                        title="Unit price override (â‚¹)"
                                         onChange={e =>
                                           setServicePriceMap(prev => ({
                                             ...prev,
@@ -10138,7 +10157,7 @@ export default function CheckInFormView({
                               <span className="text-xs font-bold text-[#263449]">Custom Add-ons &amp; Extra Services</span>
                               {customAddonTotal > 0 && (
                                 <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-mono text-[10px] font-bold">
-                                  ₹{customAddonTotal.toLocaleString('en-IN')} total
+                                  â‚¹{customAddonTotal.toLocaleString('en-IN')} total
                                 </span>
                               )}
                             </div>
@@ -10179,9 +10198,10 @@ export default function CheckInFormView({
                               />
                             </div>
                             <div className="md:col-span-3 space-y-1">
-                              <label className="text-[11px] font-bold text-[#263449] block">Rate (₹)</label>
+                              <label className="text-[11px] font-bold text-[#263449] block">Rate (â‚¹)</label>
                               <input
                                 type="number"
+                                step="any"
                                 min={0}
                                 value={customAddonRate || ''}
                                 onChange={e => setCustomAddonRate(Math.max(0, Number(e.target.value) || 0))}
@@ -10190,7 +10210,7 @@ export default function CheckInFormView({
                               />
                             </div>
                             <div className="md:col-span-1 text-right text-[11px] font-mono font-bold text-slate-700 py-1.5">
-                              ₹{customAddonSingleTotal.toLocaleString('en-IN')}
+                              â‚¹{customAddonSingleTotal.toLocaleString('en-IN')}
                             </div>
                           </div>
 
@@ -10232,9 +10252,10 @@ export default function CheckInFormView({
                                   />
                                 </div>
                                 <div className="md:col-span-2 space-y-1">
-                                  <label className="text-[11px] font-bold text-[#263449] block">Rate (₹)</label>
+                                  <label className="text-[11px] font-bold text-[#263449] block">Rate (â‚¹)</label>
                                   <input
                                     type="number"
+                                    step="any"
                                     min={0}
                                     value={row.rate}
                                     placeholder="0"
@@ -10251,7 +10272,7 @@ export default function CheckInFormView({
                                   />
                                 </div>
                                 <div className="md:col-span-2 text-right text-[11px] font-mono font-bold text-slate-700 py-1.5">
-                                  ₹{rowAmt.toLocaleString('en-IN')}
+                                  â‚¹{rowAmt.toLocaleString('en-IN')}
                                 </div>
                                 <div className="md:col-span-1 flex justify-end">
                                   <button
@@ -10317,7 +10338,7 @@ export default function CheckInFormView({
                                     : 'bg-white border-[#DCE3EC] text-slate-600 hover:bg-[#F4F6F9]'
                                 }`}
                               >
-                                {active ? '✓ ' : '+ '}
+                                {active ? 'âœ“ ' : '+ '}
                                 {tag}
                               </button>
                             );
@@ -10426,7 +10447,7 @@ export default function CheckInFormView({
                                   {ch.roomNumber ? ` (${ch.roomNumber})` : ''}
                                 </span>
                                 <strong className="text-[#263449] shrink-0">
-                                  ₹{Number(ch.amount || 0).toLocaleString('en-IN')}
+                                  â‚¹{Number(ch.amount || 0).toLocaleString('en-IN')}
                                 </strong>
                               </div>
                             ))}
@@ -10434,7 +10455,7 @@ export default function CheckInFormView({
                             {totalEffectiveDiscount > 0 && (
                               <div className="flex justify-between gap-2 text-amber-700">
                                 <span>Discount &amp; Adjustment</span>
-                                <strong>− ₹{totalEffectiveDiscount.toLocaleString('en-IN')}</strong>
+                                <strong>âˆ’ â‚¹{totalEffectiveDiscount.toLocaleString('en-IN')}</strong>
                               </div>
                             )}
 
@@ -10446,7 +10467,7 @@ export default function CheckInFormView({
                                   ? 'GST (0% Non-GST)'
                                   : `GST (${gstPercent}%)`}
                               </span>
-                              <strong className="text-[#263449]">₹{gstTax.toLocaleString('en-IN')}</strong>
+                              <strong className="text-[#263449]">â‚¹{gstTax.toLocaleString('en-IN')}</strong>
                             </div>
 
                             <div className="flex justify-between gap-2 pt-2 border-t border-[#DCE3EC] text-sm">
@@ -10461,7 +10482,7 @@ export default function CheckInFormView({
                                 </span>
                               </span>
                               <strong className="text-[#8B691E] font-extrabold">
-                                ₹{finalAmount.toLocaleString('en-IN')}
+                                â‚¹{finalAmount.toLocaleString('en-IN')}
                               </strong>
                             </div>
                           </div>
@@ -10485,7 +10506,7 @@ export default function CheckInFormView({
                                     onClick={() => setDiscountMode('fixed')}
                                     className={`px-2 py-0.5 cursor-pointer ${discountMode === 'fixed' ? 'bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50' : 'text-slate-600'}`}
                                   >
-                                    ₹ Flat
+                                    â‚¹ Flat
                                   </button>
                                   <button
                                     type="button"
@@ -10504,7 +10525,7 @@ export default function CheckInFormView({
                                   min={0}
                                   value={discountInputValue || ''}
                                   onChange={e => setDiscountInputValue(Math.max(0, Number(e.target.value) || 0))}
-                                  placeholder={discountMode === 'percent' ? 'Discount %' : 'Discount ₹'}
+                                  placeholder={discountMode === 'percent' ? 'Discount %' : 'Discount â‚¹'}
                                   className="px-2.5 py-1.5 border border-[#DCE3EC] rounded-lg text-xs font-mono font-bold bg-white"
                                 />
                                 <input
@@ -10535,14 +10556,14 @@ export default function CheckInFormView({
                                     onClick={() => setSettlementMode('exact')}
                                     className={`px-2 py-0.5 cursor-pointer ${settlementMode === 'exact' ? 'bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50' : 'text-slate-600'}`}
                                   >
-                                    Exact Total ₹
+                                    Exact Total â‚¹
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => setSettlementMode('adjustment')}
                                     className={`px-2 py-0.5 cursor-pointer ${settlementMode === 'adjustment' ? 'bg-[#F6E9C8] text-[#8B691E] border border-[#C49A3A]/50' : 'text-slate-600'}`}
                                   >
-                                    Subtract ₹
+                                    Subtract â‚¹
                                   </button>
                                 </div>
                               )}
@@ -10552,21 +10573,23 @@ export default function CheckInFormView({
                                 {settlementMode === 'exact' ? (
                                   <input
                                     type="number"
+                                    step="any"
                                     min={0}
                                     value={settlementTargetInput}
                                     onChange={e =>
                                       setSettlementTargetInput(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))
                                     }
-                                    placeholder="Target final ₹"
+                                    placeholder="Target final â‚¹"
                                     className="px-2.5 py-1.5 border border-[#C49A3A] rounded-lg text-xs font-mono font-bold bg-white"
                                   />
                                 ) : (
                                   <input
                                     type="number"
+                                    step="any"
                                     min={0}
                                     value={settlementAdjustmentInput || ''}
                                     onChange={e => setSettlementAdjustmentInput(Math.max(0, Number(e.target.value) || 0))}
-                                    placeholder="Subtract ₹"
+                                    placeholder="Subtract â‚¹"
                                     className="px-2.5 py-1.5 border border-[#C49A3A] rounded-lg text-xs font-mono font-bold bg-white"
                                   />
                                 )}
@@ -10630,7 +10653,7 @@ export default function CheckInFormView({
                             </label>
                             {isCheckInGstLockedByExistingInvoice && existingStayPrimaryInvoice ? (
                               <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded">
-                                🔒 Locked #{existingStayPrimaryInvoice.invoiceNumber}
+                                ðŸ”’ Locked #{existingStayPrimaryInvoice.invoiceNumber}
                               </span>
                             ) : (
                               <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded border ${
@@ -10667,7 +10690,7 @@ export default function CheckInFormView({
                                 }`}
                               >
                                 <div className="text-xs font-bold">1. Non-GST (0%)</div>
-                                <div className="text-[10px] text-slate-500 mt-0.5">Bill of Supply • No Tax</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">Bill of Supply â€¢ No Tax</div>
                               </button>
                               <button
                                 type="button"
@@ -10697,7 +10720,7 @@ export default function CheckInFormView({
                                 }`}
                               >
                                 <div className="text-xs font-bold">3. Including GST ({configuredDefaultGst > 0 ? configuredDefaultGst : 5}%)</div>
-                                <div className="text-[10px] text-slate-500 mt-0.5">Tariff Includes GST (Net ₹{roomRate || 0})</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">Tariff Includes GST (Net â‚¹{roomRate || 0})</div>
                               </button>
                             </div>
                           )}
@@ -10709,11 +10732,11 @@ export default function CheckInFormView({
                               ESTIMATED TOTAL
                             </span>
                             <strong className="text-2xl font-mono font-black text-[#263449]">
-                              ₹{finalAmount.toLocaleString('en-IN')}
+                              â‚¹{finalAmount.toLocaleString('en-IN')}
                             </strong>
                             <span className="text-[10px] text-slate-500 block">
                               {checkInGstMode === 'including_gst'
-                                ? `Tariff includes ${gstPercent || 5}% GST (Tax ₹${gstTax.toLocaleString('en-IN')})`
+                                ? `Tariff includes ${gstPercent || 5}% GST (Tax â‚¹${gstTax.toLocaleString('en-IN')})`
                                 : checkInGstMode === 'non_gst' || gstPercent <= 0
                                 ? 'Without GST (0% Bill of Supply)'
                                 : `Inclusive of ${gstPercent}% GST`}
@@ -10722,11 +10745,11 @@ export default function CheckInFormView({
                           <div className="text-right font-mono text-xs space-y-0.5">
                             {advanceAmount > 0 && (
                               <div className="text-emerald-700 font-bold">
-                                Pre-Paid Adv: ₹{advanceAmount.toLocaleString('en-IN')}
+                                Pre-Paid Adv: â‚¹{advanceAmount.toLocaleString('en-IN')}
                               </div>
                             )}
                             <div className={balanceAmount > 0 ? 'text-amber-700 font-extrabold' : 'text-emerald-700 font-extrabold'}>
-                              Balance Due: ₹{balanceAmount.toLocaleString('en-IN')}
+                              Balance Due: â‚¹{balanceAmount.toLocaleString('en-IN')}
                             </div>
                           </div>
                         </div>
@@ -10797,7 +10820,7 @@ export default function CheckInFormView({
                                         <option value={paymentMethod}>{String(paymentMethod)}</option>
                                       )}
                                     {hotelPayCfg.hybridAllowed && (
-                                      <option value="Hybrid">⇄ Hybrid / Split Payment</option>
+                                      <option value="Hybrid">â‡„ Hybrid / Split Payment</option>
                                     )}
                                   </>
                                 ) : (
@@ -10807,7 +10830,7 @@ export default function CheckInFormView({
                                     <option value="Card">Card</option>
                                     <option value="Bank Transfer">Bank Transfer</option>
                                     <option value="Online">Virtual Payment / Online</option>
-                                    <option value="Hybrid">⇄ Hybrid / Split Payment</option>
+                                    <option value="Hybrid">â‡„ Hybrid / Split Payment</option>
                                   </>
                                 )}
                               </select>
@@ -10816,7 +10839,7 @@ export default function CheckInFormView({
                             <div className="space-y-1">
                               <div className="flex items-center justify-between">
                                 <label className="text-[10px] font-mono uppercase font-bold text-slate-600">
-                                  PAID AMOUNT (₹)
+                                  PAID AMOUNT (â‚¹)
                                 </label>
                                 {!isHybridCheckInPay && balanceAmount > 0 && (
                                   <button
@@ -10824,7 +10847,7 @@ export default function CheckInFormView({
                                     onClick={() => setPaidAmount(Math.max(0, Math.round((finalAmount - advanceAmount) * 100) / 100))}
                                     className="text-[10px] font-mono font-bold text-[#8B691E] hover:underline cursor-pointer"
                                   >
-                                    Fill Full (₹{Math.max(0, finalAmount - advanceAmount).toLocaleString('en-IN')})
+                                    Fill Full (â‚¹{Math.max(0, finalAmount - advanceAmount).toLocaleString('en-IN')})
                                   </button>
                                 )}
                               </div>
@@ -10836,7 +10859,7 @@ export default function CheckInFormView({
                                 value={isHybridCheckInPay ? effectiveDeskReceivedNow : paidAmount || ''}
                                 onWheel={(e) => e.currentTarget.blur()}
                                 onChange={e => setPaidAmount(Math.max(0, Number(e.target.value) || 0))}
-                                placeholder="₹0.00"
+                                placeholder="â‚¹0.00"
                                 className={`w-full px-3 py-2 border border-[#DCE3EC] rounded-xl text-xs font-mono font-bold ${
                                   isHybridCheckInPay ? 'bg-emerald-50 text-emerald-900 cursor-not-allowed' : 'bg-white'
                                 }`}
@@ -10858,7 +10881,7 @@ export default function CheckInFormView({
                           {isHybridCheckInPay ? (
                             <div className="p-3 rounded-xl bg-white border border-[#C49A3A]/60 space-y-2.5">
                               <div className="flex items-center justify-between">
-                                <span className="text-xs font-bold text-[#263449]">⇄ Hybrid / Split Payment Rows</span>
+                                <span className="text-xs font-bold text-[#263449]">â‡„ Hybrid / Split Payment Rows</span>
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -10945,7 +10968,7 @@ export default function CheckInFormView({
                                     onClick={() => setCheckInSplitRows(prev => prev.filter(r => r.id !== sp.id))}
                                     className="col-span-1 py-1.5 rounded-lg text-slate-600 hover:bg-amber-50 disabled:opacity-30 font-bold text-xs cursor-pointer"
                                   >
-                                    ✕
+                                    âœ•
                                   </button>
                                 </div>
                               ))}
@@ -10962,10 +10985,10 @@ export default function CheckInFormView({
                                 ))}
                               <div className="flex justify-between text-[11px] font-mono pt-1 border-t border-[#DCE3EC]">
                                 <span className="text-emerald-700 font-bold">
-                                  Combined: ₹{effectiveDeskReceivedNow.toLocaleString('en-IN')}
+                                  Combined: â‚¹{effectiveDeskReceivedNow.toLocaleString('en-IN')}
                                 </span>
                                 <span className={balanceAmount > 0 ? 'text-amber-700 font-bold' : 'text-emerald-700 font-bold'}>
-                                  Due: ₹{balanceAmount.toLocaleString('en-IN')}
+                                  Due: â‚¹{balanceAmount.toLocaleString('en-IN')}
                                 </span>
                               </div>
                             </div>
@@ -10989,7 +11012,7 @@ export default function CheckInFormView({
                         <div className="space-y-2 pt-1">
                           {editingCheckIn && isViewOnly ? (
                             <div className="w-full py-2.5 px-3 rounded-xl bg-[#EFF6FF] border border-[#BFDBFE] text-[#1E40AF] text-xs font-bold text-center">
-                              Read-Only View Mode — click &ldquo;Edit This Stay&rdquo; at the top to make changes
+                              Read-Only View Mode â€” click &ldquo;Edit This Stay&rdquo; at the top to make changes
                             </div>
                           ) : (
                           <button
@@ -11052,9 +11075,9 @@ export default function CheckInFormView({
               <div className="lg:hidden sticky bottom-0 z-20 -mx-1 px-3 py-2.5 bg-white/95 backdrop-blur border-t-2 border-[#C49A3A] rounded-t-2xl shadow-lg flex items-center justify-between gap-3 no-print">
                 <div className="font-mono leading-tight">
                   <span className="text-[10px] uppercase text-slate-500 block">Total / Due</span>
-                  <strong className="text-sm text-[#263449]">₹{finalAmount.toLocaleString('en-IN')}</strong>
+                  <strong className="text-sm text-[#263449]">â‚¹{finalAmount.toLocaleString('en-IN')}</strong>
                   <span className={`text-[11px] ml-2 font-bold ${balanceAmount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
-                    {balanceAmount > 0 ? `Due ₹${balanceAmount.toLocaleString('en-IN')}` : 'PAID'}
+                    {balanceAmount > 0 ? `Due â‚¹${balanceAmount.toLocaleString('en-IN')}` : 'PAID'}
                   </span>
                 </div>
                 {editingCheckIn && isViewOnly ? (
@@ -11108,7 +11131,7 @@ export default function CheckInFormView({
                   onClick={() => setActiveSubTab('form')}
                   className="px-3 py-1.5 rounded-lg text-xs font-bold border border-[#C49A3A] bg-[#F6DE98] hover:bg-[#E8CE84] text-[#17120F] transition-all cursor-pointer"
                 >
-                  ← Back to Check-In Form
+                  â† Back to Check-In Form
                 </button>
                 <button
                   type="button"
@@ -11178,7 +11201,7 @@ export default function CheckInFormView({
               </div>
 
               <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="text-[11px] font-bold text-slate-600">From → To:</span>
+                <span className="text-[11px] font-bold text-slate-600">From â†’ To:</span>
                 <input
                   type="date"
                   value={folioFromDate}
@@ -11188,7 +11211,7 @@ export default function CheckInFormView({
                   }}
                   className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white font-bold text-slate-800 text-xs"
                 />
-                <span className="text-slate-400 font-bold">→</span>
+                <span className="text-slate-400 font-bold">â†’</span>
                 <input
                   type="date"
                   value={folioToDate}
@@ -11280,12 +11303,12 @@ export default function CheckInFormView({
                           <td className="p-3 space-y-1">
                             {hasExtraBed && (
                               <span className="inline-block text-[10px] font-mono font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
-                                Extra Bed ({c.extraBedCount || 1} Bed @ ₹{c.extraBedRate || 500})
+                                Extra Bed ({c.extraBedCount || 1} Bed @ â‚¹{c.extraBedRate || 500})
                               </span>
                             )}
                             {isForeign && (
                               <span className="inline-block text-[10px] font-mono font-bold text-blue-900 bg-blue-100 px-2 py-0.5 rounded border border-blue-300">
-                                🌐 Foreign Guest (Form-C)
+                                ðŸŒ Foreign Guest (Form-C)
                               </span>
                             )}
                             {(c.allocatedServices || []).length > 0 && (
@@ -11299,7 +11322,7 @@ export default function CheckInFormView({
                                         : 'text-emerald-900 bg-emerald-50 border-emerald-300'
                                     }`}
                                   >
-                                    {srv.serviceName}: {srv.isChargeable ? `₹${Number(srv.chargedAmount ?? (srv as any).amount ?? 0).toLocaleString()} (Charged)` : '₹0 (Complimentary)'}
+                                    {srv.serviceName}: {srv.isChargeable ? `â‚¹${Number(srv.chargedAmount ?? (srv as any).amount ?? 0).toLocaleString()} (Charged)` : 'â‚¹0 (Complimentary)'}
                                   </span>
                                 ))}
                               </div>
@@ -11309,18 +11332,18 @@ export default function CheckInFormView({
                             )}
                           </td>
                           <td className="p-3 text-right font-mono font-bold">
-                            ₹{(c.roomRate || 0).toLocaleString()} / Nt
+                            â‚¹{(c.roomRate || 0).toLocaleString()} / Nt
                             {hasExtraBed && c.extraBedTotal && (
-                              <div className="text-[10px] text-amber-800">+ ₹{c.extraBedTotal} Bed Charge</div>
+                              <div className="text-[10px] text-amber-800">+ â‚¹{c.extraBedTotal} Bed Charge</div>
                             )}
                             {extrasSum > 0 && (
-                              <div className="text-[10px] text-blue-800">+ ₹{extrasSum.toLocaleString()} Extras</div>
+                              <div className="text-[10px] text-blue-800">+ â‚¹{extrasSum.toLocaleString()} Extras</div>
                             )}
                           </td>
                           <td className="p-3 text-right font-mono">
-                            <div className="text-emerald-700 font-bold">Paid: ₹{totalPaid.toLocaleString()}</div>
+                            <div className="text-emerald-700 font-bold">Paid: â‚¹{totalPaid.toLocaleString()}</div>
                             <div className={`font-bold ${liveDue > 0 ? 'text-rose-700' : 'text-gray-600'}`}>
-                              Due: ₹{liveDue.toLocaleString()}
+                              Due: â‚¹{liveDue.toLocaleString()}
                             </div>
                           </td>
                           <td className="p-3 text-center">
@@ -11385,7 +11408,7 @@ export default function CheckInFormView({
                       <div>
                         <h3 className="text-base font-serif font-bold text-luxury-brown-950">{selectedCheckInForView.guestName}</h3>
                         <p className="text-xs text-luxury-brown-600 mt-0.5 font-mono">
-                          Room {selectedCheckInForView.roomNumber} • {selectedCheckInForView.roomType || 'Standard'} • {selectedCheckInForView.numGuests || 1} Occupant(s)
+                          Room {selectedCheckInForView.roomNumber} â€¢ {selectedCheckInForView.roomType || 'Standard'} â€¢ {selectedCheckInForView.numGuests || 1} Occupant(s)
                         </p>
                       </div>
                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold border ${
@@ -11432,7 +11455,7 @@ export default function CheckInFormView({
                         <div className="flex justify-between py-0.5"><span className="text-slate-500">Check-In:</span><span className="font-bold">{selectedCheckInForView.checkInDate}</span></div>
                         <div className="flex justify-between py-0.5"><span className="text-slate-500">Check-Out:</span><span className="font-bold">{selectedCheckInForView.checkOutDate}</span></div>
                         <div className="flex justify-between py-0.5"><span className="text-slate-500">Duration:</span><span className="font-bold">{calcStayDays(selectedCheckInForView.checkInDate, selectedCheckInForView.checkOutDate)} Night(s)</span></div>
-                        <div className="flex justify-between py-0.5"><span className="text-slate-500">Base Tariff:</span><span className="font-bold font-mono">₹{(selectedCheckInForView.roomRate || 0).toLocaleString()}/Nt</span></div>
+                        <div className="flex justify-between py-0.5"><span className="text-slate-500">Base Tariff:</span><span className="font-bold font-mono">â‚¹{(selectedCheckInForView.roomRate || 0).toLocaleString()}/Nt</span></div>
                       </div>
 
                       <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-1.5">
@@ -11453,15 +11476,15 @@ export default function CheckInFormView({
                       <div className="grid grid-cols-3 gap-2 text-center pt-1">
                         <div>
                           <span className="text-white/60 text-[9px] uppercase block">Total Charges</span>
-                          <span className="font-bold text-xs">₹{(((selectedCheckInForView as any).finalAmount || selectedCheckInForView.totalAmount || 0)).toLocaleString()}</span>
+                          <span className="font-bold text-xs">â‚¹{(((selectedCheckInForView as any).finalAmount || selectedCheckInForView.totalAmount || 0)).toLocaleString()}</span>
                         </div>
                         <div>
                           <span className="text-emerald-400 text-[9px] uppercase block">Advance / Paid</span>
-                          <span className="font-bold text-xs text-emerald-300">₹{(selectedCheckInForView.advanceAmount || 0).toLocaleString()}</span>
+                          <span className="font-bold text-xs text-emerald-300">â‚¹{(selectedCheckInForView.advanceAmount || 0).toLocaleString()}</span>
                         </div>
                         <div>
                           <span className="text-rose-400 text-[9px] uppercase block">Balance Due</span>
-                          <span className="font-bold text-xs text-rose-300">₹{(selectedCheckInForView.pendingAmount || 0).toLocaleString()}</span>
+                          <span className="font-bold text-xs text-rose-300">â‚¹{(selectedCheckInForView.pendingAmount || 0).toLocaleString()}</span>
                         </div>
                       </div>
                     </div>
