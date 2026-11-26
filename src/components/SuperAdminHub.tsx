@@ -2647,15 +2647,24 @@ export default function SuperAdminHub({
               };
 
               const siteBase = String(seoCfg.siteUrl || DIRECTSTAY_DOMAIN).replace(/\/+$/, '');
-              const effectiveTitle = activeOverride.seoTitle || activeBuiltInDef.title;
-              const effectiveDesc = activeOverride.metaDescription || activeBuiltInDef.description;
-              const effectiveSlug = activeOverride.customSlug || activeBuiltInDef.path;
+              const titleInputVal = activeOverride.seoTitle !== undefined ? activeOverride.seoTitle : activeBuiltInDef.title;
+              const keywordInputVal = activeOverride.focusKeyword !== undefined ? activeOverride.focusKeyword : activeBuiltInDef.primaryKeyword;
+              const descInputVal = activeOverride.metaDescription !== undefined ? activeOverride.metaDescription : activeBuiltInDef.description;
+              const slugInputVal = activeOverride.customSlug !== undefined ? activeOverride.customSlug : activeBuiltInDef.path;
+              const canonicalInputVal =
+                activeOverride.canonicalUrl !== undefined
+                  ? activeOverride.canonicalUrl
+                  : `${siteBase}${activeBuiltInDef.path}`;
+
+              const effectiveTitle = titleInputVal.trim() || activeBuiltInDef.title;
+              const effectiveDesc = descInputVal.trim() || activeBuiltInDef.description;
+              const effectiveSlug = slugInputVal.trim() || activeBuiltInDef.path;
               const effectiveCanonical =
-                activeOverride.canonicalUrl ||
+                canonicalInputVal.trim() ||
                 (activeOverride.customSlug
                   ? `${siteBase}/${String(activeOverride.customSlug).replace(/^\/+|\/+$/g, '')}/`
                   : `${siteBase}${activeBuiltInDef.path}`);
-              const effectiveOgImage = activeOverride.ogImage || seoCfg.defaultOgImage || `${siteBase}/hero-resort.jpg`;
+              const effectiveOgImage = activeOverride.ogImage?.trim() || seoCfg.defaultOgImage?.trim() || '';
 
               return (
                 <div className="space-y-6 text-xs">
@@ -2670,16 +2679,26 @@ export default function SuperAdminHub({
                           Individual Website Page SEO, Meta, OG, Robots &amp; Schema Editor
                         </h3>
                         <p className="text-[11px] text-luxury-brown-500">
-                          Select any built-in website page below to customize its SEO Title, Meta Description, Slug, Canonical URL, Focus Keyword, OG Image, Alt Text, Index/Follow, and Schema Markup. (Custom Pages &amp; Blogs also have full per-item SEO editors in their respective tabs.)
+                          Existing live SEO values are pre-filled and directly editable below; unset optional fields stay blank until you add them. Click Save SEO Live to immediately reflect on the website &amp; /sitemap.xml.
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={resetActivePageOverride}
-                        className="px-3 py-1.5 rounded-lg border border-luxury-brown-200 bg-luxury-beige-50 hover:bg-luxury-beige-100 text-luxury-brown-800 font-bold text-[11px] cursor-pointer"
-                      >
-                        Reset "{activeBuiltInDef.breadcrumbLabel}" to Default
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={resetActivePageOverride}
+                          className="px-3 py-1.5 rounded-lg border border-luxury-brown-200 bg-luxury-beige-50 hover:bg-luxury-beige-100 text-luxury-brown-800 font-bold text-[11px] cursor-pointer"
+                        >
+                          Reset "{activeBuiltInDef.breadcrumbLabel}"
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveWebsiteCms}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-luxury-gold-500 hover:bg-luxury-gold-400 text-luxury-brown-950 font-bold text-[11px] shadow-xs cursor-pointer"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>Save SEO Live</span>
+                        </button>
+                      </div>
                     </div>
 
                     {/* Page Selector Pills (All 14 Public Website Pages) */}
@@ -2733,10 +2752,10 @@ export default function SuperAdminHub({
                             </div>
                             <input
                               type="text"
-                              value={activeOverride.seoTitle ?? ''}
+                              value={titleInputVal}
                               onChange={(e) => updateActivePageOverride({ seoTitle: e.target.value })}
-                              placeholder={activeBuiltInDef.title}
-                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                              placeholder="Enter SEO title"
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 text-luxury-brown-950 font-medium"
                             />
                           </div>
 
@@ -2746,10 +2765,10 @@ export default function SuperAdminHub({
                             </label>
                             <input
                               type="text"
-                              value={activeOverride.focusKeyword ?? ''}
+                              value={keywordInputVal}
                               onChange={(e) => updateActivePageOverride({ focusKeyword: e.target.value })}
-                              placeholder={activeBuiltInDef.primaryKeyword}
-                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                              placeholder="Enter focus keyword"
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 text-luxury-brown-950 font-medium"
                             />
                           </div>
                         </div>
@@ -2765,10 +2784,10 @@ export default function SuperAdminHub({
                           </div>
                           <textarea
                             rows={2}
-                            value={activeOverride.metaDescription ?? ''}
+                            value={descInputVal}
                             onChange={(e) => updateActivePageOverride({ metaDescription: e.target.value })}
-                            placeholder={activeBuiltInDef.description}
-                            className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                            placeholder="Enter meta description"
+                            className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 text-luxury-brown-950"
                           />
                         </div>
 
@@ -2779,10 +2798,10 @@ export default function SuperAdminHub({
                             </label>
                             <input
                               type="text"
-                              value={activeOverride.customSlug ?? ''}
+                              value={slugInputVal}
                               onChange={(e) => updateActivePageOverride({ customSlug: e.target.value })}
-                              placeholder={activeBuiltInDef.path}
-                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                              placeholder="/page-slug/"
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono text-luxury-brown-950"
                             />
                           </div>
                           <div>
@@ -2791,10 +2810,10 @@ export default function SuperAdminHub({
                             </label>
                             <input
                               type="text"
-                              value={activeOverride.canonicalUrl ?? ''}
+                              value={canonicalInputVal}
                               onChange={(e) => updateActivePageOverride({ canonicalUrl: e.target.value })}
-                              placeholder={`${siteBase}${activeBuiltInDef.path}`}
-                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                              placeholder="https://directstay.online/..."
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono text-luxury-brown-950"
                             />
                           </div>
                         </div>
@@ -2808,8 +2827,8 @@ export default function SuperAdminHub({
                               type="text"
                               value={activeOverride.ogImage ?? ''}
                               onChange={(e) => updateActivePageOverride({ ogImage: e.target.value })}
-                              placeholder={seoCfg.defaultOgImage || `${siteBase}/hero-resort.jpg`}
-                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono"
+                              placeholder="Not set — enter OG image URL"
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 font-mono text-luxury-brown-950"
                             />
                           </div>
                           <div>
@@ -2820,8 +2839,8 @@ export default function SuperAdminHub({
                               type="text"
                               value={activeOverride.imageAlt ?? ''}
                               onChange={(e) => updateActivePageOverride({ imageAlt: e.target.value })}
-                              placeholder={`${activeBuiltInDef.breadcrumbLabel} — DirectStay Hotel PMS`}
-                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                              placeholder="Not set — enter image alt text"
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 text-luxury-brown-950"
                             />
                           </div>
                         </div>
@@ -2835,8 +2854,8 @@ export default function SuperAdminHub({
                               type="text"
                               value={activeOverride.ogTitle ?? ''}
                               onChange={(e) => updateActivePageOverride({ ogTitle: e.target.value })}
-                              placeholder={effectiveTitle}
-                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                              placeholder="Not set — uses SEO Title if blank"
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 text-luxury-brown-950"
                             />
                           </div>
                           <div>
@@ -2847,8 +2866,8 @@ export default function SuperAdminHub({
                               type="text"
                               value={activeOverride.ogDescription ?? ''}
                               onChange={(e) => updateActivePageOverride({ ogDescription: e.target.value })}
-                              placeholder={effectiveDesc}
-                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200"
+                              placeholder="Not set — uses Meta Description if blank"
+                              className="w-full px-3 py-2 rounded-xl border border-luxury-brown-200 text-luxury-brown-950"
                             />
                           </div>
                         </div>
@@ -2932,12 +2951,18 @@ export default function SuperAdminHub({
                             Social / Open Graph Card Preview
                           </span>
                           <div className="rounded-xl overflow-hidden border border-luxury-brown-200 bg-luxury-beige-50/40">
-                            <img
-                              src={effectiveOgImage}
-                              alt={activeOverride.imageAlt || effectiveTitle}
-                              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                              className="w-full h-28 object-cover bg-luxury-brown-100"
-                            />
+                            {effectiveOgImage ? (
+                              <img
+                                src={effectiveOgImage}
+                                alt={activeOverride.imageAlt || effectiveTitle}
+                                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                                className="w-full h-28 object-cover bg-luxury-brown-100"
+                              />
+                            ) : (
+                              <div className="w-full h-20 flex items-center justify-center bg-luxury-beige-50 text-[10px] font-mono text-luxury-brown-400 border-b border-luxury-brown-100">
+                                No Social / OG Image set yet
+                              </div>
+                            )}
                             <div className="p-2.5 space-y-0.5">
                               <p className="text-[9px] font-mono uppercase text-luxury-brown-500">{siteBase.replace(/^https?:\/\//, '')}</p>
                               <p className="text-xs font-bold text-luxury-brown-950 line-clamp-1">

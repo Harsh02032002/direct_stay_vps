@@ -920,7 +920,7 @@ export default function FrontWebsite({
         dedupeKey: 'pricing_visit'
       });
     }
-  }, [activeSeoPage, systemWebsite]);
+  }, [activeSeoPage, systemWebsite, activeCustomPage, activeBlogSlug]);
 
   // Onboarding states
   const [ownerFullName, setOwnerFullName] = useState('');
