@@ -96,12 +96,12 @@ export default function CheckoutClearanceModal({
   onCompleteFinalCheckout,
   onRegisterLostFound,
 }: CheckoutClearanceModalProps) {
+  if (!booking) return null;
+
   // Hotel's own Configuration → Payment Mode (enabled + custom tenders, live UPI QR / Bank card)
   const hotelPayModes = useHotelPaymentModes(hotelId, paymentModes);
   const hotelPayCfg = buildPaymentOptions(hotelPayModes, 'checkout');
   const useConfiguredPay = hotelPayCfg.configured;
-
-  if (!booking) return null;
 
   const safeRoomNumbers: string[] =
     Array.isArray(booking.roomNumbers) && booking.roomNumbers.length > 0

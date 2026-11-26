@@ -6341,6 +6341,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         onConfirmCheckIn={handleConfirmCheckIn}
       />
 
+      {checkoutClearanceBooking && (
       <CheckoutClearanceModal
         booking={checkoutClearanceBooking}
         hotelId={(hotelSettings as any)?.id}
@@ -6423,6 +6424,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           })
         }
       />
+      )}
 
       <RecordPaymentDrawer
         booking={paymentBooking}

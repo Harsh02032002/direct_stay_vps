@@ -151,6 +151,11 @@ export default function EditCheckoutModal({
     const fallback = rooms.find((r) => r.number === guest.roomNumber)?.rate || 2000;
     return Number(guest.roomRate) > 0 ? Number(guest.roomRate) : fallback;
   });
+  const [editRoomRateInput, setEditRoomRateInput] = useState<string>(() => {
+    const fallback = rooms.find((r) => r.number === guest.roomNumber)?.rate || 2000;
+    const init = Number(guest.roomRate) > 0 ? Number(guest.roomRate) : fallback;
+    return init > 0 ? String(init) : '';
+  });
   const [editDiscount, setEditDiscount] = useState<number>(() =>
     Math.max(
       0,
@@ -858,9 +863,15 @@ export default function EditCheckoutModal({
                 <input
                   type="number"
                   min={0}
-                  value={editRoomRate}
+                  step="any"
+                  value={editRoomRateInput}
                   onWheel={(e) => e.currentTarget.blur()}
-                  onChange={(e) => setEditRoomRate(Math.max(0, Number(e.target.value) || 0))}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setEditRoomRateInput(raw);
+                    const parsed = parseFloat(raw);
+                    setEditRoomRate(Number.isFinite(parsed) && parsed >= 0 ? parsed : 0);
+                  }}
                   className="w-full px-3 py-2 border border-luxury-brown-200 rounded-lg text-xs font-mono font-bold bg-white"
                 />
               </div>
@@ -873,6 +884,7 @@ export default function EditCheckoutModal({
               <input
                 type="number"
                 min={0}
+                step="any"
                 value={editDiscount || ''}
                 placeholder="0"
                 onWheel={(e) => e.currentTarget.blur()}
@@ -983,6 +995,7 @@ export default function EditCheckoutModal({
                 <input
                   type="number"
                   min={0}
+                  step="any"
                   value={newChargeAmt}
                   onWheel={(e) => e.currentTarget.blur()}
                   onChange={(e) => setNewChargeAmt(e.target.value === '' ? '' : Number(e.target.value))}
