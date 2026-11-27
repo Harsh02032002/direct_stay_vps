@@ -1237,22 +1237,14 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                       String(c?.id || '') === String(inv.bookingId || '') ||
                                       String(c?.bookingId || '') === String(inv.bookingId || '')
                                   ) || null;
-                                const foodItemsDetected = extractDetailedFoodLinesForStay({
-                                  invoice: inv as any,
-                                  checkinRecord: rawAppCk as any,
-                                  bookingRecord: rawAppBkg as any,
-                                  posOrders,
-                                });
-                                const hasFoodInServices = serviceList.some((srv) =>
-                                  /food|room service|restaurant|pos|dining|f&b/i.test(
-                                    `${srv.serviceType || ''} ${srv.description || ''} ${srv.itemsSummary || ''}`
-                                  )
-                                );
-                                const hasFoodForRow =
+                                // ONLY show Room Bill / Food Bill / Combined Bill buttons when user explicitly split Room & Food during Checkout
+                                const isCheckoutSplitSettled = Boolean(
                                   !isRowCreditNote &&
-                                  (Number((inv as any).foodCharges || 0) > 0 ||
-                                    hasFoodInServices ||
-                                    foodItemsDetected.length > 0);
+                                    !isFolioRow &&
+                                    ((inv as any).isFoodRoomSplitSettled === true ||
+                                      String((inv as any).invoiceScope || '').toLowerCase() === 'room_only' ||
+                                      String((inv as any).invoiceScope || '').toLowerCase() === 'food_only')
+                                );
 
                                 const printScopedPdf = (filterKind: 'all' | 'room_only' | 'food_only') => {
                                   const liveStay = buildStayBill({
@@ -1265,6 +1257,16 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                     settings,
                                     gstEnabledOverride: hasGst,
                                   });
+                                  const realPaymentHistory = (bookingForModal.payments || [])
+                                    .filter((p) => p && Number(p.amount) > 0)
+                                    .map((p) => ({
+                                      id: p.id,
+                                      amount: Number(p.amount) || 0,
+                                      paymentMethod: String(p.paymentMethod || 'Cash'),
+                                      date: String(p.date || inv.createdAt || '').slice(0, 10),
+                                      referenceNo: p.transactionId,
+                                      notes: p.notes,
+                                    }));
                                   const printableInv = buildInvoiceRecord({
                                     id: inv.id,
                                     invoiceNumber: inv.invoiceNumber,
@@ -1283,6 +1285,9 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                     paymentMethod: (inv.paymentMethod as any) || 'UPI',
                                     dateCreated: inv.createdAt || new Date().toISOString().slice(0, 10),
                                     invoiceStatus: isFolioRow ? 'Generated' : 'Finalized',
+                                    extra: {
+                                      ...(realPaymentHistory.length > 0 ? { paymentHistory: realPaymentHistory } : {}),
+                                    },
                                   });
                                   openPrintWindow(
                                     invoiceRecordToPrintHtml(
@@ -1297,7 +1302,7 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                   );
                                 };
 
-                                if (hasFoodForRow) {
+                                if (isCheckoutSplitSettled) {
                                   return (
                                     <>
                                       <button

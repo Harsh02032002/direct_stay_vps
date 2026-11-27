@@ -660,6 +660,10 @@ export function invoiceRecordToPrintHtml(
     invoice.roomNumber || checkinRecord?.roomNumber || bookingRecord?.roomNumber || ''
   );
 
+  const isFoodPaymentItem = (p: BillPayment): boolean =>
+    /food\s*bill|food\s*split|food\s*settlement|applied\s*to\s*food/i.test(String(p?.note || ''));
+  const allRealPayItems: BillPayment[] = Array.isArray(bill.paymentItems) ? bill.paymentItems : [];
+
   if (filterKind === 'food_only') {
     const detailedFoodItems = extractDetailedFoodLinesForStay({
       invoice,
@@ -697,6 +701,45 @@ export function invoiceRecordToPrintHtml(
     const foodSgst = r2(foodTax - foodCgst);
     const foodGrandTotal = r2(foodTaxable + foodTax);
 
+    // Real Food Bill payment accounting — NEVER hardcode paid/0 due when no settlement occurred!
+    const nonFoodLinesForAlloc = bill.lines.filter(
+      (l) =>
+        l.type !== 'receipt' &&
+        l.type !== 'tax' &&
+        l.kind !== 'food' &&
+        !FOOD_LINE_REGEX.test(l.description || '')
+    );
+    const roomTaxableForAlloc = r2(nonFoodLinesForAlloc.reduce((acc, l) => acc + (Number(l.charges) || 0), 0));
+    const roomDiscForAlloc = Math.min(roomTaxableForAlloc, r2(Number(invoice.discount || 0)));
+    const netRoomForAlloc = Math.max(0, r2(roomTaxableForAlloc - roomDiscForAlloc));
+    const roomGstPctForAlloc =
+      invoice.isWithoutGst === true
+        ? 0
+        : Number(invoice.gstRate ?? hotelSettings?.defaultGstRate ?? 5) || 5;
+    const roomGrandForAlloc = r2(netRoomForAlloc + (roomGstPctForAlloc > 0 ? r2((netRoomForAlloc * roomGstPctForAlloc) / 100) : 0));
+
+    const explicitFoodPayItems = allRealPayItems.filter(isFoodPaymentItem);
+    const isStandaloneFoodInvoice = String((invoice as any).invoiceScope || '').toLowerCase() === 'food_only';
+
+    let foodReceipts = 0;
+    let scopedFoodPayItems: BillPayment[] = [];
+    if (explicitFoodPayItems.length > 0) {
+      foodReceipts = r2(explicitFoodPayItems.reduce((s, p) => s + (Number(p.amount) || 0), 0));
+      scopedFoodPayItems = explicitFoodPayItems;
+    } else if (isStandaloneFoodInvoice) {
+      foodReceipts = Math.max(0, r2(Number(bill.receipts) || 0));
+      scopedFoodPayItems = allRealPayItems;
+    } else {
+      // Combined / unsplit invoice: only excess payment AFTER full Room Bill is covered counts toward Food
+      const excessOverRoom = Math.max(0, r2((Number(bill.receipts) || 0) - roomGrandForAlloc));
+      foodReceipts = Math.min(foodGrandTotal, excessOverRoom);
+      scopedFoodPayItems = [];
+    }
+    const foodBalance = Math.max(0, r2(foodGrandTotal - foodReceipts));
+    const foodRefundDue = Math.max(0, r2(foodReceipts - foodGrandTotal));
+    const foodPayStatus: BillResult['paymentStatus'] =
+      foodGrandTotal > 0 && foodBalance <= 0 ? 'Paid' : foodReceipts > 0 ? 'Partially Paid' : 'Unpaid';
+
     bill = {
       ...bill,
       lines: foodLines,
@@ -710,10 +753,12 @@ export function invoiceRecordToPrintHtml(
       totalTax: foodTax,
       grandTotal: foodGrandTotal,
       amountInWords: amountToIndianWords(foodGrandTotal),
-      receipts: foodGrandTotal,
-      balance: 0,
-      refundDue: 0,
-      paymentStatus: 'Paid',
+      receipts: foodReceipts,
+      balance: foodBalance,
+      refundDue: foodRefundDue,
+      paymentStatus: foodPayStatus,
+      paymentItems: scopedFoodPayItems,
+      paymentsByMode: summarizePaymentsByMode(scopedFoodPayItems),
       taxRows:
         foodGstPct > 0
           ? [{ rate: foodGstPct, taxable: foodTaxable, cgst: foodCgst, sgst: foodSgst, tax: foodTax }]
@@ -740,6 +785,16 @@ export function invoiceRecordToPrintHtml(
     const roomSgst = r2(roomTax - roomCgst);
     const roomGrandTotal = r2(netRoomTaxable + roomTax);
 
+    // Real Room Bill payment accounting — exclude explicit Food Bill settlement rows
+    const nonFoodPayItems = allRealPayItems.filter((p) => !isFoodPaymentItem(p));
+    const roomReceipts =
+      allRealPayItems.length > 0
+        ? Math.min(roomGrandTotal, r2(nonFoodPayItems.reduce((s, p) => s + (Number(p.amount) || 0), 0)))
+        : Math.min(roomGrandTotal, Math.max(0, r2(Number(bill.receipts) || 0)));
+    const roomBalance = Math.max(0, r2(roomGrandTotal - roomReceipts));
+    const roomPayStatus: BillResult['paymentStatus'] =
+      roomGrandTotal > 0 && roomBalance <= 0 ? 'Paid' : roomReceipts > 0 ? 'Partially Paid' : 'Unpaid';
+
     bill = {
       ...bill,
       lines: nonFoodLines,
@@ -753,8 +808,12 @@ export function invoiceRecordToPrintHtml(
       totalTax: roomTax,
       grandTotal: roomGrandTotal,
       amountInWords: amountToIndianWords(roomGrandTotal),
-      receipts: Math.min(roomGrandTotal, bill.receipts),
-      balance: Math.max(0, r2(roomGrandTotal - Math.min(roomGrandTotal, bill.receipts))),
+      receipts: roomReceipts,
+      balance: roomBalance,
+      refundDue: 0,
+      paymentStatus: roomPayStatus,
+      paymentItems: nonFoodPayItems,
+      paymentsByMode: summarizePaymentsByMode(nonFoodPayItems),
       taxRows:
         roomGstPct > 0
           ? [{ rate: roomGstPct, taxable: netRoomTaxable, cgst: roomCgst, sgst: roomSgst, tax: roomTax }]

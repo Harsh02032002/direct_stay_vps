@@ -1769,6 +1769,7 @@ export default function FrontDeskView({
           invoiceStatus: 'Finalized',
           extra: {
             isFinalInvoice: true,
+            isFoodRoomSplitSettled: true,
             invoiceScope: 'room_only',
             foodCharges: 0,
             notes: `Room-Only Split Invoice (Food billed separately)${calc.damageSum > 0 ? ` • Includes Room Damage / Fine: ₹${calc.damageSum}` : ''}`,
@@ -1809,6 +1810,7 @@ export default function FrontDeskView({
           extra: {
             isFinalInvoice: true,
             isSeparateInvoice: true,
+            isFoodRoomSplitSettled: true,
             invoiceScope: 'food_only',
             parentInvoiceId: roomSplitInv.id,
             roomCharges: 0,

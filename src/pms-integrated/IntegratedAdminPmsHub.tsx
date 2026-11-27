@@ -1798,6 +1798,11 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         gstRate: isInvNoGst ? 0 : resolvedTotals.headlineGstRate,
         isWithoutGst: isInvNoGst,
         isSeparateInvoice: anyInv.isSeparateInvoice,
+        isFoodRoomSplitSettled: Boolean(
+          anyInv.isFoodRoomSplitSettled === true ||
+            String(anyInv.invoiceScope || '').toLowerCase() === 'room_only' ||
+            String(anyInv.invoiceScope || '').toLowerCase() === 'food_only'
+        ),
         parentInvoiceId: anyInv.parentInvoiceId,
         invoiceStatus: anyInv.invoiceStatus,
         invoiceType: anyInv.invoiceType,
@@ -3033,6 +3038,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       notes: string;
     }>;
     refundAmount: number;
+    isFoodRoomSplitSettled?: boolean;
   }) => {
     const targetBkg = bookings.find((b) => b.id === payload.bookingId);
     if (!targetBkg) return;
@@ -3229,6 +3235,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       gstRate: bill.headlineGstRate,
       isWithoutGst: !bill.isGstInvoice,
       isSeparateInvoice: false,
+      isFoodRoomSplitSettled: Boolean(payload.isFoodRoomSplitSettled),
       invoiceScope:
         updatedOtherServicesTotal > 0 ? 'Booking + Other Services' : 'Only Booking',
       customerName: updatedBooking.customerName,
@@ -3287,6 +3294,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           amount: r2(p.amount),
           paymentMethod: String(p.paymentMethod || 'Cash') as any,
           date: String(p.date || todayStr).slice(0, 10),
+          referenceNo: p.transactionId,
           notes: p.notes,
         }));
 
@@ -3315,6 +3323,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         extra: {
           bookingNo: updatedBooking.bookingNo,
           isFinalInvoice: true,
+          isFoodRoomSplitSettled: Boolean(payload.isFoodRoomSplitSettled),
           ...(checkoutPaymentHistory.length > 0 ? { paymentHistory: checkoutPaymentHistory } : {}),
         },
       }) as Invoice;

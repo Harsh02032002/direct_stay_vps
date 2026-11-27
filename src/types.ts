@@ -911,6 +911,7 @@ export interface Invoice {
   isCreditNote?: boolean;
   isWithoutGst?: boolean;
   isSeparateInvoice?: boolean;
+  isFoodRoomSplitSettled?: boolean;
   parentInvoiceId?: string;
   receiverName?: string;
   guestAddress?: string;

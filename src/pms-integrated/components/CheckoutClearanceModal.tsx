@@ -63,6 +63,7 @@ interface CheckoutClearanceModalProps {
     updatedGstRate: number;
     paymentsToRecord: Array<{ amount: number; method: PaymentMethod; referenceNo: string; notes: string }>;
     refundAmount: number;
+    isFoodRoomSplitSettled?: boolean;
   }) => void;
   onRegisterLostFound?: (item: {
     itemName: string;
@@ -522,6 +523,7 @@ export default function CheckoutClearanceModal({
       updatedGstRate: isGstEnabled ? configuredRoomGst : 0,
       paymentsToRecord,
       refundAmount: r2(refundAmount),
+      isFoodRoomSplitSettled: Boolean(splitFoodRoomBill && foodPreTaxAuth > 0),
     });
   };
 

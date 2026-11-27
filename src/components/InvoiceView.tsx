@@ -2129,20 +2129,14 @@ export default function InvoiceView({
                             const matchedCheckin =
                               checkins.find(c => c.id === inv.checkInId || c.id === inv.bookingId || c.bookingId === inv.bookingId) || null;
                             const matchedBooking = bookings.find(b => b.id === inv.bookingId) || null;
-                            const rowFoodItems = extractDetailedFoodLinesForStay({
-                              invoice: inv,
-                              checkinRecord: matchedCheckin,
-                              bookingRecord: matchedBooking,
-                              posOrders,
-                            });
-                            const rowHasFood =
+                            // ONLY show Room Bill / Food Bill / Combined buttons when user explicitly split Room & Food during Checkout
+                            const isCheckoutSplitSettled = Boolean(
                               !(inv as any).isCreditNote &&
-                              ((Number(inv.foodCharges) || 0) > 0 ||
-                                (inv.ledgerLines || []).some(
-                                  l => l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || '')
-                                ) ||
-                                rowFoodItems.length > 0);
-                            if (!rowHasFood) {
+                                ((inv as any).isFoodRoomSplitSettled === true ||
+                                  String((inv as any).invoiceScope || '').toLowerCase() === 'room_only' ||
+                                  String((inv as any).invoiceScope || '').toLowerCase() === 'food_only')
+                            );
+                            if (!isCheckoutSplitSettled) {
                               return (
                                 <button
                                   type="button"
@@ -2579,19 +2573,14 @@ export default function InvoiceView({
                   const selCheckin =
                     checkins.find(c => c.id === selectedInvoice.checkInId || c.id === selectedInvoice.bookingId || c.bookingId === selectedInvoice.bookingId) || null;
                   const selBooking = bookings.find(b => b.id === selectedInvoice.bookingId) || null;
-                  const selFoodItems = extractDetailedFoodLinesForStay({
-                    invoice: selectedInvoice,
-                    checkinRecord: selCheckin,
-                    bookingRecord: selBooking,
-                    posOrders,
-                  });
-                  const hasFood =
-                    (Number(selectedInvoice.foodCharges) || 0) > 0 ||
-                    (selectedInvoice.ledgerLines || []).some(
-                      l => l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || '')
-                    ) ||
-                    selFoodItems.length > 0;
-                  if (!hasFood) return null;
+                  // ONLY show Room Bill / Food Bill / Combined buttons when user explicitly split Room & Food during Checkout
+                  const isCheckoutSplitSettled = Boolean(
+                    !(selectedInvoice as any).isCreditNote &&
+                      ((selectedInvoice as any).isFoodRoomSplitSettled === true ||
+                        String((selectedInvoice as any).invoiceScope || '').toLowerCase() === 'room_only' ||
+                        String((selectedInvoice as any).invoiceScope || '').toLowerCase() === 'food_only')
+                  );
+                  if (!isCheckoutSplitSettled) return null;
                   return (
                     <div className="grid grid-cols-3 gap-2">
                       <button

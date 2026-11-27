@@ -244,6 +244,7 @@ export interface InvoiceRecord {
   gstRate?: number;
   isWithoutGst?: boolean;
   isSeparateInvoice?: boolean;
+  isFoodRoomSplitSettled?: boolean;
   parentInvoiceId?: string;
   invoiceStatus?: 'Draft' | 'Generated' | 'Finalized' | 'Cancelled' | 'Superseded';
   invoiceType?: string;
