@@ -525,6 +525,7 @@ export function extractDetailedFoodLinesForStay(params: {
 
   const detailed: DetailedFoodItemLine[] = [];
   const coveredOrderIds = new Set<string>();
+  const coveredOrderNos = new Set<string>();
 
   for (const po of posOrders || []) {
     if (!po) continue;
@@ -551,7 +552,9 @@ export function extractDetailedFoodLinesForStay(params: {
       (!checkOutIso || !poDate || poDate <= checkOutIso);
 
     if (!matchedById && !matchedByRoomDate) continue;
-    if (po.id) coveredOrderIds.add(String(po.id));
+    if (po.id) coveredOrderIds.add(String(po.id).toLowerCase());
+    if (po.orderNumber) coveredOrderNos.add(String(po.orderNumber).toLowerCase());
+    if (po.kotNumber) coveredOrderNos.add(String(po.kotNumber).toLowerCase());
 
     const orderNo = String(po.orderNumber || po.kotNumber || po.id || 'POS');
     const dateLabel = formatDateLabel(poDate || checkInIso);
@@ -612,10 +615,21 @@ export function extractDetailedFoodLinesForStay(params: {
       cat === 'f&b' ||
       FOOD_LINE_REGEX.test(desc);
     if (!isFood) continue;
-    const srcId = String(ec.sourceId || '');
-    const ecId = String(ec.id || '');
-    const linkedPosId = ecId.startsWith('EC-POS-') ? ecId.replace(/^EC-POS-/, '') : srcId;
-    if (linkedPosId && coveredOrderIds.has(linkedPosId)) continue;
+    const srcId = String(ec.sourceId || '').toLowerCase();
+    const ecId = String(ec.id || '').toLowerCase();
+    const descLower = desc.toLowerCase();
+    const linkedPosId = ecId.startsWith('ec-pos-') ? ecId.replace(/^ec-pos-/, '') : srcId;
+    if (linkedPosId && (coveredOrderIds.has(linkedPosId) || coveredOrderNos.has(linkedPosId))) continue;
+    // Skip extraCharge duplicates whose description references an already-covered POS order number (e.g. "Food Bill — Order #POS-17217")
+    let alreadyCoveredByOrderNo = false;
+    for (const ordNo of coveredOrderNos) {
+      if (ordNo && ordNo.length >= 3 && descLower.includes(ordNo)) {
+        alreadyCoveredByOrderNo = true;
+        break;
+      }
+    }
+    if (alreadyCoveredByOrderNo) continue;
+    if (String(ec.sourceType || '').toLowerCase() === 'pos' && coveredOrderIds.size > 0) continue;
     const amt = r2(Number(ec.amount || 0));
     if (amt <= 0) continue;
     detailed.push({

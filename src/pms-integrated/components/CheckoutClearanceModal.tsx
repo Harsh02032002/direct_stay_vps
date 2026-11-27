@@ -25,17 +25,20 @@ import {
   normalizeBillSettings,
   r2,
 } from '../../utils/billCalculator';
-import { buildStayBill, buildInvoiceRecord } from '../../utils/stayBilling';
-import {
-  invoiceRecordToPrintHtml,
-  extractDetailedFoodLinesForStay,
-} from '../../utils/pdfDownload';
-import { openPrintWindow } from '../../utils/printDocument';
+import { buildStayBill } from '../../utils/stayBilling';
+import { extractDetailedFoodLinesForStay } from '../../utils/pdfDownload';
 import {
   useHotelPaymentModes,
   buildPaymentOptions,
   PaymentModeDetailsCard,
 } from '../../components/PaymentModeDetailsCard';
+import {
+  HybridSplitPaymentBox,
+  HybridSplitRow,
+  createInitialHybridRows,
+  getValidHybridSplits,
+  getHybridTotal,
+} from '../../components/HybridSplitPaymentBox';
 
 interface CheckoutClearanceModalProps {
   booking: BookingRecord | null;
@@ -211,6 +214,13 @@ export default function CheckoutClearanceModal({
   const [refundAmount, setRefundAmount] = useState<number>(0);
   const [allowCreditCheckout, setAllowCreditCheckout] = useState<boolean>(false);
   const [splitFoodRoomBill, setSplitFoodRoomBill] = useState<boolean>(false);
+  // Independent Settlement state for Split Room Bill & Split Food Bill (each supports Hybrid / Split Payment!)
+  const [roomSettleMode, setRoomSettleMode] = useState<string>('UPI');
+  const [roomSettleAmt, setRoomSettleAmt] = useState<string>('');
+  const [roomHybridRows, setRoomHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0));
+  const [foodSettleMode, setFoodSettleMode] = useState<string>('Cash');
+  const [foodSettleAmt, setFoodSettleAmt] = useState<string>('');
+  const [foodHybridRows, setFoodHybridRows] = useState<HybridSplitRow[]>(() => createInitialHybridRows(0));
 
   useEffect(() => {
     if (booking) {
@@ -237,6 +247,12 @@ export default function CheckoutClearanceModal({
       setSecondaryPayAmount(0);
       setAllowCreditCheckout(false);
       setSplitFoodRoomBill(false);
+      setRoomSettleMode('UPI');
+      setRoomSettleAmt('');
+      setRoomHybridRows(createInitialHybridRows(0));
+      setFoodSettleMode('Cash');
+      setFoodSettleAmt('');
+      setFoodHybridRows(createInitialHybridRows(0));
       setPrimaryRef(`TXN-${Math.floor(100000 + Math.random() * 900000)}`);
       setSecondaryRef(`CASH-${Math.floor(1000 + Math.random() * 9000)}`);
     }
@@ -388,40 +404,113 @@ export default function CheckoutClearanceModal({
     setAddedServices((prev) => prev.filter((c) => c.id !== id));
   };
 
-  const totalCollectingNow = r2(
-    (Number(primaryPayAmount) || 0) + (isSplitPayment ? (Number(secondaryPayAmount) || 0) + extraSplitSum : 0)
-  );
+  // Authoritative Split Room vs Food Breakdown (100% exact to the paise: Room Split + Food Split === Grand Total)
+  const foodPreTaxAuth = r2(Number(bill.legacy.foodCharges) || 0);
+  const splitRoomOnlyBill = useMemo(() => {
+    const nonFoodCharges = stayBill.folio.charges.filter((c) => c.kind !== 'food');
+    return calculateBill({
+      charges: nonFoodCharges,
+      payments: [],
+      discount,
+      gstEnabled: isGstEnabled,
+      settings: { ...settings, roomRateIncludesGst: isInclusiveGst },
+    });
+  }, [stayBill.folio.charges, discount, isGstEnabled, settings, isInclusiveGst]);
+
+  const splitFoodGrandTotal =
+    foodPreTaxAuth > 0 ? Math.max(0, r2(grandTotal - splitRoomOnlyBill.grandTotal)) : 0;
+  const splitFoodGst = Math.max(0, r2(splitFoodGrandTotal - foodPreTaxAuth));
+  const splitRoomBalanceDue = Math.max(0, r2(splitRoomOnlyBill.grandTotal - alreadyPaid));
+  const splitFoodBalanceDue = Math.max(0, r2(netOutstanding - splitRoomBalanceDue));
+
+  const roomSettlingNow = splitFoodRoomBill
+    ? roomSettleMode === '__HYBRID__'
+      ? getHybridTotal(roomHybridRows)
+      : r2(Math.max(0, parseFloat(roomSettleAmt) || 0))
+    : 0;
+  const foodSettlingNow = splitFoodRoomBill
+    ? foodSettleMode === '__HYBRID__'
+      ? getHybridTotal(foodHybridRows)
+      : r2(Math.max(0, parseFloat(foodSettleAmt) || 0))
+    : 0;
+
+  const totalCollectingNow = splitFoodRoomBill
+    ? r2(roomSettlingNow + foodSettlingNow)
+    : r2(
+        (Number(primaryPayAmount) || 0) + (isSplitPayment ? (Number(secondaryPayAmount) || 0) + extraSplitSum : 0)
+      );
   const remainingAfterCollection = Math.max(0, r2(netOutstanding - totalCollectingNow));
 
   const handleConfirmCheckout = () => {
     const paymentsToRecord: Array<{ amount: number; method: PaymentMethod; referenceNo: string; notes: string }> = [];
-    if (primaryPayAmount > 0) {
-      paymentsToRecord.push({
-        amount: r2(primaryPayAmount),
-        method: primaryPayMethod,
-        referenceNo: primaryRef || `TXN-${Date.now()}`,
-        notes: isSplitPayment ? 'Checkout Split Payment (Part 1)' : 'Final Checkout Settlement',
-      });
-    }
-    if (isSplitPayment && secondaryPayAmount > 0) {
-      paymentsToRecord.push({
-        amount: r2(secondaryPayAmount),
-        method: secondaryPayMethod,
-        referenceNo: secondaryRef || `SPLIT-${Date.now()}`,
-        notes: 'Checkout Split Payment (Part 2)',
-      });
-    }
-    if (isSplitPayment) {
-      extraSplitRows.forEach((row, idx) => {
-        if ((Number(row.amount) || 0) > 0) {
+
+    if (splitFoodRoomBill && foodPreTaxAuth > 0) {
+      // 1. Record Room Bill Settlement (Single OR Hybrid Split)
+      if (roomSettleMode === '__HYBRID__') {
+        getValidHybridSplits(roomHybridRows).forEach((sp, idx) => {
           paymentsToRecord.push({
-            amount: r2(Number(row.amount)),
-            method: row.method,
-            referenceNo: row.ref || `SPLIT-${Date.now()}-${idx + 3}`,
-            notes: `Checkout Split Payment (Part ${idx + 3})`,
+            amount: r2(sp.amount),
+            method: sp.method as PaymentMethod,
+            referenceNo: sp.reference || `ROOM-HYB-${Date.now()}-${idx + 1}`,
+            notes: `Room Bill Hybrid Settlement (${sp.method})`,
           });
-        }
-      });
+        });
+      } else if (roomSettlingNow > 0) {
+        paymentsToRecord.push({
+          amount: r2(roomSettlingNow),
+          method: roomSettleMode as PaymentMethod,
+          referenceNo: `ROOM-${Date.now().toString().slice(-6)}`,
+          notes: `Room Bill Settlement (${roomSettleMode})`,
+        });
+      }
+
+      // 2. Record Separate Food Bill Settlement (Single OR Hybrid Split)
+      if (foodSettleMode === '__HYBRID__') {
+        getValidHybridSplits(foodHybridRows).forEach((sp, idx) => {
+          paymentsToRecord.push({
+            amount: r2(sp.amount),
+            method: sp.method as PaymentMethod,
+            referenceNo: sp.reference || `FOOD-HYB-${Date.now()}-${idx + 1}`,
+            notes: `Food Bill Hybrid Settlement (${sp.method})`,
+          });
+        });
+      } else if (foodSettlingNow > 0) {
+        paymentsToRecord.push({
+          amount: r2(foodSettlingNow),
+          method: foodSettleMode as PaymentMethod,
+          referenceNo: `FOOD-${Date.now().toString().slice(-6)}`,
+          notes: `Food Bill Settlement (${foodSettleMode})`,
+        });
+      }
+    } else {
+      if (primaryPayAmount > 0) {
+        paymentsToRecord.push({
+          amount: r2(primaryPayAmount),
+          method: primaryPayMethod,
+          referenceNo: primaryRef || `TXN-${Date.now()}`,
+          notes: isSplitPayment ? 'Checkout Split Payment (Part 1)' : 'Final Checkout Settlement',
+        });
+      }
+      if (isSplitPayment && secondaryPayAmount > 0) {
+        paymentsToRecord.push({
+          amount: r2(secondaryPayAmount),
+          method: secondaryPayMethod,
+          referenceNo: secondaryRef || `SPLIT-${Date.now()}`,
+          notes: 'Checkout Split Payment (Part 2)',
+        });
+      }
+      if (isSplitPayment) {
+        extraSplitRows.forEach((row, idx) => {
+          if ((Number(row.amount) || 0) > 0) {
+            paymentsToRecord.push({
+              amount: r2(Number(row.amount)),
+              method: row.method,
+              referenceNo: row.ref || `SPLIT-${Date.now()}-${idx + 3}`,
+              notes: `Checkout Split Payment (Part ${idx + 3})`,
+            });
+          }
+        });
+      }
     }
 
     onCompleteFinalCheckout({
@@ -517,7 +606,7 @@ export default function CheckoutClearanceModal({
                 { num: 5, label: 'No Double Tax', ok: true },
                 { num: 6, label: 'Advance Accounted', ok: true },
                 { num: 7, label: 'Unique Invoice Seq', ok: true },
-                { num: 8, label: 'Folio Balanced', ok: netOutstanding === 0 || allowCreditCheckout || primaryPayAmount > 0 },
+                { num: 8, label: 'Folio Balanced', ok: netOutstanding === 0 || allowCreditCheckout || totalCollectingNow > 0 },
               ].map((c) => (
                 <div
                   key={c.num}
@@ -1014,75 +1103,19 @@ export default function CheckoutClearanceModal({
             </div>
           </div>
 
-          {/* SPLIT ROOM & FOOD BILLS SECTION (when Food charges exist) */}
+          {/* SPLIT ROOM & FOOD BILLS SETTLEMENT SECTION (when Food charges exist) */}
           {(() => {
-            const foodChargesList = stayBill.folio.charges.filter((c) => c.kind === 'food');
-            const totalFoodPreTax = r2(foodChargesList.reduce((s, c) => s + (Number(c.amount) || 0), 0));
-            if (totalFoodPreTax <= 0) return null;
+            if (foodPreTaxAuth <= 0) return null;
 
-            const nonFoodChargesList = stayBill.folio.charges.filter((c) => c.kind !== 'food');
-            const effectiveSettings = { ...settings, roomRateIncludesGst: isInclusiveGst };
-            const roomOnlyBill = calculateBill({
-              charges: nonFoodChargesList,
-              payments: [],
-              discount,
-              gstEnabled: isGstEnabled,
-              settings: effectiveSettings,
-            });
             const detailedFoodItems = extractDetailedFoodLinesForStay({
               invoice: existingInvoice as any,
               checkinRecord: rawCheckin as any,
               bookingRecord: rawBooking as any,
               posOrders,
             });
-            const foodBillCharges: BillCharge[] =
-              detailedFoodItems.length > 0
-                ? detailedFoodItems.map((it, idx) => ({
-                    id: `co-fd-${idx}`,
-                    kind: 'food' as const,
-                    description: it.description,
-                    amount: it.amount,
-                    date: it.dateLabel,
-                    roomNumber: safeRoomNumbers[0] || '',
-                  }))
-                : foodChargesList;
-            const foodOnlyBill = calculateBill({
-              charges: foodBillCharges,
-              payments: [],
-              discount: 0,
-              gstEnabled: isGstEnabled,
-              settings: effectiveSettings,
-            });
-
-            const printSplitDoc = (kind: 'room_only' | 'food_only') => {
-              const tempInv = buildInvoiceRecord({
-                id: existingInvoice?.id || `INV-PREVIEW-${booking.id}`,
-                invoiceNumber: existingInvoice?.invoiceNumber || `INV-${bookingNo}`,
-                hotelId: hotelId || 'hotel-1',
-                bookingId: booking.id,
-                checkInId: (rawCheckin as any)?.id || booking.id,
-                guestName,
-                guestMobile,
-                roomNumbers: safeRoomNumbers,
-                checkInDate: booking.checkInDate,
-                checkOutDate: booking.checkOutDate,
-                nights: booking.nights || 1,
-                bill: stayBill.bill,
-                paymentMethod: primaryPayMethod,
-                dateCreated: new Date().toISOString().slice(0, 10),
-                invoiceStatus: 'Generated',
-              });
-              openPrintWindow(
-                invoiceRecordToPrintHtml(
-                  tempInv as any,
-                  settings as any,
-                  rawCheckin as any,
-                  rawBooking as any,
-                  kind,
-                  posOrders
-                )
-              );
-            };
+            const payModeChoices = useConfiguredPay
+              ? hotelPayCfg.options.map((o) => o.value)
+              : ['Cash', 'UPI', 'Card', 'Bank Transfer'];
 
             return (
               <div className="p-4 border-2 border-amber-300 bg-amber-50/80 rounded-xl space-y-3">
@@ -1090,122 +1123,292 @@ export default function CheckoutClearanceModal({
                   <div>
                     <h4 className="text-xs uppercase font-mono font-bold text-amber-950 flex items-center gap-1.5">
                       <Split className="w-4 h-4 text-amber-700" />
-                      Food Bill Detected ({formatINRDecimal(totalFoodPreTax)}) — Split Room &amp; Food Invoices
+                      Food Bill Detected ({formatINRDecimal(splitFoodGrandTotal)}) — Split Room &amp; Food Settlement
                     </h4>
                     <p className="text-[11px] text-amber-900 mt-0.5">
-                      Click Split to view &amp; print separate Room Bill (no food details/amount) and item-wise Food Bill.
+                      Settle Room Bill (no food) and Food Bill (item-wise) separately using Cash, UPI, Card, Bank, or Hybrid Split Payment.
                     </p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setSplitFoodRoomBill((v) => !v)}
+                    onClick={() => {
+                      const nextOn = !splitFoodRoomBill;
+                      setSplitFoodRoomBill(nextOn);
+                      if (nextOn) {
+                        const defRoomMode = payModeChoices.includes('UPI') ? 'UPI' : (payModeChoices[0] || 'UPI');
+                        const defFoodMode = payModeChoices.includes('Cash') ? 'Cash' : (payModeChoices[0] || 'Cash');
+                        setRoomSettleMode(defRoomMode);
+                        setRoomSettleAmt(String(splitRoomBalanceDue));
+                        setRoomHybridRows(createInitialHybridRows(splitRoomBalanceDue, payModeChoices));
+                        setFoodSettleMode(defFoodMode);
+                        setFoodSettleAmt(String(splitFoodBalanceDue));
+                        setFoodHybridRows(createInitialHybridRows(splitFoodBalanceDue, payModeChoices));
+                      }
+                    }}
                     className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold cursor-pointer transition-all shadow-xs ${
                       splitFoodRoomBill
                         ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
                         : 'bg-amber-600 hover:bg-amber-700 text-white'
                     }`}
                   >
-                    {splitFoodRoomBill ? '✓ Split Active (Room + Food Separate)' : '✂ Split Food & Room Bill'}
+                    {splitFoodRoomBill ? '✓ Split Active (Room + Food Separate)' : '✂ Split Food & Room Settlement'}
                   </button>
                 </div>
 
                 {splitFoodRoomBill && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="p-3 bg-white border border-slate-300 rounded-xl space-y-2 text-xs">
-                      <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
-                        <span className="font-extrabold text-[#17120F] uppercase text-[11px]">
-                          1. Room Bill Only (No Food)
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">
-                          Food: ₹0
-                        </span>
-                      </div>
-                      <div className="space-y-1 font-mono text-[11px]">
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Room + Stay Charges:</span>
-                          <span className="font-bold">{formatINRDecimal(roomOnlyBill.subtotal)}</span>
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {/* 1. ROOM BILL SETTLEMENT CARD (ZERO FOOD) */}
+                      <div className="p-3 bg-white border border-slate-300 rounded-xl space-y-2.5 text-xs">
+                        <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                          <span className="font-extrabold text-[#17120F] uppercase text-[11px]">
+                            1. Room Bill Settlement (No Food)
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">
+                            Food: ₹0
+                          </span>
                         </div>
-                        {roomOnlyBill.discount > 0 && (
-                          <div className="flex justify-between text-emerald-700">
-                            <span>Discount:</span>
-                            <span className="font-bold">-{formatINRDecimal(roomOnlyBill.discount)}</span>
+                        <div className="space-y-1 font-mono text-[11px]">
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">Room + Stay Charges:</span>
+                            <span className="font-bold">{formatINRDecimal(splitRoomOnlyBill.subtotal)}</span>
                           </div>
-                        )}
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Room GST:</span>
-                          <span className="font-bold">{formatINRDecimal(roomOnlyBill.totalTax)}</span>
+                          {splitRoomOnlyBill.discount > 0 && (
+                            <div className="flex justify-between text-emerald-700">
+                              <span>Discount:</span>
+                              <span className="font-bold">-{formatINRDecimal(splitRoomOnlyBill.discount)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">Room GST:</span>
+                            <span className="font-bold">{formatINRDecimal(splitRoomOnlyBill.totalTax)}</span>
+                          </div>
+                          <div className="flex justify-between font-bold text-slate-800">
+                            <span>Room Bill Total:</span>
+                            <span>{formatINRDecimal(splitRoomOnlyBill.grandTotal)}</span>
+                          </div>
+                          {alreadyPaid > 0 && (
+                            <div className="flex justify-between text-emerald-700">
+                              <span>Less Prior Advance:</span>
+                              <span className="font-bold">-{formatINRDecimal(Math.min(alreadyPaid, splitRoomOnlyBill.grandTotal))}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between border-t border-slate-200 pt-1 font-extrabold text-xs text-rose-700">
+                            <span>Room Balance Due:</span>
+                            <span>{formatINRDecimal(splitRoomBalanceDue)}</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between border-t border-slate-200 pt-1 font-extrabold text-xs">
-                          <span>Room Split Total:</span>
-                          <span>{formatINRDecimal(roomOnlyBill.grandTotal)}</span>
+
+                        {/* Room Payment Mode & Hybrid Split */}
+                        <div className="pt-2 border-t border-slate-200 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-mono uppercase font-bold text-slate-600">
+                              Room Payment Mode
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (roomSettleMode === '__HYBRID__') {
+                                  setRoomHybridRows(createInitialHybridRows(splitRoomBalanceDue, payModeChoices));
+                                } else {
+                                  setRoomSettleAmt(String(splitRoomBalanceDue));
+                                }
+                              }}
+                              className="text-[10px] font-bold text-indigo-700 hover:underline cursor-pointer"
+                            >
+                              Settle Full Room Due
+                            </button>
+                          </div>
+                          <select
+                            value={roomSettleMode}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === '__HYBRID__') {
+                                setRoomHybridRows(
+                                  createInitialHybridRows(parseFloat(roomSettleAmt) || splitRoomBalanceDue, payModeChoices)
+                                );
+                              }
+                              setRoomSettleMode(v);
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-bold"
+                          >
+                            {payModeChoices.map((m) => (
+                              <option key={m} value={m}>
+                                {m}
+                              </option>
+                            ))}
+                            <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
+                          </select>
+                          {roomSettleMode === '__HYBRID__' ? (
+                            <HybridSplitPaymentBox
+                              rows={roomHybridRows}
+                              onChange={setRoomHybridRows}
+                              modes={payModeChoices}
+                              targetAmount={splitRoomBalanceDue}
+                              compact
+                            />
+                          ) : (
+                            <input
+                              type="number"
+                              step="any"
+                              min={0}
+                              value={roomSettleAmt}
+                              onChange={(e) => setRoomSettleAmt(e.target.value)}
+                              placeholder="Room amount collecting ₹"
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 font-mono font-bold text-xs"
+                            />
+                          )}
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => printSplitDoc('room_only')}
-                        className="w-full py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <FileText className="w-3.5 h-3.5" /> Print Room Bill Only (No Food)
-                      </button>
+
+                      {/* 2. SEPARATE FOOD BILL SETTLEMENT CARD (ITEM-WISE) */}
+                      <div className="p-3 bg-white border border-amber-300 rounded-xl space-y-2.5 text-xs">
+                        <div className="flex items-center justify-between border-b border-amber-200 pb-1.5">
+                          <span className="font-extrabold text-amber-950 uppercase text-[11px]">
+                            2. Food Bill Settlement (Item-Wise)
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold">
+                            {detailedFoodItems.length || 1} Item(s)
+                          </span>
+                        </div>
+                        <div className="max-h-24 overflow-y-auto space-y-1 font-mono text-[10.5px] border-b border-amber-100 pb-1.5">
+                          {detailedFoodItems.length > 0 ? (
+                            detailedFoodItems.map((it, idx) => (
+                              <div key={idx} className="flex justify-between gap-2">
+                                <span className="text-slate-700 truncate">
+                                  {it.itemName} <span className="text-slate-400">({it.qty}×₹{it.rate})</span>
+                                </span>
+                                <span className="font-bold shrink-0">{formatINRDecimal(it.amount)}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="flex justify-between gap-2">
+                              <span className="text-slate-700">Restaurant &amp; Food Charges</span>
+                              <span className="font-bold shrink-0">{formatINRDecimal(foodPreTaxAuth)}</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-1 font-mono text-[11px]">
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">Food Subtotal:</span>
+                            <span className="font-bold">{formatINRDecimal(foodPreTaxAuth)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">Food GST:</span>
+                            <span className="font-bold">{formatINRDecimal(splitFoodGst)}</span>
+                          </div>
+                          <div className="flex justify-between font-bold text-slate-800">
+                            <span>Food Bill Total:</span>
+                            <span>{formatINRDecimal(splitFoodGrandTotal)}</span>
+                          </div>
+                          {splitFoodBalanceDue < splitFoodGrandTotal && (
+                            <div className="flex justify-between text-emerald-700">
+                              <span>Less Excess Advance:</span>
+                              <span className="font-bold">
+                                -{formatINRDecimal(r2(splitFoodGrandTotal - splitFoodBalanceDue))}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex justify-between border-t border-amber-200 pt-1 font-extrabold text-xs text-amber-950">
+                            <span>Food Balance Due:</span>
+                            <span>{formatINRDecimal(splitFoodBalanceDue)}</span>
+                          </div>
+                        </div>
+
+                        {/* Food Payment Mode & Hybrid Split */}
+                        <div className="pt-2 border-t border-amber-200 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-mono uppercase font-bold text-amber-900">
+                              Food Payment Mode
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (foodSettleMode === '__HYBRID__') {
+                                  setFoodHybridRows(createInitialHybridRows(splitFoodBalanceDue, payModeChoices));
+                                } else {
+                                  setFoodSettleAmt(String(splitFoodBalanceDue));
+                                }
+                              }}
+                              className="text-[10px] font-bold text-amber-800 hover:underline cursor-pointer"
+                            >
+                              Settle Full Food Due
+                            </button>
+                          </div>
+                          <select
+                            value={foodSettleMode}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === '__HYBRID__') {
+                                setFoodHybridRows(
+                                  createInitialHybridRows(parseFloat(foodSettleAmt) || splitFoodBalanceDue, payModeChoices)
+                                );
+                              }
+                              setFoodSettleMode(v);
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white text-xs font-bold"
+                          >
+                            {payModeChoices.map((m) => (
+                              <option key={m} value={m}>
+                                {m}
+                              </option>
+                            ))}
+                            <option value="__HYBRID__">⇄ Hybrid / Split Payment</option>
+                          </select>
+                          {foodSettleMode === '__HYBRID__' ? (
+                            <HybridSplitPaymentBox
+                              rows={foodHybridRows}
+                              onChange={setFoodHybridRows}
+                              modes={payModeChoices}
+                              targetAmount={splitFoodBalanceDue}
+                              compact
+                            />
+                          ) : (
+                            <input
+                              type="number"
+                              step="any"
+                              min={0}
+                              value={foodSettleAmt}
+                              onChange={(e) => setFoodSettleAmt(e.target.value)}
+                              placeholder="Food amount collecting ₹"
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-amber-300 font-mono font-bold text-xs"
+                            />
+                          )}
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="p-3 bg-white border border-amber-300 rounded-xl space-y-2 text-xs">
-                      <div className="flex items-center justify-between border-b border-amber-200 pb-1.5">
-                        <span className="font-extrabold text-amber-950 uppercase text-[11px]">
-                          2. Separate Food Bill (Item-Wise)
+                    {/* Combined Reconciliation Summary Bar */}
+                    <div className="p-2.5 bg-white border border-emerald-300 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                      <span className="font-bold text-slate-700">
+                        Room: <strong className="text-slate-950">{formatINRDecimal(roomSettlingNow)}</strong> + Food:{' '}
+                        <strong className="text-amber-900">{formatINRDecimal(foodSettlingNow)}</strong> ={' '}
+                        <strong className="text-emerald-700">Total Collecting: {formatINRDecimal(totalCollectingNow)}</strong>
+                      </span>
+                      {remainingAfterCollection > 0 ? (
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-rose-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={allowCreditCheckout}
+                            onChange={(e) => setAllowCreditCheckout(e.target.checked)}
+                            className="accent-rose-600"
+                          />
+                          Remaining Due {formatINRDecimal(remainingAfterCollection)} — Authorize Credit Checkout
+                        </label>
+                      ) : (
+                        <span className="text-[11px] font-extrabold text-emerald-700">
+                          ✓ Room &amp; Food 100% Settled
                         </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold">
-                          {detailedFoodItems.length || foodChargesList.length} Item(s)
-                        </span>
-                      </div>
-                      <div className="max-h-28 overflow-y-auto space-y-1 font-mono text-[10.5px] border-b border-amber-100 pb-1.5">
-                        {detailedFoodItems.length > 0 ? (
-                          detailedFoodItems.map((it, idx) => (
-                            <div key={idx} className="flex justify-between gap-2">
-                              <span className="text-slate-700 truncate">
-                                {it.itemName} <span className="text-slate-400">({it.qty}×₹{it.rate})</span>
-                              </span>
-                              <span className="font-bold shrink-0">{formatINRDecimal(it.amount)}</span>
-                            </div>
-                          ))
-                        ) : (
-                          foodChargesList.map((fc, idx) => (
-                            <div key={idx} className="flex justify-between gap-2">
-                              <span className="text-slate-700 truncate">{fc.description}</span>
-                              <span className="font-bold shrink-0">{formatINRDecimal(fc.amount)}</span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                      <div className="space-y-1 font-mono text-[11px]">
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Food Subtotal:</span>
-                          <span className="font-bold">{formatINRDecimal(foodOnlyBill.subtotal)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Food GST:</span>
-                          <span className="font-bold">{formatINRDecimal(foodOnlyBill.totalTax)}</span>
-                        </div>
-                        <div className="flex justify-between border-t border-amber-200 pt-1 font-extrabold text-xs text-amber-950">
-                          <span>Food Split Total:</span>
-                          <span>{formatINRDecimal(foodOnlyBill.grandTotal)}</span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => printSplitDoc('food_only')}
-                        className="w-full py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <FileText className="w-3.5 h-3.5" /> Print Separate Food Bill
-                      </button>
+                      )}
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
             );
           })()}
 
-          {/* SECTION C: FINAL PAYMENT CLEARANCE */}
+          {/* SECTION C: FINAL PAYMENT CLEARANCE (Hidden when Split Room & Food Settlement is active above) */}
+          {!splitFoodRoomBill && (
           <div className="p-4 border border-slate-300 bg-slate-50 rounded-xl space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
               <h4 className="text-xs uppercase font-mono font-bold text-[#17120F] flex items-center gap-1.5">
@@ -1604,6 +1807,7 @@ export default function CheckoutClearanceModal({
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Footer */}
