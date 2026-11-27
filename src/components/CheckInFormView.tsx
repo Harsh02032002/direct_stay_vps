@@ -30,7 +30,7 @@ import {
 
 interface CheckInFormViewProps {
   mode?: 'walkin' | 'checkin';
-  onSwitchTab?: (tab: 'walkin' | 'checkin') => void;
+  onSwitchTab?: (tab: 'walkin' | 'checkin' | 'reservations' | 'inhouse') => void;
   bookings: Booking[];
   rooms: Room[];
   checkins: GuestCheckIn[];
@@ -712,27 +712,9 @@ export default function CheckInFormView({
           setCheckOutDate(getFutureDateStr(1, String(parsed.checkInDate)));
         }
       }
-      const savedCat = sessionStorage.getItem('pms_booking_category');
-      if (savedCat) {
-        sessionStorage.removeItem('pms_booking_category');
-        if (savedCat === 'event') {
-          setPurposeOfVisit('Event / Banquet Booking');
-        }
-      }
     } catch {
       // ignore storage errors
     }
-
-    const handleSidebarCheckInNav = (evt: Event) => {
-      const cat = (evt as CustomEvent)?.detail?.bookingCategory;
-      if (cat === 'event') {
-        setPurposeOfVisit('Event / Banquet Booking');
-      } else if (cat === 'room') {
-        setPurposeOfVisit('Leisure');
-      }
-    };
-    window.addEventListener('directstay:checkin-nav', handleSidebarCheckInNav);
-    return () => window.removeEventListener('directstay:checkin-nav', handleSidebarCheckInNav);
   }, []);
 
   // Sync pricing upon room selection (only when selectedRoomNumber or booking identity changes — never wipe manual edits on background polls)
@@ -951,6 +933,7 @@ export default function CheckInFormView({
     totalAmount: number;
     paidAmount: number;
     status: string;
+    bookingCategory?: 'individual' | 'group' | 'corporate' | 'event';
   } | null>(null);
 
   const calcStayDays = (inDate: string, outDate: string) => {
@@ -1146,6 +1129,49 @@ export default function CheckInFormView({
       setWalkInBookingSource('Corporate');
     }
   };
+
+  // Apply booking category preset from Sidebar / Reservation List ("+ New Event Booking", etc.)
+  useEffect(() => {
+    const applyCategoryPreset = (rawCat: unknown) => {
+      const cat = String(rawCat || '').trim().toLowerCase();
+      if (!cat) return;
+      if (cat === 'event' || cat === 'event / banquet') {
+        handleSelectBookingCategory('event');
+        setPurposeOfVisit('Event / Banquet Booking');
+      } else if (cat === 'group') {
+        handleSelectBookingCategory('group');
+      } else if (cat === 'corporate') {
+        handleSelectBookingCategory('corporate');
+      } else if (cat === 'individual' || cat === 'room' || cat === 'standard') {
+        handleSelectBookingCategory('individual');
+        setPurposeOfVisit('Leisure');
+      }
+    };
+
+    if (!editingCheckIn && !selectedBooking) {
+      try {
+        const savedCat = sessionStorage.getItem('pms_booking_category');
+        if (savedCat) {
+          sessionStorage.removeItem('pms_booking_category');
+          applyCategoryPreset(savedCat);
+        }
+      } catch {
+        // ignore storage errors
+      }
+    }
+
+    const handleSidebarCheckInNav = (evt: Event) => {
+      const detail = (evt as CustomEvent)?.detail;
+      if (detail?.bookingCategory) {
+        try {
+          sessionStorage.removeItem('pms_booking_category');
+        } catch {}
+        applyCategoryPreset(detail.bookingCategory);
+      }
+    };
+    window.addEventListener('directstay:checkin-nav', handleSidebarCheckInNav);
+    return () => window.removeEventListener('directstay:checkin-nav', handleSidebarCheckInNav);
+  }, []);
 
   // 7. Extra Person & Extra Bed/Mattress State (Both strictly OFF by default — independent checkboxes!)
   const [applyExtraPersonCharge, setApplyExtraPersonCharge] = useState<boolean>(false);
@@ -2295,9 +2321,17 @@ export default function CheckInFormView({
       .map(rn => rn.trim())
       .filter(Boolean);
 
+    const extractedVenueFromNotes = (() => {
+      if ((b as any).eventVenueName) return String((b as any).eventVenueName).trim();
+      const sr = String((b as any).specialRequests || '');
+      const m = sr.match(/Event\s*\/\s*Banquet\s*:\s*([^|]+)/i);
+      return m && m[1] ? m[1].trim() : '';
+    })();
+    setEventVenueName(extractedVenueFromNotes);
+
     if (b.bookedRooms && b.bookedRooms.length > 1) {
       setCheckInMode('group');
-      setGroupName(b.companyName || `${b.guestName} Corporate Group`);
+      setGroupName(b.groupName || b.companyName || `${b.guestName} Corporate Group`);
       setGroupBookingId(b.groupBookingId || b.id);
       setGroupRooms(
         b.bookedRooms.map((br, idx) => {
@@ -2327,7 +2361,7 @@ export default function CheckInFormView({
           ? Math.round(b.bookingAmount / (bNightsForGroup * parsedCsvRoomNumbers.length))
           : 0;
       setCheckInMode('group');
-      setGroupName(b.companyName || `${b.guestName} Group`);
+      setGroupName(b.groupName || b.companyName || `${b.guestName} Group`);
       setGroupBookingId(b.groupBookingId || b.id);
       setGroupRooms(
         parsedCsvRoomNumbers.map((rn, idx) => {
@@ -3186,6 +3220,7 @@ export default function CheckInFormView({
         ...({
           bookingCategory,
           bookingType: bookingCategoryToDisplayType(bookingCategory),
+          eventVenueName: bookingCategory === 'event' && eventVenueName.trim() ? eventVenueName.trim() : undefined,
         } as any),
         status: targetStatus as BookingStatus,
         isCheckedIn: false,
@@ -3222,6 +3257,7 @@ export default function CheckInFormView({
         extraPersonNights: applyExtraPersonCharge ? effectiveExtraPaxNights : undefined,
         extraPersonChargeApplied: effectiveExtraPersonChargesTotal,
         groupBookingId: isMulti ? newResId : undefined,
+        groupName: (isMulti || bookingCategory === 'event' || bookingCategory === 'group') && groupName.trim() ? groupName.trim() : undefined,
         specialRequests: notesPieces.join(' | ') || undefined,
         createdAt: new Date().toISOString(),
       } as Booking;
@@ -3273,6 +3309,7 @@ export default function CheckInFormView({
         totalAmount: finalAmount,
         paidAmount: totalCollectedNow,
         status: targetStatus,
+        bookingCategory,
       });
 
       showToast(
@@ -3936,9 +3973,13 @@ export default function CheckInFormView({
       ...({
         bookingCategory,
         bookingType: bookingCategoryToDisplayType(bookingCategory),
+        eventVenueName: bookingCategory === 'event' && eventVenueName.trim() ? eventVenueName.trim() : undefined,
       } as any),
       groupBookingId: checkInMode === 'group' ? groupBookingId : undefined,
-      groupName: checkInMode === 'group' ? (groupName || `${guestName} Group`) : undefined,
+      groupName:
+        checkInMode === 'group' || bookingCategory === 'event'
+          ? (groupName.trim() || (bookingCategory === 'event' ? 'Event / Banquet Block' : `${guestName} Group`))
+          : undefined,
       // Extra Bed Details (explicitly zeroed when unchecked so previous values never linger)
       hasExtraBed: checkInMode === 'single' ? Boolean(hasExtraBed) : groupRooms.some(g => g.hasExtraBed),
       extraBedCount: checkInMode === 'single' && hasExtraBed ? singleExtraCalc.extraBedQty : 0,
@@ -4015,9 +4056,14 @@ export default function CheckInFormView({
               roomType: (roomType || b.roomType) as any,
               bookedRooms: finalBookedRooms,
               isGroupCheckIn: checkInMode === 'group' || bookingCategory === 'group',
+              groupName: (checkInMode === 'group' || bookingCategory === 'event') && groupName.trim() ? groupName.trim() : b.groupName,
               ...({
                 bookingCategory,
                 bookingType: bookingCategoryToDisplayType(bookingCategory),
+                eventVenueName:
+                  bookingCategory === 'event' && eventVenueName.trim()
+                    ? eventVenueName.trim()
+                    : (b as any).eventVenueName,
               } as any),
               roomSubtotal: effectiveRoomChargesTotal,
               bookingAmount: effectiveRoomChargesTotal,
@@ -4105,6 +4151,7 @@ export default function CheckInFormView({
         ...({
           bookingCategory,
           bookingType: bookingCategoryToDisplayType(bookingCategory),
+          eventVenueName: bookingCategory === 'event' && eventVenueName.trim() ? eventVenueName.trim() : undefined,
         } as any),
         bookingDate: walkInBookingDate || getTodayDateStr(),
         roomSubtotal: effectiveRoomChargesTotal,
@@ -4382,6 +4429,7 @@ export default function CheckInFormView({
       totalAmount: newCheckIn.totalAmount || finalAmount,
       paidAmount: Number(newCheckIn.advanceAmount || 0) + Number(newCheckIn.cashAmountPaid || 0) + Number(newCheckIn.onlineAmountPaid || 0),
       status: 'Checked-In',
+      bookingCategory,
     });
     setSelectedBooking(null);
     setActiveSessionBookingId(null);
@@ -7817,7 +7865,40 @@ export default function CheckInFormView({
                       <strong>₹{inlineBookingSuccess.paidAmount.toLocaleString('en-IN')}</strong> ({inlineBookingSuccess.status})
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {onSwitchTab && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const isEventCat = inlineBookingSuccess.bookingCategory === 'event';
+                          if (inlineBookingSuccess.status === 'Checked-In' && !isEventCat) {
+                            onSwitchTab('inhouse');
+                            try {
+                              window.history.pushState({}, '', '/admin/frontDesk/inhouse');
+                            } catch {}
+                            return;
+                          }
+                          const targetSeg = isEventCat ? 'Event / Banquet' : 'All';
+                          try {
+                            sessionStorage.setItem('pms_reservation_segment', targetSeg);
+                            window.dispatchEvent(
+                              new CustomEvent('directstay:reservation-nav', {
+                                detail: { openModal: false, segment: targetSeg },
+                              })
+                            );
+                            window.history.pushState({}, '', '/admin/frontDesk/reservations');
+                          } catch {}
+                          onSwitchTab('reservations');
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-[#17120F] text-[#F3D078] border border-[#C49A3A]/60 text-xs font-bold hover:bg-[#2A201A] cursor-pointer shadow-xs"
+                      >
+                        {inlineBookingSuccess.bookingCategory === 'event'
+                          ? 'View in Event Bookings →'
+                          : inlineBookingSuccess.status === 'Checked-In'
+                          ? 'View in In-House Guests →'
+                          : 'View in Reservation List →'}
+                      </button>
+                    )}
                     {activeSessionBookingId && inlineBookingSuccess.status !== 'Checked-In' && (
                       <button
                         type="button"

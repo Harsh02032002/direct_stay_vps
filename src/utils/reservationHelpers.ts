@@ -14,10 +14,50 @@ export type CanonicalReservationStatus =
 export type ReservationSegment =
   | 'Individual'
   | 'Group'
+  | 'Event / Banquet'
   | 'Corporate'
   | 'Walk-in'
   | 'OTA'
   | 'Travel Agent';
+
+export function isEventBanquetBooking(bk: any): boolean {
+  if (!bk) return false;
+  const rawCat = String(bk.bookingCategory || '').trim().toLowerCase();
+  const rawType = String(bk.bookingType || '').trim().toLowerCase();
+  const rawPurpose = String(bk.purposeOfVisit || '').trim().toLowerCase();
+  const rawSpecial = String(bk.specialRequests || '').trim().toLowerCase();
+  const rawId = String(bk.id || '').trim().toUpperCase();
+  return (
+    rawCat === 'event' ||
+    rawCat.includes('event') ||
+    rawCat.includes('banquet') ||
+    rawType.includes('event') ||
+    rawType.includes('banquet') ||
+    rawPurpose.includes('event / banquet') ||
+    rawSpecial.includes('event / banquet') ||
+    rawId.startsWith('EVT-')
+  );
+}
+
+export function extractEventVenueLabel(bk: any): string {
+  if (!bk) return '';
+  const pieces: string[] = [];
+  const gn = String(bk.groupName || '').trim();
+  if (gn && gn.toLowerCase() !== 'event / banquet block') {
+    pieces.push(gn);
+  }
+  const vn = String(bk.eventVenueName || '').trim();
+  if (vn) {
+    pieces.push(vn);
+  } else {
+    const sr = String(bk.specialRequests || '');
+    const m = sr.match(/Event\s*\/\s*Banquet\s*:\s*([^|]+)/i);
+    if (m && m[1]?.trim()) {
+      pieces.push(m[1].trim());
+    }
+  }
+  return Array.from(new Set(pieces)).join(' • ');
+}
 
 export type ReservationActionType =
   | 'view'
@@ -273,6 +313,9 @@ export function resolveReservationSegments(bk: Booking): {
   const src = String(bk.bookingSource || '').trim();
   const srcLower = src.toLowerCase();
 
+  const isEvent = isEventBanquetBooking(bk);
+  if (isEvent) segments.push('Event / Banquet');
+
   const isGroup =
     roomNums.length > 1 ||
     (Array.isArray(bk.bookedRooms) && bk.bookedRooms.length > 1) ||
@@ -302,16 +345,18 @@ export function resolveReservationSegments(bk: Booking): {
     Boolean((bk as any).isStandaloneWalkin);
   if (isWalkIn) segments.push('Walk-in');
 
-  if (!isGroup && !isCorporate && !isAgent && !isOta && !isWalkIn) {
+  if (!isEvent && !isGroup && !isCorporate && !isAgent && !isOta && !isWalkIn) {
     segments.push('Individual');
-  } else if (!isGroup) {
+  } else if (!isEvent && !isGroup) {
     // Non-group stays are also single/individual room stays when filtering Individual if direct/walkin
     if (srcLower === 'direct' || srcLower === 'phone' || srcLower === 'website') {
       segments.push('Individual');
     }
   }
 
-  const primarySegment: ReservationSegment = isGroup
+  const primarySegment: ReservationSegment = isEvent
+    ? 'Event / Banquet'
+    : isGroup
     ? 'Group'
     : isCorporate
     ? 'Corporate'
@@ -701,6 +746,13 @@ export function mergeBookingsAndStandaloneWalkIns(
       hasExtraBed: primary.hasExtraBed,
       extraBedCount: primary.extraBedCount,
       extraBedRate: primary.extraBedRate,
+      purposeOfVisit: primary.purposeOfVisit,
+      specialRequests: pAny.specialRequests,
+      ...({
+        bookingCategory: pAny.bookingCategory,
+        bookingType: pAny.bookingType,
+        eventVenueName: pAny.eventVenueName,
+      } as any),
     };
     (syntheticBooking as any).isStandaloneWalkin = true;
 

@@ -76,6 +76,7 @@ import {
   computeReservationFinancials,
   computeStayDurationInfo,
   EnrichedReservationItem,
+  extractEventVenueLabel,
   findLinkedCheckinForBooking,
   formatDisplayTime12h,
   formatShortHumanDate,
@@ -1296,13 +1297,22 @@ export default function ReservationView({
   };
 
   const handleNewBookingClick = () => {
+    const targetCategory =
+      segmentFilter === 'Event / Banquet'
+        ? 'event'
+        : segmentFilter === 'Group'
+        ? 'group'
+        : segmentFilter === 'Corporate'
+        ? 'corporate'
+        : 'individual';
     try {
       if (typeof window !== 'undefined') {
+        sessionStorage.setItem('pms_booking_category', targetCategory);
         window.history.pushState({}, '', '/admin/frontDesk/checkin');
         window.dispatchEvent(
           new CustomEvent('directstay:checkin-nav', {
             detail: {
-              bookingCategory: 'standard',
+              bookingCategory: targetCategory,
               checkInDate: getTodayDateStr(),
             },
           })
@@ -2245,7 +2255,12 @@ export default function ReservationView({
     const handleSidebarReservationNav = (evt: Event) => {
       const detail = (evt as CustomEvent)?.detail;
       if (detail?.segment) {
+        try {
+          sessionStorage.removeItem('pms_reservation_segment');
+        } catch {}
         setSegmentFilter(detail.segment as 'All' | ReservationSegment);
+        setStatusFilter('All');
+        setDateFilterType('All');
         if (detail.segment === 'Group') {
           setIsMultiRoomMode(true);
           setNumberOfRooms((prev) => Math.max(2, prev));
@@ -2402,10 +2417,16 @@ export default function ReservationView({
     const yesterdayStr = getFutureDateStr(-1);
     const thisMonthPrefix = todayStr.slice(0, 7);
 
+    const isEventSegmentView = segmentFilter === 'Event / Banquet';
     const list = enrichedReservations.filter(item => {
       // Reservations List shows ONLY actual reservations (Draft, Confirmed, Upcoming, Cancelled, No-Show).
-      // Once checked in or checked out, stays move cleanly to In-House Guest / Checked Out Rooms.
-      if (
+      // Exception: In dedicated Event Bookings view, also show active Checked-In Event bookings
+      // (and Checked-Out when explicitly filtered) so Event stays never disappear from Event Bookings.
+      if (isEventSegmentView) {
+        if (item.canonicalStatus === 'Checked-Out' && statusFilter !== 'Checked-Out') {
+          return false;
+        }
+      } else if (
         item.isStandaloneCheckin ||
         item.canonicalStatus === 'Checked-In' ||
         item.canonicalStatus === 'Checked-Out'
@@ -2422,6 +2443,9 @@ export default function ReservationView({
         String(bk.roomNumber || '').toLowerCase().includes(q) ||
         String(bk.companyName || '').toLowerCase().includes(q) ||
         String(bk.groupName || '').toLowerCase().includes(q) ||
+        String((bk as any).eventVenueName || '').toLowerCase().includes(q) ||
+        String((bk as any).bookingType || '').toLowerCase().includes(q) ||
+        String((bk as any).specialRequests || '').toLowerCase().includes(q) ||
         String(bk.travelAgentName || '').toLowerCase().includes(q) ||
         String(bk.voucherNumber || '').toLowerCase().includes(q);
 
@@ -3169,6 +3193,13 @@ export default function ReservationView({
 
   const renderSourceIconBadge = (source: string, primarySegment: ReservationSegment) => {
     const lower = String(source || '').toLowerCase();
+    if (primarySegment === 'Event / Banquet') {
+      return (
+        <div className="w-7 h-7 rounded-lg bg-purple-900 text-[#F3D078] flex items-center justify-center shrink-0 shadow-2xs">
+          <Sparkles className="w-3.5 h-3.5" />
+        </div>
+      );
+    }
     if (primarySegment === 'Corporate' || lower === 'corporate') {
       return (
         <div className="w-7 h-7 rounded-lg bg-[#1E1610] text-[#F3D078] flex items-center justify-center shrink-0 shadow-2xs">
@@ -3532,14 +3563,45 @@ export default function ReservationView({
         <div>
           <div className="flex items-center gap-2.5 flex-wrap">
             <h1 className="text-2xl font-serif text-luxury-brown-950 font-bold tracking-tight">
-              Reservations List
+              {segmentFilter === 'Event / Banquet'
+                ? 'Event & Banquet Bookings'
+                : segmentFilter === 'Group'
+                ? 'Group Bookings'
+                : 'Reservations List'}
             </h1>
-            <span className="text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-[#FBF4E0] text-[#8B691E] border border-[#C49A3A]/40">
-              {totalItems} {totalItems === 1 ? 'Reservation' : 'Reservations'}
+            <span
+              className={`text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-full border ${
+                segmentFilter === 'Event / Banquet'
+                  ? 'bg-purple-50 text-purple-800 border-purple-200'
+                  : 'bg-[#FBF4E0] text-[#8B691E] border-[#C49A3A]/40'
+              }`}
+            >
+              {totalItems}{' '}
+              {segmentFilter === 'Event / Banquet'
+                ? totalItems === 1
+                  ? 'Event Booking'
+                  : 'Event Bookings'
+                : totalItems === 1
+                ? 'Reservation'
+                : 'Reservations'}
             </span>
+            {segmentFilter !== 'All' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSegmentFilter('All');
+                  setStatusFilter('All');
+                }}
+                className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 cursor-pointer"
+              >
+                Show All Reservations
+              </button>
+            )}
           </div>
           <p className="text-xs text-luxury-brown-500 mt-0.5">
-            Individual, Group, Corporate, Walk-in, OTA &amp; Travel Agent bookings synced live with Stay Overview &amp; Folio
+            {segmentFilter === 'Event / Banquet'
+              ? 'Banquet halls, weddings, conferences & multi-room event blocks (upcoming & active in-house) synced live with Folio'
+              : 'Individual, Group, Event / Banquet, Corporate, Walk-in, OTA & Travel Agent bookings synced live with Stay Overview & Folio'}
           </p>
         </div>
 
@@ -3550,7 +3612,13 @@ export default function ReservationView({
             className="px-4 py-2 bg-[#C49A3A] hover:bg-[#b0882e] text-[#17120F] font-bold rounded-xl text-xs sm:text-sm transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>New Reservation</span>
+            <span>
+              {segmentFilter === 'Event / Banquet'
+                ? 'New Event Booking'
+                : segmentFilter === 'Group'
+                ? 'New Group Booking'
+                : 'New Reservation'}
+            </span>
           </button>
 
           {onOpenCalendar && (
@@ -3869,6 +3937,7 @@ export default function ReservationView({
             <option value="All">All Types</option>
             <option value="Individual">Individual</option>
             <option value="Group">Group Booking</option>
+            <option value="Event / Banquet">Event / Banquet</option>
             <option value="Corporate">Corporate</option>
             <option value="Walk-in">Walk-in</option>
             <option value="OTA">OTA</option>
@@ -3885,6 +3954,8 @@ export default function ReservationView({
             <option value="Draft">Draft</option>
             <option value="Confirmed">Confirmed</option>
             <option value="Upcoming">Upcoming</option>
+            {segmentFilter === 'Event / Banquet' && <option value="Checked-In">Checked-In</option>}
+            {segmentFilter === 'Event / Banquet' && <option value="Checked-Out">Checked-Out</option>}
             <option value="Cancelled">Cancelled</option>
             <option value="No-Show">No-Show</option>
           </select>
@@ -3925,14 +3996,31 @@ export default function ReservationView({
           </div>
 
           {paginatedReservations.length === 0 ? (
-            <div className="bg-white border border-luxury-brown-100 rounded-2xl p-12 text-center space-y-2 shadow-2xs">
+            <div className="bg-white border border-luxury-brown-100 rounded-2xl p-12 text-center space-y-2.5 shadow-2xs">
               <CalendarCheck className="w-10 h-10 text-luxury-brown-300 mx-auto" />
-              <div className="text-sm font-bold text-luxury-brown-800">No reservations match your active filters</div>
-              <p className="text-xs text-slate-500">Try clearing the search query, status filter, or date range.</p>
+              <div className="text-sm font-bold text-luxury-brown-800">
+                {segmentFilter === 'Event / Banquet'
+                  ? 'No Event / Banquet bookings match your active filters'
+                  : 'No reservations match your active filters'}
+              </div>
+              <p className="text-xs text-slate-500">
+                Try clearing the search query, status filter, or date range.
+              </p>
+              {segmentFilter === 'Event / Banquet' && (
+                <button
+                  type="button"
+                  onClick={handleNewBookingClick}
+                  className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#C49A3A] hover:bg-[#b0882e] text-[#17120F] text-xs font-bold shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Event Booking</span>
+                </button>
+              )}
             </div>
           ) : (
             paginatedReservations.map(item => {
               const bk = item.booking;
+              const eventVenueLabel = extractEventVenueLabel(bk);
               const inTimeStr = formatDisplayTime12h(bk.checkInTime, hotelSettings?.checkInTime || '12:00 PM');
               const outTimeStr = formatDisplayTime12h(bk.checkOutTime, hotelSettings?.checkOutTime || '11:00 AM');
               return (
@@ -3958,11 +4046,22 @@ export default function ReservationView({
                           {item.paxLabel}
                         </span>
                         {item.primarySegment !== 'Individual' && (
-                          <span className="px-1.5 py-0.5 rounded bg-[#FBF4E0] text-[#8B691E] border border-[#C49A3A]/30 text-[10px] font-bold">
+                          <span
+                            className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${
+                              item.primarySegment === 'Event / Banquet'
+                                ? 'bg-purple-50 text-purple-800 border-purple-200'
+                                : 'bg-[#FBF4E0] text-[#8B691E] border-[#C49A3A]/30'
+                            }`}
+                          >
                             {item.primarySegment}
                           </span>
                         )}
                       </div>
+                      {eventVenueLabel && (
+                        <div className="text-[10.5px] font-semibold text-purple-800 truncate" title={eventVenueLabel}>
+                          Venue / Event: {eventVenueLabel}
+                        </div>
+                      )}
                       <div className="text-[10px] font-mono text-slate-400 truncate">#{bk.id}</div>
                     </div>
 
@@ -4104,9 +4203,20 @@ export default function ReservationView({
                         <BedDouble className="w-3.5 h-3.5" />
                         {item.displayRoomsLabel} • {item.categoryLabel}
                       </span>
-                      <span className="px-2 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold">
+                      <span
+                        className={`px-2 py-1 rounded-lg font-semibold ${
+                          item.primarySegment === 'Event / Banquet'
+                            ? 'bg-purple-50 text-purple-800 border border-purple-200'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
                         {bk.bookingSource} ({item.primarySegment})
                       </span>
+                      {eventVenueLabel && (
+                        <span className="px-2 py-1 rounded-lg bg-purple-50/70 text-purple-900 border border-purple-200/70 font-semibold">
+                          Venue: {eventVenueLabel}
+                        </span>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 text-xs">
@@ -4174,6 +4284,7 @@ export default function ReservationView({
                 ) : (
                   paginatedReservations.map(item => {
                     const bk = item.booking;
+                    const eventVenueLabel = extractEventVenueLabel(bk);
                     return (
                       <tr
                         key={bk.id}
@@ -4182,7 +4293,18 @@ export default function ReservationView({
                       >
                         <td className="py-3 px-3 font-mono font-bold text-slate-800 whitespace-nowrap">
                           {bk.id}
-                          <div className="text-[10px] text-[#8B691E] font-sans">{item.primarySegment}</div>
+                          <div
+                            className={`text-[10px] font-sans font-bold ${
+                              item.primarySegment === 'Event / Banquet' ? 'text-purple-700' : 'text-[#8B691E]'
+                            }`}
+                          >
+                            {item.primarySegment}
+                          </div>
+                          {eventVenueLabel && (
+                            <div className="text-[10px] font-sans text-purple-800 truncate max-w-[150px]" title={eventVenueLabel}>
+                              {eventVenueLabel}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-3">
                           <div className="font-bold text-slate-900">{bk.guestName}</div>
@@ -4283,10 +4405,21 @@ export default function ReservationView({
                           </div>
                         </div>
                       </div>
-                      <span className="text-[10.5px] font-bold px-2 py-0.5 rounded bg-[#1E1610] text-[#F3D078] shrink-0">
+                      <span
+                        className={`text-[10.5px] font-bold px-2 py-0.5 rounded shrink-0 ${
+                          item.primarySegment === 'Event / Banquet'
+                            ? 'bg-purple-700 text-white'
+                            : 'bg-[#1E1610] text-[#F3D078]'
+                        }`}
+                      >
                         {item.primarySegment}
                       </span>
                     </div>
+                    {extractEventVenueLabel(bk) && (
+                      <div className="text-[11px] font-semibold text-purple-800 bg-purple-50 border border-purple-200/80 rounded-lg px-2.5 py-1 truncate">
+                        Venue / Event: {extractEventVenueLabel(bk)}
+                      </div>
+                    )}
 
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div className="bg-emerald-50/80 border border-emerald-200/80 rounded-xl p-2.5">
@@ -6398,6 +6531,14 @@ export default function ReservationView({
                         <span className="font-semibold text-indigo-800">
                           {activeViewingItem.booking.companyName}
                           {activeViewingItem.booking.gstNumber ? ` (${activeViewingItem.booking.gstNumber})` : ''}
+                        </span>
+                      </>
+                    )}
+                    {extractEventVenueLabel(activeViewingItem.booking) && (
+                      <>
+                        <span className="text-slate-500">Event / Venue:</span>
+                        <span className="font-semibold text-purple-800">
+                          {extractEventVenueLabel(activeViewingItem.booking)}
                         </span>
                       </>
                     )}

@@ -13,7 +13,7 @@ export interface SidebarNavTarget {
   openInNewTab?: boolean;
   /** Optional preset flags dispatched via sessionStorage + CustomEvent */
   openNewReservationModal?: boolean;
-  reservationSegment?: 'All' | 'Group' | 'Corporate' | 'Individual' | 'Walk-in' | 'OTA' | 'Travel Agent';
+  reservationSegment?: 'All' | 'Group' | 'Event / Banquet' | 'Corporate' | 'Individual' | 'Walk-in' | 'OTA' | 'Travel Agent';
   bookingCategory?: 'room' | 'event';
   profileSection?: 'general' | 'tax' | 'payment_mode' | 'whatsapp' | 'properties' | 'master' | 'shift' | 'coupons';
 }
@@ -109,8 +109,8 @@ export const DIRECTSTAY_PMS_SIDEBAR_TREE: SidebarMenuNode[] = [
         rbacTab: 'frontDesk',
         target: {
           activeTab: 'frontDesk',
-          frontDeskSubTab: 'walkin',
-          bookingCategory: 'event',
+          frontDeskSubTab: 'reservations',
+          reservationSegment: 'Event / Banquet',
         },
       },
       {
