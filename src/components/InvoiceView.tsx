@@ -8,7 +8,7 @@ import {
 } from './HybridSplitPaymentBox';
 import { Invoice, GuestCheckIn, Booking, UserRole, Room, PaymentRecord, ExtraCharge, HotelSettings } from '../types';
 import { showToast } from '../utils/toast';
-import { downloadHotelInvoicePdf, invoiceRecordToPrintHtml } from '../utils/pdfDownload';
+import { downloadHotelInvoicePdf, invoiceRecordToPrintHtml, extractDetailedFoodLinesForStay } from '../utils/pdfDownload';
 import { openPrintWindow } from '../utils/printDocument';
 import { openWhatsAppChat } from '../pms-integrated/utils/formatters';
 import { evaluateAndBuildInvoice, normalizeInvoiceConditions, deduplicateInvoicesByBooking } from '../utils/invoiceConditions';
@@ -34,6 +34,7 @@ interface InvoiceViewProps {
   bookings: Booking[];
   checkins: GuestCheckIn[];
   rooms: Room[];
+  posOrders?: any[];
   currentRole: UserRole;
   hotelSettings?: HotelSettings;
   onUpdateHotelSettings?: (updated: HotelSettings) => void;
@@ -51,6 +52,7 @@ export default function InvoiceView({
   bookings,
   checkins,
   rooms,
+  posOrders = [],
   currentRole,
   hotelSettings,
   onUpdateHotelSettings,
@@ -2111,7 +2113,7 @@ export default function InvoiceView({
                         </div>
                       </td>
                       <td className="p-3.5 text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5">
+                        <div className="inline-flex items-center gap-1.5 flex-wrap justify-end">
                           <button
                             type="button"
                             onClick={(e) => {
@@ -2123,18 +2125,85 @@ export default function InvoiceView({
                           >
                             <Edit className="w-3 h-3 text-[#C49A3A]" /> Edit
                           </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const matchedCheckin = checkins.find(c => c.id === inv.bookingId);
-                              downloadHotelInvoicePdf(inv, hotelSettings, matchedCheckin);
-                            }}
-                            className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-[#8B691E] border border-[#C49A3A]/60 rounded-lg text-[11px] font-bold whitespace-nowrap cursor-pointer inline-flex items-center gap-1"
-                            title="Download Invoice as PDF"
-                          >
-                            <Download className="w-3 h-3 text-[#C49A3A]" /> PDF
-                          </button>
+                          {(() => {
+                            const matchedCheckin =
+                              checkins.find(c => c.id === inv.checkInId || c.id === inv.bookingId || c.bookingId === inv.bookingId) || null;
+                            const matchedBooking = bookings.find(b => b.id === inv.bookingId) || null;
+                            const rowFoodItems = extractDetailedFoodLinesForStay({
+                              invoice: inv,
+                              checkinRecord: matchedCheckin,
+                              bookingRecord: matchedBooking,
+                              posOrders,
+                            });
+                            const rowHasFood =
+                              !(inv as any).isCreditNote &&
+                              ((Number(inv.foodCharges) || 0) > 0 ||
+                                (inv.ledgerLines || []).some(
+                                  l => l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || '')
+                                ) ||
+                                rowFoodItems.length > 0);
+                            if (!rowHasFood) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    downloadHotelInvoicePdf(inv, hotelSettings, matchedCheckin || undefined, matchedBooking || undefined);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-[#8B691E] border border-[#C49A3A]/60 rounded-lg text-[11px] font-bold whitespace-nowrap cursor-pointer inline-flex items-center gap-1"
+                                  title="Download Invoice as PDF"
+                                >
+                                  <Download className="w-3 h-3 text-[#C49A3A]" /> PDF
+                                </button>
+                              );
+                            }
+                            return (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openPrintWindow(
+                                      invoiceRecordToPrintHtml(inv, hotelSettings, matchedCheckin, matchedBooking, 'room_only', posOrders),
+                                      true
+                                    );
+                                  }}
+                                  className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-800 !text-white rounded-lg text-[11px] font-bold whitespace-nowrap cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                                  title="Print Room Bill Only (Zero Food details & ₹0 Food amount)"
+                                >
+                                  <Printer className="w-3 h-3" /> Room Bill
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openPrintWindow(
+                                      invoiceRecordToPrintHtml(inv, hotelSettings, matchedCheckin, matchedBooking, 'food_only', posOrders),
+                                      true
+                                    );
+                                  }}
+                                  className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 !text-white rounded-lg text-[11px] font-bold whitespace-nowrap cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                                  title="Print Separate Food Bill (All item-wise dishes & Food GST)"
+                                >
+                                  <UtensilsCrossed className="w-3 h-3" /> Food Bill
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openPrintWindow(
+                                      invoiceRecordToPrintHtml(inv, hotelSettings, matchedCheckin, matchedBooking, 'all', posOrders),
+                                      true
+                                    );
+                                  }}
+                                  className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-[#8B691E] border border-[#C49A3A]/70 rounded-lg text-[11px] font-bold whitespace-nowrap cursor-pointer inline-flex items-center gap-1"
+                                  title="Print Combined Room + Food Invoice"
+                                >
+                                  <Download className="w-3 h-3 text-[#C49A3A]" /> Combined
+                                </button>
+                              </>
+                            );
+                          })()}
                           <button 
                             type="button"
                             onClick={(e) => {
@@ -2506,40 +2575,67 @@ export default function InvoiceView({
                   </button>
                 </div>
 
-                {((Number(selectedInvoice.foodCharges) || 0) > 0 || (selectedInvoice.ledgerLines || []).some(l => l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || ''))) && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const matchedCheckin = checkins.find(c => c.id === selectedInvoice.bookingId) || null;
-                        const matchedBooking = bookings.find(b => b.id === selectedInvoice.bookingId) || null;
-                        openPrintWindow(
-                          invoiceRecordToPrintHtml(selectedInvoice, hotelSettings, matchedCheckin, matchedBooking, 'food_only'),
-                          true
-                        );
-                      }}
-                      className="p-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-                      title="Print Food & Beverage charges on a separate official invoice"
-                    >
-                      <UtensilsCrossed className="w-3.5 h-3.5" /> Print Separate Food Bill
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const matchedCheckin = checkins.find(c => c.id === selectedInvoice.bookingId) || null;
-                        const matchedBooking = bookings.find(b => b.id === selectedInvoice.bookingId) || null;
-                        openPrintWindow(
-                          invoiceRecordToPrintHtml(selectedInvoice, hotelSettings, matchedCheckin, matchedBooking, 'room_only'),
-                          true
-                        );
-                      }}
-                      className="p-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-                      title="Print Room Charges only (without Food charges)"
-                    >
-                      <Printer className="w-3.5 h-3.5" /> Print Room Bill (Excl. Food)
-                    </button>
-                  </div>
-                )}
+                {(() => {
+                  const selCheckin =
+                    checkins.find(c => c.id === selectedInvoice.checkInId || c.id === selectedInvoice.bookingId || c.bookingId === selectedInvoice.bookingId) || null;
+                  const selBooking = bookings.find(b => b.id === selectedInvoice.bookingId) || null;
+                  const selFoodItems = extractDetailedFoodLinesForStay({
+                    invoice: selectedInvoice,
+                    checkinRecord: selCheckin,
+                    bookingRecord: selBooking,
+                    posOrders,
+                  });
+                  const hasFood =
+                    (Number(selectedInvoice.foodCharges) || 0) > 0 ||
+                    (selectedInvoice.ledgerLines || []).some(
+                      l => l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || '')
+                    ) ||
+                    selFoodItems.length > 0;
+                  if (!hasFood) return null;
+                  return (
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openPrintWindow(
+                            invoiceRecordToPrintHtml(selectedInvoice, hotelSettings, selCheckin, selBooking, 'room_only', posOrders),
+                            true
+                          );
+                        }}
+                        className="p-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 shadow-sm transition-colors cursor-pointer"
+                        title="Print Room Charges only (Zero Food details & ₹0 Food amount)"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> Room Bill
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openPrintWindow(
+                            invoiceRecordToPrintHtml(selectedInvoice, hotelSettings, selCheckin, selBooking, 'food_only', posOrders),
+                            true
+                          );
+                        }}
+                        className="p-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 shadow-sm transition-colors cursor-pointer"
+                        title="Print Separate Food Bill (All item-wise dishes & Food GST)"
+                      >
+                        <UtensilsCrossed className="w-3.5 h-3.5" /> Food Bill
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openPrintWindow(
+                            invoiceRecordToPrintHtml(selectedInvoice, hotelSettings, selCheckin, selBooking, 'all', posOrders),
+                            true
+                          );
+                        }}
+                        className="p-2 bg-[#17120F] hover:bg-[#2A211B] text-[#E0BD6B] rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 shadow-sm transition-colors cursor-pointer"
+                        title="Print Combined Room + Food Invoice"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Combined
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 <div className="grid grid-cols-2 gap-2">
                   <button

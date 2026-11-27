@@ -5467,6 +5467,7 @@ export default function FrontDeskView({
           bookings={bookings}
           checkins={checkins}
           rooms={rooms}
+          posOrders={posOrders}
           currentRole={currentRole}
           hotelSettings={hotelSettings}
           onUpdateHotelSettings={onUpdateHotelSettings}

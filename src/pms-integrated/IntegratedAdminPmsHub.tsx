@@ -5022,6 +5022,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           invoices={invoices}
           bookings={bookings}
           billSettings={billSettings}
+          hotelSettings={hotelSettings}
           appBookings={appBookings}
           appCheckins={appCheckins}
           posOrders={appPosOrders}

@@ -11,6 +11,7 @@ import {
   Lock,
   Calendar,
   Eye,
+  UtensilsCrossed,
 } from 'lucide-react';
 import { BookingRecord, InvoiceRecord, InvoiceScope } from '../types';
 import { formatCurrency } from '../utils/formatters';
@@ -24,10 +25,16 @@ import {
 } from '../../utils/billCalculator';
 import {
   buildStayBill,
+  buildInvoiceRecord,
   isActiveInvoice,
   reconcileScopedStayInvoice,
   resolveInvoiceScope,
 } from '../../utils/stayBilling';
+import {
+  invoiceRecordToPrintHtml,
+  extractDetailedFoodLinesForStay,
+} from '../../utils/pdfDownload';
+import { openPrintWindow } from '../../utils/printDocument';
 
 interface InvoiceModuleProps {
   activeSubTab: string;
@@ -35,6 +42,7 @@ interface InvoiceModuleProps {
   invoices: InvoiceRecord[];
   bookings: BookingRecord[];
   billSettings?: BillSettings;
+  hotelSettings?: Record<string, any>;
   appBookings?: Record<string, any>[];
   appCheckins?: Record<string, any>[];
   posOrders?: Record<string, any>[];
@@ -151,6 +159,7 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
   invoices,
   bookings,
   billSettings,
+  hotelSettings,
   appBookings = [],
   appCheckins = [],
   posOrders = [],
@@ -1219,31 +1228,145 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                 <Eye className="w-3.5 h-3.5 text-slate-600" />
                                 View
                               </button>
-                              {isFolioRow && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    onOpenInvoiceModal(bookingForModal, 'Only Booking', undefined)
-                                  }
-                                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 font-semibold text-[11px] cursor-pointer"
-                                >
-                                  Room Only
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  onOpenInvoiceModal(
-                                    bookingForModal,
-                                    displayScope,
-                                    isFolioRow ? undefined : inv
+                              {(() => {
+                                const rawAppBkg =
+                                  appBookings.find((b) => String(b?.id || '') === String(inv.bookingId || '')) || null;
+                                const rawAppCk =
+                                  appCheckins.find(
+                                    (c) =>
+                                      String(c?.id || '') === String(inv.bookingId || '') ||
+                                      String(c?.bookingId || '') === String(inv.bookingId || '')
+                                  ) || null;
+                                const foodItemsDetected = extractDetailedFoodLinesForStay({
+                                  invoice: inv as any,
+                                  checkinRecord: rawAppCk as any,
+                                  bookingRecord: rawAppBkg as any,
+                                  posOrders,
+                                });
+                                const hasFoodInServices = serviceList.some((srv) =>
+                                  /food|room service|restaurant|pos|dining|f&b/i.test(
+                                    `${srv.serviceType || ''} ${srv.description || ''} ${srv.itemsSummary || ''}`
                                   )
+                                );
+                                const hasFoodForRow =
+                                  !isRowCreditNote &&
+                                  (Number((inv as any).foodCharges || 0) > 0 ||
+                                    hasFoodInServices ||
+                                    foodItemsDetected.length > 0);
+
+                                const printScopedPdf = (filterKind: 'all' | 'room_only' | 'food_only') => {
+                                  const liveStay = buildStayBill({
+                                    booking: (rawAppBkg || bookingForModal) as any,
+                                    checkin: rawAppCk as any,
+                                    posOrders: posOrders as any,
+                                    laundryOrders: laundryOrders as any,
+                                    waterBottles: waterBottles as any,
+                                    rooms: rooms as any,
+                                    settings,
+                                    gstEnabledOverride: hasGst,
+                                  });
+                                  const printableInv = buildInvoiceRecord({
+                                    id: inv.id,
+                                    invoiceNumber: inv.invoiceNumber,
+                                    hotelId: (hotelSettings as any)?.id || 'hotel-1',
+                                    bookingId: inv.bookingId,
+                                    checkInId: String((rawAppCk as any)?.id || inv.bookingId),
+                                    guestName: inv.customerName,
+                                    guestMobile: inv.mobile || '',
+                                    companyName: inv.companyName,
+                                    guestGstNumber: inv.gstNumber,
+                                    roomNumbers: inv.roomNumbers || bookingForModal.roomNumbers || [],
+                                    checkInDate: bookingForModal.checkInDate,
+                                    checkOutDate: bookingForModal.checkOutDate,
+                                    nights: bookingForModal.nights || 1,
+                                    bill: liveStay.bill,
+                                    paymentMethod: (inv.paymentMethod as any) || 'UPI',
+                                    dateCreated: inv.createdAt || new Date().toISOString().slice(0, 10),
+                                    invoiceStatus: isFolioRow ? 'Generated' : 'Finalized',
+                                  });
+                                  openPrintWindow(
+                                    invoiceRecordToPrintHtml(
+                                      { ...(printableInv as any), isWithoutGst: !hasGst },
+                                      (hotelSettings || settings) as any,
+                                      rawAppCk as any,
+                                      rawAppBkg as any,
+                                      filterKind,
+                                      posOrders
+                                    ),
+                                    true
+                                  );
+                                };
+
+                                if (hasFoodForRow) {
+                                  return (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => printScopedPdf('room_only')}
+                                        className="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-800 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                                        title="Print Room Bill Only (Zero Food details & ₹0 Food amount)"
+                                      >
+                                        <Printer className="w-3 h-3" />
+                                        Room Bill
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => printScopedPdf('food_only')}
+                                        className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                                        title="Print Separate Food Bill (All item-wise dishes & Food GST)"
+                                      >
+                                        <UtensilsCrossed className="w-3 h-3" />
+                                        Food Bill
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          onOpenInvoiceModal(
+                                            bookingForModal,
+                                            'Booking + Other Services',
+                                            isFolioRow ? undefined : inv
+                                          )
+                                        }
+                                        className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                                        title="Print Combined Room + Food Tax Invoice"
+                                      >
+                                        <Download className="w-3 h-3" />
+                                        Combined Bill
+                                      </button>
+                                    </>
+                                  );
                                 }
-                                className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
-                              >
-                                <Download className="w-3 h-3" />
-                                {hasGst ? 'Print Tax Invoice' : 'Print Bill PDF'}
-                              </button>
+
+                                return (
+                                  <>
+                                    {isFolioRow && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          onOpenInvoiceModal(bookingForModal, 'Only Booking', undefined)
+                                        }
+                                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 font-semibold text-[11px] cursor-pointer"
+                                      >
+                                        Room Only
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onOpenInvoiceModal(
+                                          bookingForModal,
+                                          displayScope,
+                                          isFolioRow ? undefined : inv
+                                        )
+                                      }
+                                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <Download className="w-3 h-3" />
+                                      {hasGst ? 'Print Tax Invoice' : 'Print Bill PDF'}
+                                    </button>
+                                  </>
+                                );
+                              })()}
                               {onCreateSeparateInvoice && linkedBooking && (
                                 <button
                                   type="button"

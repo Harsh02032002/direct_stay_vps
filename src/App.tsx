@@ -3903,6 +3903,7 @@ export default function App() {
             bookings={bookings}
             checkins={checkins}
             rooms={rooms}
+            posOrders={rawPosOrders.filter(p => (p.hotelId || 'hotel-1') === effectiveTenantHotelId)}
             currentRole={currentRole}
             hotelSettings={hotelSettings}
             onUpdateHotelSettings={handleUpdateHotelSettings}
