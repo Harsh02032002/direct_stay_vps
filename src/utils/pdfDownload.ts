@@ -473,22 +473,211 @@ function buildBillResultFromInvoice(
  * Renders any stored Guest Invoice record into the exact client PDF HTML replica
  * ("HOTEL M M PRESTIGE" Tax Invoice / Bill of Supply ledger layout).
  */
+const FOOD_LINE_REGEX =
+  /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill|Room Service|KOT|Restaurant Order|Dining|F&B/i;
+
+export interface DetailedFoodItemLine {
+  dateLabel: string;
+  orderNo: string;
+  itemName: string;
+  qty: number;
+  rate: number;
+  amount: number;
+  description: string;
+}
+
+/**
+ * Extracts item-wise Food & Beverage details from linked POS orders and manual food extra charges
+ * so Separate Food Bills show every ordered dish (Name, Qty, Rate, Amount).
+ */
+export function extractDetailedFoodLinesForStay(params: {
+  invoice?: Partial<Invoice> | null;
+  checkinRecord?: GuestCheckIn | null;
+  bookingRecord?: Booking | null;
+  posOrders?: any[];
+}): DetailedFoodItemLine[] {
+  const { invoice, checkinRecord, bookingRecord, posOrders = [] } = params;
+  const stayIds = new Set(
+    [
+      invoice?.bookingId,
+      invoice?.checkInId,
+      (invoice as any)?.checkinId,
+      checkinRecord?.id,
+      checkinRecord?.bookingId,
+      bookingRecord?.id,
+    ]
+      .filter(Boolean)
+      .map(String)
+  );
+  const stayRoomNums = new Set(
+    [
+      invoice?.roomNumber,
+      ...(Array.isArray(invoice?.roomNumbers) ? invoice!.roomNumbers : []),
+      checkinRecord?.roomNumber,
+      ...(Array.isArray(checkinRecord?.bookedRooms) ? checkinRecord!.bookedRooms.map((r) => r.roomNumber) : []),
+      bookingRecord?.roomNumber,
+    ]
+      .filter(Boolean)
+      .map((r) => String(r).trim())
+  );
+  const checkInIso = String(checkinRecord?.checkInDate || invoice?.checkInDate || bookingRecord?.checkInDate || '').slice(0, 10);
+  const checkOutIso = String(checkinRecord?.checkOutDate || invoice?.checkOutDate || bookingRecord?.checkOutDate || '').slice(0, 10);
+
+  const detailed: DetailedFoodItemLine[] = [];
+  const coveredOrderIds = new Set<string>();
+
+  for (const po of posOrders || []) {
+    if (!po) continue;
+    const st = String(po.status || '').toLowerCase();
+    if (st === 'cancelled' || st === 'voided' || st === 'held' || po.isHeld) continue;
+    const isRoomBilled =
+      po.orderType === 'Room Charge' ||
+      po.paymentMethod === 'Room Charge' ||
+      po.paymentStatus === 'Posted to Room';
+    if (!isRoomBilled) continue;
+
+    const poCkId = String(po.checkInId || po.checkinId || '');
+    const poBkgId = String(po.bookingId || '');
+    const poRoom = String(po.roomNumber || '').trim();
+    const poDate = String(po.date || po.createdAt || po.orderTime || po.timestamp || '').slice(0, 10);
+
+    const matchedById = (poCkId && stayIds.has(poCkId)) || (poBkgId && stayIds.has(poBkgId));
+    const matchedByRoomDate =
+      !poCkId &&
+      !poBkgId &&
+      poRoom &&
+      stayRoomNums.has(poRoom) &&
+      (!checkInIso || !poDate || poDate >= checkInIso) &&
+      (!checkOutIso || !poDate || poDate <= checkOutIso);
+
+    if (!matchedById && !matchedByRoomDate) continue;
+    if (po.id) coveredOrderIds.add(String(po.id));
+
+    const orderNo = String(po.orderNumber || po.kotNumber || po.id || 'POS');
+    const dateLabel = formatDateLabel(poDate || checkInIso);
+    const items: any[] = Array.isArray(po.items) ? po.items : [];
+    const orderDisc = Math.max(0, Number(po.discount || 0));
+    const rawItemsSum = items.reduce(
+      (s, it) => s + (Math.max(1, Number(it?.quantity ?? it?.qty ?? 1)) * Math.max(0, Number(it?.price ?? it?.rate ?? 0))),
+      0
+    );
+
+    if (items.length > 0) {
+      items.forEach((it) => {
+        const qty = Math.max(1, Number(it?.quantity ?? it?.qty ?? 1));
+        const rate = Math.max(0, Number(it?.price ?? it?.rate ?? 0));
+        const gross = r2(qty * rate);
+        const shareDisc = orderDisc > 0 && rawItemsSum > 0 ? r2((gross / rawItemsSum) * orderDisc) : 0;
+        const netAmt = Math.max(0, r2(gross - shareDisc));
+        const itemName = String(it?.name || it?.itemName || 'Food Item').trim();
+        detailed.push({
+          dateLabel,
+          orderNo,
+          itemName,
+          qty,
+          rate,
+          amount: netAmt,
+          description: `${itemName} (${qty} × ₹${rate.toFixed(2)}) [Order #${orderNo}]`,
+        });
+      });
+    } else {
+      const preTax =
+        Number(po.subtotal) > 0
+          ? Math.max(0, r2(Number(po.subtotal) - orderDisc))
+          : Math.max(0, r2((Number(po.grandTotal) || 0) - (Number(po.taxAmount) || 0)));
+      if (preTax > 0) {
+        detailed.push({
+          dateLabel,
+          orderNo,
+          itemName: `Restaurant Order #${orderNo}`,
+          qty: 1,
+          rate: preTax,
+          amount: preTax,
+          description: `Restaurant Order #${orderNo}`,
+        });
+      }
+    }
+  }
+
+  // Include manual non-POS food extra charges on checkinRecord (not already covered by POS orders)
+  const extraCharges: any[] = Array.isArray(checkinRecord?.extraCharges) ? checkinRecord!.extraCharges : [];
+  for (const ec of extraCharges) {
+    if (!ec) continue;
+    const cat = String(ec.category || '').toLowerCase();
+    const desc = String(ec.description || '');
+    const isFood =
+      cat === 'food' ||
+      cat === 'restaurant' ||
+      cat === 'room service' ||
+      cat === 'f&b' ||
+      FOOD_LINE_REGEX.test(desc);
+    if (!isFood) continue;
+    const srcId = String(ec.sourceId || '');
+    const ecId = String(ec.id || '');
+    const linkedPosId = ecId.startsWith('EC-POS-') ? ecId.replace(/^EC-POS-/, '') : srcId;
+    if (linkedPosId && coveredOrderIds.has(linkedPosId)) continue;
+    const amt = r2(Number(ec.amount || 0));
+    if (amt <= 0) continue;
+    detailed.push({
+      dateLabel: formatDateLabel(String(ec.date || ec.dateTime || checkInIso).slice(0, 10)),
+      orderNo: ec.id || 'FOOD',
+      itemName: desc || 'Food & Beverage',
+      qty: 1,
+      rate: amt,
+      amount: amt,
+      description: desc || 'Food & Beverage Service',
+    });
+  }
+
+  return detailed;
+}
+
 export function invoiceRecordToPrintHtml(
   invoice: Invoice,
   hotelSettings?: Partial<HotelSettings> | Record<string, any> | null,
   checkinRecord?: GuestCheckIn | null,
   bookingRecord?: Booking | null,
-  filterKind: 'all' | 'room_only' | 'food_only' = 'all'
+  filterKind: 'all' | 'room_only' | 'food_only' = 'all',
+  posOrders?: any[]
 ): string {
   let bill = buildBillResultFromInvoice(invoice, hotelSettings as Partial<HotelSettings>, checkinRecord);
   let docTitle: string | undefined = undefined;
+  const fallbackRoomNo = String(
+    invoice.roomNumber || checkinRecord?.roomNumber || bookingRecord?.roomNumber || ''
+  );
 
   if (filterKind === 'food_only') {
-    const foodLines = bill.lines.filter(
-      (l) => l.type !== 'receipt' && (l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || ''))
+    const detailedFoodItems = extractDetailedFoodLinesForStay({
+      invoice,
+      checkinRecord,
+      bookingRecord,
+      posOrders,
+    });
+    const existingFoodLines = bill.lines.filter(
+      (l) =>
+        l.type !== 'receipt' &&
+        l.type !== 'tax' &&
+        (l.kind === 'food' || FOOD_LINE_REGEX.test(l.description || ''))
     );
+    const foodLines: BillLedgerLine[] =
+      detailedFoodItems.length > 0
+        ? detailedFoodItems.map((it) => ({
+            type: 'charge' as const,
+            kind: 'food' as const,
+            dateLabel: it.dateLabel,
+            roomNumber: fallbackRoomNo,
+            description: it.description,
+            sac: '996331',
+            charges: it.amount,
+            receipts: 0,
+          }))
+        : existingFoodLines;
+
     const foodTaxable = r2(foodLines.reduce((acc, l) => acc + (Number(l.charges) || 0), 0));
-    const foodGstPct = invoice.isWithoutGst === true ? 0 : Number(hotelSettings?.foodGstRate ?? hotelSettings?.defaultGstRate ?? 5) || 5;
+    const foodGstPct =
+      invoice.isWithoutGst === true
+        ? 0
+        : Number(hotelSettings?.foodGstRate ?? hotelSettings?.defaultGstRate ?? 5) || 5;
     const foodTax = foodGstPct > 0 ? r2((foodTaxable * foodGstPct) / 100) : 0;
     const foodCgst = r2(foodTax / 2);
     const foodSgst = r2(foodTax - foodCgst);
@@ -500,26 +689,38 @@ export function invoiceRecordToPrintHtml(
       chargeLines: foodLines,
       taxableAmount: foodTaxable,
       subtotal: foodTaxable,
+      netSubtotal: foodTaxable,
       discount: 0,
       cgst: foodCgst,
       sgst: foodSgst,
       totalTax: foodTax,
       grandTotal: foodGrandTotal,
+      amountInWords: amountToIndianWords(foodGrandTotal),
       receipts: foodGrandTotal,
       balance: 0,
       refundDue: 0,
       paymentStatus: 'Paid',
-      taxRows: foodGstPct > 0 ? [{ rate: foodGstPct, taxable: foodTaxable, cgst: foodCgst, sgst: foodSgst, tax: foodTax }] : [],
+      taxRows:
+        foodGstPct > 0
+          ? [{ rate: foodGstPct, taxable: foodTaxable, cgst: foodCgst, sgst: foodSgst, tax: foodTax }]
+          : [],
     };
     docTitle = foodGstPct > 0 ? 'RESTAURANT & FOOD TAX INVOICE' : 'RESTAURANT & FOOD BILL OF SUPPLY';
   } else if (filterKind === 'room_only') {
     const nonFoodLines = bill.lines.filter(
-      (l) => l.type !== 'receipt' && !(l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(l.description || ''))
+      (l) =>
+        l.type !== 'receipt' &&
+        l.type !== 'tax' &&
+        l.kind !== 'food' &&
+        !FOOD_LINE_REGEX.test(l.description || '')
     );
     const roomTaxable = r2(nonFoodLines.reduce((acc, l) => acc + (Number(l.charges) || 0), 0));
     const roomDiscount = Math.min(roomTaxable, r2(Number(invoice.discount || 0)));
     const netRoomTaxable = Math.max(0, r2(roomTaxable - roomDiscount));
-    const roomGstPct = invoice.isWithoutGst === true ? 0 : Number(invoice.gstRate ?? hotelSettings?.defaultGstRate ?? 5) || 5;
+    const roomGstPct =
+      invoice.isWithoutGst === true
+        ? 0
+        : Number(invoice.gstRate ?? hotelSettings?.defaultGstRate ?? 5) || 5;
     const roomTax = roomGstPct > 0 ? r2((netRoomTaxable * roomGstPct) / 100) : 0;
     const roomCgst = r2(roomTax / 2);
     const roomSgst = r2(roomTax - roomCgst);
@@ -531,14 +732,19 @@ export function invoiceRecordToPrintHtml(
       chargeLines: nonFoodLines,
       taxableAmount: netRoomTaxable,
       subtotal: roomTaxable,
+      netSubtotal: netRoomTaxable,
       discount: roomDiscount,
       cgst: roomCgst,
       sgst: roomSgst,
       totalTax: roomTax,
       grandTotal: roomGrandTotal,
+      amountInWords: amountToIndianWords(roomGrandTotal),
       receipts: Math.min(roomGrandTotal, bill.receipts),
       balance: Math.max(0, r2(roomGrandTotal - Math.min(roomGrandTotal, bill.receipts))),
-      taxRows: roomGstPct > 0 ? [{ rate: roomGstPct, taxable: netRoomTaxable, cgst: roomCgst, sgst: roomSgst, tax: roomTax }] : [],
+      taxRows:
+        roomGstPct > 0
+          ? [{ rate: roomGstPct, taxable: netRoomTaxable, cgst: roomCgst, sgst: roomSgst, tax: roomTax }]
+          : [],
     };
     docTitle = roomGstPct > 0 ? 'ROOM TARIFF TAX INVOICE' : 'ROOM TARIFF BILL OF SUPPLY';
   }

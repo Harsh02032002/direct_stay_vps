@@ -29,7 +29,7 @@ import {
 } from '../utils/stayBilling';
 import { defaultGrcTerms, renderGrcHtml } from '../utils/printTemplates';
 import { openPrintWindow } from '../utils/printDocument';
-import { invoiceRecordToPrintHtml } from '../utils/pdfDownload';
+import { invoiceRecordToPrintHtml, extractDetailedFoodLinesForStay } from '../utils/pdfDownload';
 import TodayBookingsView from './TodayBookingsView';
 import ReservationView from './ReservationView';
 import CheckInFormView from './CheckInFormView';
@@ -618,6 +618,9 @@ export default function FrontDeskView({
   const [editGuestAdvance, setEditGuestAdvance] = useState(0);
   const [editGuestCompanyName, setEditGuestCompanyName] = useState('');
   const [editGuestGstNumber, setEditGuestGstNumber] = useState('');
+  const [editGuestBookingType, setEditGuestBookingType] = useState<'Individual' | 'Group' | 'Corporate' | 'Event / Banquet'>('Individual');
+  const [editGuestBookingSource, setEditGuestBookingSource] = useState<string>('Walk-in');
+  const [coSplitFoodBill, setCoSplitFoodBill] = useState<boolean>(false);
   const [editGuestHasExtraBed, setEditGuestHasExtraBed] = useState(false);
   const [editGuestExtraBedCount, setEditGuestExtraBedCount] = useState(1);
   const [editGuestExtraBedRate, setEditGuestExtraBedRate] = useState(500);
@@ -755,6 +758,7 @@ export default function FrontDeskView({
     setCoMinibarVerified(true);
     setCoLinenVerified(true);
     setCoOv({});
+    setCoSplitFoodBill(false);
     const initialCalc = computeConfirmGuestFinancials(guest, 0);
     setCoMarkPaid(initialCalc.balanceDue <= 0);
     setCoSplitTarget(initialCalc.balanceDue <= 0 && initialCalc.alreadyPaid > 0 ? 'advance' : 'checkout');
@@ -1527,12 +1531,146 @@ export default function FrontDeskView({
             (!inv.isSeparateInvoice && inv.bookingId && inv.bookingId === finalInvoice.bookingId))
       );
 
-    const nextInvoices = deduplicateInvoicesByBooking(
-      invoices.some(matchesActiveTargetInv)
-        ? invoices.map(inv => (matchesActiveTargetInv(inv) ? finalInvoice : inv))
-        : [finalInvoice, ...invoices]
-    );
-    onUpdateInvoices(nextInvoices);
+    let invoicesToSaveList: Invoice[] = [];
+    if (coSplitFoodBill && calc.foodSum > 0) {
+      // SPLIT CHECKOUT: Generate 2 clean separated invoices — Room-Only (zero food) + Food-Only (item-wise food)
+      const nonFoodCharges = calc.charges.filter((c) => c.kind !== 'food');
+      const detailedFoodItems = extractDetailedFoodLinesForStay({
+        invoice: finalInvoice,
+        checkinRecord: finalizedGuest,
+        bookingRecord: matchedBooking,
+        posOrders,
+      });
+      const foodOnlyCharges: BillCharge[] =
+        detailedFoodItems.length > 0
+          ? detailedFoodItems.map((it, idx) => ({
+              id: `food-split-${finalizedGuest.id}-${idx}`,
+              kind: 'food' as const,
+              description: it.description,
+              amount: it.amount,
+              date: it.dateLabel,
+              roomNumber: finalizedGuest.roomNumber,
+            }))
+          : [
+              {
+                id: `food-split-${finalizedGuest.id}-0`,
+                kind: 'food' as const,
+                description: 'Restaurant & Food Charges',
+                amount: calc.foodSum,
+                date: todayStr,
+                roomNumber: finalizedGuest.roomNumber,
+              },
+            ];
+
+      const foodOnlyBill = calculateBill({
+        charges: foodOnlyCharges,
+        payments: [],
+        discount: 0,
+        gstEnabled: calc.gstEnabled,
+        settings: calc.settings,
+      });
+      const foodAllocPaid = Math.min(totalPaidFinal, foodOnlyBill.grandTotal);
+      const roomAllocPaid = Math.max(0, r2(totalPaidFinal - foodAllocPaid));
+
+      const roomOnlyBill = calculateBill({
+        charges: nonFoodCharges,
+        payments:
+          roomAllocPaid > 0
+            ? [{ id: `pay-room-${finalizedGuest.id}`, amount: roomAllocPaid, method: resolvedSummaryMethod, date: todayStr, note: 'Room Bill Settlement' }]
+            : [],
+        discount: calc.discountVal,
+        gstEnabled: calc.gstEnabled,
+        settings: calc.settings,
+      });
+
+      const foodPaidBill = calculateBill({
+        charges: foodOnlyCharges,
+        payments:
+          foodAllocPaid > 0
+            ? [{ id: `pay-food-${finalizedGuest.id}`, amount: foodAllocPaid, method: resolvedSummaryMethod, date: todayStr, note: 'Food Bill Settlement' }]
+            : [],
+        discount: 0,
+        gstEnabled: calc.gstEnabled,
+        settings: calc.settings,
+      });
+
+      const roomSplitInv: Invoice = {
+        ...(buildInvoiceRecord({
+          id: finalInvoice.id,
+          invoiceNumber: finalInvoice.invoiceNumber,
+          hotelId: finalizedGuest.hotelId || hotelSettings?.id,
+          bookingId: matchedBooking?.id || finalizedGuest.id,
+          checkInId: finalizedGuest.id,
+          guestName: finalizedGuest.guestName,
+          guestMobile: finalizedGuest.mobile,
+          guestAddress: [finalizedGuest.address, finalizedGuest.city, finalizedGuest.state].filter(Boolean).join(', '),
+          companyName: finalizedGuest.companyName,
+          guestGstNumber: finalizedGuest.gstNumber,
+          roomNumbers: calc.roomNumbers,
+          checkInDate: finalizedGuest.checkInDate,
+          checkOutDate: finalizedGuest.checkOutDate || todayStr,
+          nights: calc.nights,
+          bill: roomOnlyBill,
+          paymentMethod: resolvedSummaryMethod,
+          dateCreated: existingInv?.dateCreated || todayStr,
+          invoiceStatus: 'Finalized',
+          extra: {
+            isFinalInvoice: true,
+            invoiceScope: 'room_only',
+            foodCharges: 0,
+            notes: `Room-Only Split Invoice (Food billed separately)${calc.damageSum > 0 ? ` • Includes Room Damage / Fine: ₹${calc.damageSum}` : ''}`,
+          },
+        }) as Invoice),
+        foodCharges: 0,
+        paymentHistory: finalInvoice.paymentHistory,
+      };
+
+      const foodInvAlloc = allocateInvoiceNumber([roomSplitInv, ...invoices], calc.baseSettings);
+      const foodSplitInv: Invoice = {
+        ...(buildInvoiceRecord({
+          id: `INV-FOOD-${finalizedGuest.id}-${Date.now().toString().slice(-4)}`,
+          invoiceNumber: `${foodInvAlloc.invoiceNumber}-F`,
+          hotelId: finalizedGuest.hotelId || hotelSettings?.id,
+          bookingId: matchedBooking?.id || finalizedGuest.id,
+          checkInId: finalizedGuest.id,
+          guestName: finalizedGuest.guestName,
+          guestMobile: finalizedGuest.mobile,
+          guestAddress: [finalizedGuest.address, finalizedGuest.city, finalizedGuest.state].filter(Boolean).join(', '),
+          companyName: finalizedGuest.companyName,
+          guestGstNumber: finalizedGuest.gstNumber,
+          roomNumbers: calc.roomNumbers,
+          checkInDate: finalizedGuest.checkInDate,
+          checkOutDate: finalizedGuest.checkOutDate || todayStr,
+          nights: calc.nights,
+          bill: foodPaidBill,
+          paymentMethod: resolvedSummaryMethod,
+          dateCreated: todayStr,
+          invoiceStatus: 'Finalized',
+          extra: {
+            isFinalInvoice: true,
+            isSeparateInvoice: true,
+            invoiceScope: 'food_only',
+            parentInvoiceId: roomSplitInv.id,
+            roomCharges: 0,
+            notes: `Separate Restaurant & Food Invoice (Linked to Room Invoice ${roomSplitInv.invoiceNumber})`,
+          },
+        }) as Invoice),
+        roomCharges: 0,
+        isSeparateInvoice: true,
+      };
+
+      const baseNext = invoices.some(matchesActiveTargetInv)
+        ? invoices.map(inv => (matchesActiveTargetInv(inv) ? roomSplitInv : inv))
+        : [roomSplitInv, ...invoices];
+      invoicesToSaveList = deduplicateInvoicesByBooking([foodSplitInv, ...baseNext]);
+    } else {
+      invoicesToSaveList = deduplicateInvoicesByBooking(
+        invoices.some(matchesActiveTargetInv)
+          ? invoices.map(inv => (matchesActiveTargetInv(inv) ? finalInvoice : inv))
+          : [finalInvoice, ...invoices]
+      );
+    }
+    onUpdateInvoices(invoicesToSaveList);
 
     // Save the checked-out guest together with a snapshot (captured BEFORE any checkout-modal fines/edits)
     // that allows "Undo Check-Out" for 24 hours without corrupting pre-checkout charges or payments.
@@ -1978,6 +2116,29 @@ export default function FrontDeskView({
     setEditGuestRoomRate(guest.roomRate || 2000);
     setEditGuestCompanyName(guest.companyName || '');
     setEditGuestGstNumber(guest.gstNumber || '');
+    const matchedBkgForType =
+      bookings.find(b => b.id === guest.id || b.id === guest.bookingId) ||
+      bookings.find(b => b.roomNumber === guest.roomNumber && !b.isCompleted && b.guestName === guest.guestName) ||
+      null;
+    const rawTypeVal = String(
+      (guest as any).bookingCategory ||
+      (guest as any).bookingType ||
+      (matchedBkgForType as any)?.bookingCategory ||
+      (matchedBkgForType as any)?.bookingType ||
+      (guest.isGroupCheckIn ? 'group' : guest.companyName ? 'corporate' : 'individual')
+    ).toLowerCase();
+    setEditGuestBookingType(
+      rawTypeVal.includes('event') || rawTypeVal.includes('banquet')
+        ? 'Event / Banquet'
+        : rawTypeVal.includes('corp')
+        ? 'Corporate'
+        : rawTypeVal.includes('group')
+        ? 'Group'
+        : 'Individual'
+    );
+    setEditGuestBookingSource(
+      String((guest as any).bookingSource || matchedBkgForType?.bookingSource || 'Walk-in')
+    );
     setEditGuestHasExtraBed(Boolean(guest.hasExtraBed));
     setEditGuestExtraBedCount(guest.extraBedCount || 1);
     setEditGuestExtraBedRate(guest.extraBedRate || 500);
@@ -2399,6 +2560,14 @@ export default function FrontDeskView({
       address: editGuestAddress.trim(),
       companyName: editGuestCompanyName.trim() || undefined,
       gstNumber: editGuestGstNumber.trim().toUpperCase() || undefined,
+      ...({
+        bookingType: editGuestBookingType,
+        bookingCategory:
+          editGuestBookingType === 'Event / Banquet'
+            ? 'event'
+            : editGuestBookingType.toLowerCase(),
+        bookingSource: editGuestBookingSource,
+      } as any),
       idType: editGuestIdType,
       idNumber: editGuestIdNumber.trim(),
       aadhaarNumber: editGuestIdType === 'Aadhaar' ? editGuestIdNumber.trim() : editingInHouseGuest.aadhaarNumber,
@@ -2478,6 +2647,15 @@ export default function FrontDeskView({
           mobile: editGuestMobile.trim(),
           email: editGuestEmail.trim() || b.email,
           address: editGuestAddress.trim() || b.address,
+          companyName: editGuestCompanyName.trim() || b.companyName,
+          bookingSource: (editGuestBookingSource || b.bookingSource) as any,
+          ...({
+            bookingType: editGuestBookingType,
+            bookingCategory:
+              editGuestBookingType === 'Event / Banquet'
+                ? 'event'
+                : editGuestBookingType.toLowerCase(),
+          } as any),
           aadhaarNumber: editGuestIdType === 'Aadhaar' ? editGuestIdNumber.trim() : b.aadhaarNumber,
           roomNumber: editGuestRoomNo,
           roomType: (targetRoomObj?.category || b.roomType) as any,
@@ -4683,7 +4861,37 @@ export default function FrontDeskView({
                             )}
                           </td>
                           <td className="p-3.5 whitespace-nowrap">
-                            <div className="text-[#263449] font-serif font-bold text-sm leading-tight">{guest.guestName}</div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[#263449] font-serif font-bold text-sm leading-tight">{guest.guestName}</span>
+                              {(() => {
+                                const rawBt = String(
+                                  (guest as any).bookingType ||
+                                  (guest as any).bookingCategory ||
+                                  (guest.isGroupCheckIn ? 'Group' : guest.companyName ? 'Corporate' : 'Individual')
+                                );
+                                const label =
+                                  rawBt.toLowerCase().includes('event') || rawBt.toLowerCase().includes('banquet')
+                                    ? 'Event / Banquet'
+                                    : rawBt.toLowerCase().includes('corp')
+                                    ? 'Corporate'
+                                    : rawBt.toLowerCase().includes('group')
+                                    ? 'Group'
+                                    : 'Individual';
+                                const cls =
+                                  label === 'Corporate'
+                                    ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                                    : label === 'Group'
+                                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                    : label === 'Event / Banquet'
+                                    ? 'bg-purple-50 text-purple-800 border-purple-200'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200';
+                                return (
+                                  <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold border uppercase tracking-wide ${cls}`}>
+                                    {label}
+                                  </span>
+                                );
+                              })()}
+                            </div>
                             <span className="inline-block text-[10.5px] font-mono font-semibold text-slate-500 mt-0.5">
                               Guests: {guest.numGuests || 1} Adult(s)
                             </span>
@@ -6657,6 +6865,40 @@ export default function FrontDeskView({
                   />
                 </div>
                 <div>
+                  <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">Booking Type</label>
+                  <select
+                    value={editGuestBookingType}
+                    onChange={e => setEditGuestBookingType(e.target.value as any)}
+                    className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-[#263449] font-bold"
+                  >
+                    <option value="Individual">Individual</option>
+                    <option value="Group">Group</option>
+                    <option value="Corporate">Corporate</option>
+                    <option value="Event / Banquet">Event / Banquet</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">Booking Source</label>
+                  <select
+                    value={editGuestBookingSource}
+                    onChange={e => setEditGuestBookingSource(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-luxury-brown-200 rounded-lg text-[#263449] font-semibold"
+                  >
+                    <option value="Walk-in">Walk-in / Direct</option>
+                    <option value="Direct">Direct</option>
+                    <option value="Phone">Phone</option>
+                    <option value="Website">Website</option>
+                    <option value="Corporate">Corporate</option>
+                    <option value="Travel Agent">Travel Agent</option>
+                    <option value="MakeMyTrip">MakeMyTrip</option>
+                    <option value="Goibibo">Goibibo</option>
+                    <option value="Booking.com">Booking.com</option>
+                    <option value="Agoda">Agoda</option>
+                    <option value="OYO">OYO</option>
+                    <option value="Airbnb">Airbnb</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-[#263449] font-bold uppercase font-mono text-[10px] mb-1">Company Name (Optional GST Bill)</label>
                   <input
                     type="text"
@@ -7801,7 +8043,7 @@ export default function FrontDeskView({
                         <input
                           type="number"
                           min={0}
-                          step={key === 'gst' ? '0.5' : '1'}
+                          step="any"
                           value={key in coOv ? coOv[key] : String(autoVal)}
                           onChange={e => setCoOv(prev => ({ ...prev, [key]: e.target.value }))}
                           className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-mono font-bold text-sm text-[#263449]"
@@ -7810,50 +8052,246 @@ export default function FrontDeskView({
                     ))}
                   </div>
 
-                  {calc.foodSum > 0 && (
-                    <div className="p-3.5 bg-amber-50/80 border border-amber-300 rounded-xl space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <UtensilsCrossed className="w-4 h-4 text-amber-700" />
-                          <span className="font-serif font-bold text-amber-950 text-xs">
-                            Food &amp; Beverage Total: ₹{calc.foodSum.toLocaleString('en-IN')}
-                          </span>
+                  {calc.foodSum > 0 && (() => {
+                    const detailedFoodItems = extractDetailedFoodLinesForStay({
+                      invoice: existingStayInv || liveEval.invoice,
+                      checkinRecord: checkoutConfirmGuest,
+                      bookingRecord: matchedBookingForEval,
+                      posOrders,
+                    });
+                    const nonFoodCharges = calc.charges.filter((c) => c.kind !== 'food');
+                    const roomOnlyPreview = calculateBill({
+                      charges: nonFoodCharges,
+                      payments: [],
+                      discount: calc.discountVal,
+                      gstEnabled: calc.gstEnabled,
+                      settings: calc.settings,
+                    });
+                    const foodChargesForPreview: BillCharge[] =
+                      detailedFoodItems.length > 0
+                        ? detailedFoodItems.map((it, idx) => ({
+                            id: `fp-${idx}`,
+                            kind: 'food' as const,
+                            description: it.description,
+                            amount: it.amount,
+                            date: it.dateLabel,
+                            roomNumber: checkoutConfirmGuest.roomNumber,
+                          }))
+                        : [
+                            {
+                              id: 'fp-0',
+                              kind: 'food' as const,
+                              description: 'Food & Beverage Charges',
+                              amount: calc.foodSum,
+                              date: todayStr,
+                              roomNumber: checkoutConfirmGuest.roomNumber,
+                            },
+                          ];
+                    const foodOnlyPreview = calculateBill({
+                      charges: foodChargesForPreview,
+                      payments: [],
+                      discount: 0,
+                      gstEnabled: calc.gstEnabled,
+                      settings: calc.settings,
+                    });
+
+                    return (
+                      <div className="p-3.5 bg-amber-50/90 border-2 border-amber-300 rounded-xl space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <UtensilsCrossed className="w-4 h-4 text-amber-700" />
+                            <div>
+                              <span className="font-serif font-bold text-amber-950 text-xs block">
+                                Food &amp; Beverage Bill Incurred: ₹{calc.foodSum.toLocaleString('en-IN')}
+                              </span>
+                              <span className="text-[10.5px] text-amber-800">
+                                Split Room &amp; Food into two separate bills (Room Bill will have zero food details/amount; Food Bill will list all dishes).
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setCoSplitFoodBill((v) => !v)}
+                            className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold cursor-pointer transition-all shadow-xs ${
+                              coSplitFoodBill
+                                ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
+                                : 'bg-amber-600 hover:bg-amber-700 text-white'
+                            }`}
+                          >
+                            {coSplitFoodBill ? '✓ Split Active (Room + Food Separate)' : '✂ Split Food & Room Bill'}
+                          </button>
                         </div>
-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 bg-amber-200/70 text-amber-900 rounded">
-                          Separate Food Bill Available
-                        </span>
+
+                        {coSplitFoodBill && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                            {/* Split Card 1: Room Bill Only (Zero Food Details & Zero Food Amount) */}
+                            <div className="p-3 bg-white border border-slate-300 rounded-xl space-y-2 text-xs">
+                              <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                                <span className="font-extrabold text-[#263449] uppercase text-[11px]">
+                                  1. Room Bill Only (No Food)
+                                </span>
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">
+                                  Food: ₹0
+                                </span>
+                              </div>
+                              <div className="space-y-1 font-mono text-[11px]">
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Room + Stay Charges:</span>
+                                  <span className="font-bold text-slate-900">₹{roomOnlyPreview.subtotal.toLocaleString('en-IN')}</span>
+                                </div>
+                                {roomOnlyPreview.discount > 0 && (
+                                  <div className="flex justify-between text-emerald-700">
+                                    <span>Discount:</span>
+                                    <span className="font-bold">-₹{roomOnlyPreview.discount.toLocaleString('en-IN')}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Room GST:</span>
+                                  <span className="font-bold text-slate-900">₹{roomOnlyPreview.totalTax.toLocaleString('en-IN')}</span>
+                                </div>
+                                <div className="flex justify-between border-t border-slate-200 pt-1 text-xs font-extrabold text-[#17120F]">
+                                  <span>Room Split Total:</span>
+                                  <span>₹{roomOnlyPreview.grandTotal.toLocaleString('en-IN')}</span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const invForPrint = existingStayInv || liveEval.invoice;
+                                  if (invForPrint) {
+                                    openPrintWindow(
+                                      invoiceRecordToPrintHtml(
+                                        invForPrint as any,
+                                        hotelSettings,
+                                        checkoutConfirmGuest,
+                                        matchedBookingForEval,
+                                        'room_only',
+                                        posOrders
+                                      )
+                                    );
+                                  }
+                                }}
+                                className="w-full py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                              >
+                                <Printer className="w-3.5 h-3.5" /> Print Room Bill Only (No Food)
+                              </button>
+                            </div>
+
+                            {/* Split Card 2: Separate Food Bill with Full Item-Wise Details */}
+                            <div className="p-3 bg-white border border-amber-300 rounded-xl space-y-2 text-xs">
+                              <div className="flex items-center justify-between border-b border-amber-200 pb-1.5">
+                                <span className="font-extrabold text-amber-950 uppercase text-[11px]">
+                                  2. Separate Food Bill (Item-Wise)
+                                </span>
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold">
+                                  {detailedFoodItems.length || 1} Item(s)
+                                </span>
+                              </div>
+                              <div className="max-h-28 overflow-y-auto space-y-1 font-mono text-[10.5px] border-b border-amber-100 pb-1.5">
+                                {detailedFoodItems.length > 0 ? (
+                                  detailedFoodItems.map((it, idx) => (
+                                    <div key={idx} className="flex justify-between gap-2">
+                                      <span className="text-slate-700 truncate">
+                                        {it.itemName} <span className="text-slate-400">({it.qty}×₹{it.rate})</span>
+                                      </span>
+                                      <span className="font-bold text-slate-900 shrink-0">₹{it.amount.toLocaleString('en-IN')}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-700">Food &amp; Beverage Charges</span>
+                                    <span className="font-bold text-slate-900">₹{calc.foodSum.toLocaleString('en-IN')}</span>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="space-y-1 font-mono text-[11px]">
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Food Subtotal:</span>
+                                  <span className="font-bold text-slate-900">₹{foodOnlyPreview.subtotal.toLocaleString('en-IN')}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Food GST:</span>
+                                  <span className="font-bold text-slate-900">₹{foodOnlyPreview.totalTax.toLocaleString('en-IN')}</span>
+                                </div>
+                                <div className="flex justify-between border-t border-amber-200 pt-1 text-xs font-extrabold text-amber-950">
+                                  <span>Food Split Total:</span>
+                                  <span>₹{foodOnlyPreview.grandTotal.toLocaleString('en-IN')}</span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const invForPrint = existingStayInv || liveEval.invoice;
+                                  if (invForPrint) {
+                                    openPrintWindow(
+                                      invoiceRecordToPrintHtml(
+                                        invForPrint as any,
+                                        hotelSettings,
+                                        checkoutConfirmGuest,
+                                        matchedBookingForEval,
+                                        'food_only',
+                                        posOrders
+                                      )
+                                    );
+                                  }
+                                }}
+                                className="w-full py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                              >
+                                <UtensilsCrossed className="w-3.5 h-3.5" /> Print Separate Food Bill
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {!coSplitFoodBill && (
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const invForPrint = existingStayInv || liveEval.invoice;
+                                if (invForPrint) {
+                                  openPrintWindow(
+                                    invoiceRecordToPrintHtml(
+                                      invForPrint as any,
+                                      hotelSettings,
+                                      checkoutConfirmGuest,
+                                      matchedBookingForEval,
+                                      'food_only',
+                                      posOrders
+                                    )
+                                  );
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            >
+                              <UtensilsCrossed className="w-3.5 h-3.5" /> Print Separate Food Bill
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const invForPrint = existingStayInv || liveEval.invoice;
+                                if (invForPrint) {
+                                  openPrintWindow(
+                                    invoiceRecordToPrintHtml(
+                                      invForPrint as any,
+                                      hotelSettings,
+                                      checkoutConfirmGuest,
+                                      matchedBookingForEval,
+                                      'room_only',
+                                      posOrders
+                                    )
+                                  );
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            >
+                              <Printer className="w-3.5 h-3.5" /> Print Room Bill Only
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <p className="text-[11px] text-amber-900">
-                        Guest ko company reimbursement ke liye Food Bill alag se chahiye to yahan se seedha print karein:
-                      </p>
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const invForPrint = existingStayInv || liveEval.invoice;
-                            if (invForPrint) {
-                              openPrintWindow(invoiceRecordToPrintHtml(invForPrint as any, hotelSettings, checkoutConfirmGuest, matchedBookingForEval, 'food_only'));
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
-                        >
-                          <UtensilsCrossed className="w-3.5 h-3.5" /> Print Separate Food Bill
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const invForPrint = existingStayInv || liveEval.invoice;
-                            if (invForPrint) {
-                              openPrintWindow(invoiceRecordToPrintHtml(invForPrint as any, hotelSettings, checkoutConfirmGuest, matchedBookingForEval, 'room_only'));
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
-                        >
-                          <Printer className="w-3.5 h-3.5" /> Print Room Bill Only
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
                   );
                 })()}

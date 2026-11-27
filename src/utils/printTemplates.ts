@@ -179,13 +179,14 @@ export function renderInvoiceHtml(d: InvoicePrintData): string {
     return 'Stay Dates';
   };
 
+  const isSeparateFoodInvoice = /RESTAURANT\s*&\s*FOOD/i.test(String(d.documentTitle || ''));
   // Charge lines mapping for ITEMIZED CHARGES table (for Credit Notes, show only reversed charge lines with consistent negative sign)
   const chargeLines = b.lines.filter(l => l.type !== 'receipt' && (!isCreditNote || l.type !== 'tax'));
   const itemizedChargeRows = chargeLines.length > 0
     ? chargeLines.map(l => {
         let rawDesc = l.description || '';
-        // If client requested: only "Food Bill" without items details
-        if (l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(rawDesc)) {
+        // On combined stay bills, collapse food line to "Food Bill"; on Separate Food Invoices, show ALL item-wise dish details!
+        if (!isSeparateFoodInvoice && (l.kind === 'food' || /Food & Beverage|Food & Restaurant|POS Room Charge|Food Bill/i.test(rawDesc))) {
           // Strip any parentheses containing item lists e.g. "(1x DAL TADKA, ...)"
           rawDesc = rawDesc.replace(/\s*\([^)]*(?:x|\d)[^)]*\)/gi, '').trim();
           rawDesc = rawDesc.replace(/^Food & (?:Beverage|Restaurant)(?:\s*Charges)?/i, 'Food Bill');
