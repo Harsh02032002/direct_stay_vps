@@ -12,6 +12,7 @@ import {
   Calendar,
   Eye,
   UtensilsCrossed,
+  Pencil,
 } from 'lucide-react';
 import { BookingRecord, InvoiceRecord, InvoiceScope } from '../types';
 import { formatCurrency } from '../utils/formatters';
@@ -62,6 +63,8 @@ interface InvoiceModuleProps {
     gstRate: number,
     confirmedRefundAmount?: number
   ) => void;
+  /** Opens the Edit Invoice popup (Room Bill / Food Bill / Combined Bill, split or not). */
+  onEditInvoice?: (invoice: InvoiceRecord) => void;
 }
 
 const ROOM_ONLY_KINDS: BillChargeKind[] = [
@@ -169,6 +172,7 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
   onOpenInvoiceModal,
   onOpenRecordPayment,
   onCreateSeparateInvoice,
+  onEditInvoice,
 }) => {
   const [taxSettings] = useHotelTaxSettings();
   const settings = billSettings || normalizeBillSettings(taxSettings);
@@ -1228,6 +1232,17 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                 <Eye className="w-3.5 h-3.5 text-slate-600" />
                                 View
                               </button>
+                              {onEditInvoice && !isFolioRow && !isRowCreditNote && !isRowSuperseded && (
+                                <button
+                                  type="button"
+                                  onClick={() => onEditInvoice(inv)}
+                                  className="px-2.5 py-1.5 rounded-lg border border-[#C49A3A] bg-[#FDF8ED] hover:bg-amber-100 text-[#17120F] font-bold text-[11px] flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                                  title="Edit Invoice — Room Bill, Food Bill or Combined Bill (split / unsplit)"
+                                >
+                                  <Pencil className="w-3.5 h-3.5 text-[#C49A3A]" />
+                                  Edit
+                                </button>
+                              )}
                               {(() => {
                                 const rawAppBkg =
                                   appBookings.find((b) => String(b?.id || '') === String(inv.bookingId || '')) || null;

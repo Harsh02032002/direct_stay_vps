@@ -10,6 +10,7 @@ import InvoicePreviewModal from './components/InvoicePreviewModal';
 import RoomTasksDrawer from './components/RoomTasksDrawer';
 import AddRoomOrderModal from './components/AddRoomOrderModal';
 import CheckoutClearanceModal from './components/CheckoutClearanceModal';
+import EditInvoiceModal from './components/EditInvoiceModal';
 
 import { DashboardModule, normalizeCategory } from './modules/DashboardModule';
 import { FrontDeskModule } from './modules/FrontDeskModule';
@@ -2392,6 +2393,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   const [checkInBooking, setCheckInBooking] = useState<BookingRecord | null>(null);
   const [checkoutClearanceBooking, setCheckoutClearanceBooking] = useState<BookingRecord | null>(null);
   const [paymentBooking, setPaymentBooking] = useState<BookingRecord | null>(null);
+  const [editInvoiceId, setEditInvoiceId] = useState<string | null>(null);
   const [invoiceModalState, setInvoiceModalState] = useState<{
     booking: BookingRecord;
     scope: InvoiceScope;
@@ -5049,6 +5051,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           }
           onOpenRecordPayment={(b) => setPaymentBooking(b)}
           onCreateSeparateInvoice={handleCreateSeparateInvoiceInHub}
+          onEditInvoice={(invRec) => setEditInvoiceId(invRec.id)}
         />
       )}
 
@@ -6498,6 +6501,23 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           })
         }
       />
+      )}
+
+      {editInvoiceId && (
+        <EditInvoiceModal
+          invoiceId={editInvoiceId}
+          invoices={appInvoices as any[]}
+          billSettings={billSettings}
+          appCheckins={appCheckins as any[]}
+          appBookings={appBookings as any[]}
+          posOrders={appPosOrders as any[]}
+          onClose={() => setEditInvoiceId(null)}
+          onSave={(nextInvoices, summary) => {
+            if (onUpdateInvoices) onUpdateInvoices(nextInvoices as any);
+            logAudit('Invoice Center', 'Invoice Edited & Re-Issued', summary, 'info');
+            setEditInvoiceId(null);
+          }}
+        />
       )}
 
       <RecordPaymentDrawer
