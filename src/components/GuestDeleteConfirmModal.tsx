@@ -30,7 +30,9 @@ export const GuestDeleteConfirmModal: React.FC<GuestDeleteConfirmModalProps> = (
 
   if (!target) return null;
 
-  const roomText = (target.roomNumbers || []).filter(Boolean).join(', ');
+  const roomText = Array.from(
+    new Set((target.roomNumbers || []).map((r) => String(r || '').trim()).filter(Boolean))
+  ).join(', ');
 
   return (
     <div
@@ -91,12 +93,12 @@ export const GuestDeleteConfirmModal: React.FC<GuestDeleteConfirmModalProps> = (
           </div>
 
           <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-950 space-y-1">
-            <p className="font-bold">Saara related data har jagah se remove hoga:</p>
+            <p className="font-bold">All linked data will be permanently removed across the PMS:</p>
             <ul className="list-disc pl-4 space-y-0.5 text-amber-900">
-              <li>Reservation List &amp; In-House / Checked-Out stay record</li>
+              <li>Reservation List &amp; In-House / Checked-Out stay records</li>
               <li>Linked Invoices, Payments, Reports &amp; Finance Vouchers</li>
               <li>Linked Room Food Orders (POS), Water Bottles, Laundry &amp; Services</li>
-              <li>Room status wapas <strong>Available</strong> ho jayega (agar koi aur guest nahi hai)</li>
+              <li>Room status will be reset to <strong>Available</strong> (if no other active guest is assigned)</li>
             </ul>
           </div>
 
@@ -108,7 +110,7 @@ export const GuestDeleteConfirmModal: React.FC<GuestDeleteConfirmModalProps> = (
               className="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
             />
             <span className="text-[11px] font-semibold text-slate-700">
-              Guest Profiles directory se bhi is guest ka contact card remove karein
+              Also remove this guest&apos;s contact card from Guest Profiles directory
             </span>
           </label>
         </div>
