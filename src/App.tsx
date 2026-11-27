@@ -58,6 +58,11 @@ import {
   resolvePosCapabilities,
 } from './utils/posConfigHelpers';
 
+import {
+  computeGuestCascadeDelete,
+  CascadeDeleteTarget,
+  removeGuestFromCustomProfiles,
+} from './utils/guestCascadeDelete';
 import LoginView, { LoginPortalMode } from './components/LoginView';
 import FrontWebsite from './components/FrontWebsite';
 import FrontWebsitePrototype from './components/FrontWebsitePrototype';
@@ -2747,6 +2752,115 @@ export default function App() {
     savePmsData({ waterBottles: merged });
   };
 
+  // Permanent Cascade Delete for a Guest / Reservation across ALL linked PMS modules & MongoDB
+  const handleCascadeDeleteGuest = (target: CascadeDeleteTarget) => {
+    const targetHotelId = target.hotelId || effectiveTenantHotelId || selectedHotelId || hotels[0]?.id || 'hotel-1';
+    const result = computeGuestCascadeDelete(
+      { ...target, hotelId: targetHotelId },
+      {
+        bookings,
+        checkins,
+        rooms,
+        invoices,
+        posOrders: rawPosOrders.filter(p => (p.hotelId || 'hotel-1') === targetHotelId),
+        waterBottles,
+        laundryOrders,
+        allocatedServices: [],
+        vouchers,
+      }
+    );
+
+    // Update every linked tenant-scoped collection atomically (triggers MongoDB sync via savePmsData)
+    const mergedBookings = [
+      ...rawBookings.filter(b => (b.hotelId || 'hotel-1') !== targetHotelId),
+      ...result.bookings.map(b => ({ ...b, hotelId: targetHotelId })),
+    ];
+    const mergedCheckins = [
+      ...rawCheckins.filter(c => (c.hotelId || 'hotel-1') !== targetHotelId),
+      ...result.checkins.map(c => ({ ...c, hotelId: targetHotelId })),
+    ];
+    const mergedRooms = [
+      ...rawRooms.filter(r => (r.hotelId || 'hotel-1') !== targetHotelId),
+      ...result.rooms.map(r => ({ ...r, hotelId: targetHotelId })),
+    ];
+    const mergedInvoices = [
+      ...rawInvoices.filter(i => (i.hotelId || 'hotel-1') !== targetHotelId),
+      ...result.invoices.map(i => ({ ...i, hotelId: targetHotelId })),
+    ];
+    const mergedPosOrders = [
+      ...rawPosOrders.filter(p => (p.hotelId || 'hotel-1') !== targetHotelId),
+      ...result.posOrders.map(p => ({ ...p, hotelId: targetHotelId })),
+    ];
+    const mergedWaterBottles = [
+      ...rawWaterBottles.filter(w => (w.hotelId || 'hotel-1') !== targetHotelId),
+      ...result.waterBottles.map(w => ({ ...w, hotelId: targetHotelId })),
+    ];
+    const mergedLaundryOrders = [
+      ...rawLaundryOrders.filter(l => (l.hotelId || 'hotel-1') !== targetHotelId),
+      ...result.laundryOrders.map(l => ({ ...l, hotelId: targetHotelId })),
+    ];
+    const mergedVouchers = [
+      ...rawFinanceVouchers.filter(v => (v.hotelId || 'hotel-1') !== targetHotelId),
+      ...result.vouchers.map(v => ({ ...v, hotelId: targetHotelId })),
+    ];
+
+    setRawBookings(mergedBookings);
+    setRawCheckins(mergedCheckins);
+    setRawRooms(mergedRooms);
+    setRawInvoices(mergedInvoices);
+    setRawPosOrders(mergedPosOrders);
+    setRawWaterBottles(mergedWaterBottles);
+    setRawLaundryOrders(mergedLaundryOrders);
+    setRawFinanceVouchers(mergedVouchers);
+
+    let nextHotels = hotels;
+    if (target.alsoRemoveGuestProfile) {
+      nextHotels = hotels.map((h) => {
+        if (h.id !== targetHotelId) return h;
+        const prevCustom = Array.isArray((h as any).customGuests) ? (h as any).customGuests : [];
+        return {
+          ...h,
+          customGuests: removeGuestFromCustomProfiles(prevCustom, target.guestName, target.mobile),
+        } as any;
+      });
+      setHotels(nextHotels);
+      try {
+        const lsKey = `pms_custom_guests_${targetHotelId}`;
+        const rawLs = localStorage.getItem(lsKey);
+        if (rawLs) {
+          const parsed = JSON.parse(rawLs);
+          if (Array.isArray(parsed)) {
+            localStorage.setItem(lsKey, JSON.stringify(removeGuestFromCustomProfiles(parsed, target.guestName, target.mobile)));
+          }
+        }
+      } catch {
+        // ignore storage errors
+      }
+    }
+
+    savePmsData({
+      bookings: mergedBookings,
+      checkins: mergedCheckins,
+      rooms: mergedRooms,
+      invoices: mergedInvoices,
+      posOrders: mergedPosOrders,
+      waterBottles: mergedWaterBottles,
+      laundryOrders: mergedLaundryOrders,
+      vouchers: mergedVouchers,
+      ...(target.alsoRemoveGuestProfile ? { hotels: nextHotels } : {}),
+    });
+
+    const s = result.summary;
+    handleAddAuditLogDirectly(
+      'Guest / Booking Deleted',
+      `Permanently deleted "${target.guestName || target.bookingRef || target.bookingId || target.checkinId}" — removed ${s.bookingsRemoved} booking(s), ${s.checkinsRemoved} stay(s), ${s.invoicesRemoved} invoice(s), ${s.vouchersRemoved} voucher(s), ${s.posOrdersRemoved} POS order(s), ${s.waterBottlesRemoved} water record(s), ${s.laundryOrdersRemoved} laundry order(s)${s.roomsReleased.length ? `; released Room(s) ${s.roomsReleased.join(', ')}` : ''}.`
+    );
+    showToast(
+      `Deleted ${target.guestName || 'guest'} & all linked records${s.roomsReleased.length ? ` (Room ${s.roomsReleased.join(', ')} now Available)` : ''}.`,
+      'success'
+    );
+  };
+
   const handleUpdateStaff = (updated: Staff[]) => {
     const targetHotel = effectiveTenantHotelId || selectedHotelId || hotels[0]?.id || 'hotel-1';
     if (updated.length > staff.length) {
@@ -3457,6 +3571,7 @@ export default function App() {
           onUpdatePosAdvanceBookings={handleUpdatePosAdvanceBookings}
           onUpdatePosCategories={handleUpdatePosCategories}
           onUpdatePosTables={handleUpdatePosTables}
+          onCascadeDeleteGuest={handleCascadeDeleteGuest}
         />
       );
     }
@@ -3611,6 +3726,7 @@ export default function App() {
             onUpdateAgentCommissionPayments={handleUpdateAgentCommissionPayments}
             lostAndFoundItems={lostAndFoundItems}
             onUpdateLostAndFoundItems={handleUpdateLostAndFoundItems}
+            onCascadeDeleteGuest={handleCascadeDeleteGuest}
           />
         );
       case 'dashboard':
@@ -3744,6 +3860,7 @@ export default function App() {
             onMoveToDeletedFolder={handleMoveToDeletedFolder}
             travelAgents={travelAgents}
             onUpdateTravelAgents={handleUpdateTravelAgents}
+            onCascadeDeleteGuest={handleCascadeDeleteGuest}
           />
         );
       case 'checkin':

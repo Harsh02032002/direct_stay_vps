@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { CascadeDeleteTarget } from '../utils/guestCascadeDelete';
 import { Package } from 'lucide-react';
 import QuickAddBookingModal from './components/QuickAddBookingModal';
 import BookingDetailsDrawer from './components/BookingDetailsDrawer';
@@ -232,6 +233,7 @@ interface IntegratedAdminPmsHubProps {
   onUpdatePosAdvanceBookings?: (updated: FoodAdvanceBooking[]) => void;
   onUpdatePosCategories?: (updated: PosCategory[]) => void;
   onUpdatePosTables?: (updated: PosTableRecord[]) => void;
+  onCascadeDeleteGuest?: (target: CascadeDeleteTarget) => void;
 }
 
 export function classifyExtraChargeServiceType(ec: {
@@ -1225,6 +1227,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
   onUpdatePosAdvanceBookings,
   onUpdatePosCategories,
   onUpdatePosTables,
+  onCascadeDeleteGuest,
 }) => {
   const [hubTaxSettings] = useHotelTaxSettings();
   const billSettings = React.useMemo(
@@ -4874,6 +4877,43 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           onOpenPreviewDocument={(guest, bookingNo) => setPreviewDocState({ guest, bookingNo })}
           onUpdateGuestDoc={handleUpdateGuestDocument}
           onOpenRoomOrder={(b) => setRoomOrderBooking(b)}
+          onDeleteGuestRecord={
+            onCascadeDeleteGuest
+              ? (target) => {
+                  const idSet = new Set([target.bookingId, target.checkinId].filter(Boolean).map(String));
+                  const nextBookings = bookings.filter(
+                    (b) => !idSet.has(String(b.id)) && (!target.bookingRef || b.bookingNo !== target.bookingRef)
+                  );
+                  setBookings(nextBookings);
+                  setInvoices((prev) => prev.filter((inv) => !idSet.has(String(inv.bookingId))));
+                  setVouchers((prev) => prev.filter((v) => !idSet.has(String((v as any).sourceId || ''))));
+                  setPosOrders((prev) => prev.filter((po) => !idSet.has(String((po as any).bookingId || ''))));
+                  setWaterLogs((prev) => prev.filter((w) => !idSet.has(String((w as any).bookingId || ''))));
+                  if (selectedBookingForDrawer && idSet.has(String(selectedBookingForDrawer.id))) {
+                    setSelectedBookingForDrawer(null);
+                  }
+                  const rmNums = new Set((target.roomNumbers || []).map((n) => String(n).trim()));
+                  if (rmNums.size > 0) {
+                    const stillActiveRooms = new Set<string>();
+                    nextBookings.forEach((b) => {
+                      if (b.isCheckedIn && !b.isCheckedOut) {
+                        (b.roomNumbers || []).forEach((rn) => stillActiveRooms.add(String(rn).trim()));
+                      }
+                    });
+                    setRooms((prev) =>
+                      prev.map((r) =>
+                        rmNums.has(String(r.number).trim()) &&
+                        !stillActiveRooms.has(String(r.number).trim()) &&
+                        (r.status === 'Occupied' || r.status === 'Reserved')
+                          ? { ...r, status: 'Available' as const }
+                          : r
+                      )
+                    );
+                  }
+                  onCascadeDeleteGuest({ ...target, hotelId: selectedHotelId });
+                }
+              : undefined
+          }
           onAddWaterLog={(entry) => {
             const newId = `WB-${Date.now()}`;
             const todayIso = new Date().toISOString().slice(0, 10);

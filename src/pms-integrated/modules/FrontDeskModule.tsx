@@ -6,6 +6,8 @@ import {
   getValidHybridSplits,
   formatHybridLabel,
 } from '../../components/HybridSplitPaymentBox';
+import { GuestDeleteConfirmModal, GuestDeleteModalTarget } from '../../components/GuestDeleteConfirmModal';
+import { CascadeDeleteTarget } from '../../utils/guestCascadeDelete';
 import {
   Plus,
   Search,
@@ -107,6 +109,7 @@ interface FrontDeskModuleProps {
     refundAmount: number,
     reason: string
   ) => void;
+  onDeleteGuestRecord?: (target: CascadeDeleteTarget) => void;
 }
 
 const SUB_TABS = [
@@ -149,7 +152,9 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
   onExtendStay,
   onChangeRoom,
   onCancelOrNoShowBooking,
+  onDeleteGuestRecord,
 }) => {
+  const [deleteGuestTarget, setDeleteGuestTarget] = useState<GuestDeleteModalTarget | null>(null);
   const normalizedSubTab =
     activeSubTab === 'billing'
       ? 'checkout'
@@ -1601,6 +1606,28 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
                                 <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
                                 <span>Checked Out</span>
                               </span>
+                            )}
+
+                            {/* Permanent Cascade Delete Guest / Booking */}
+                            {onDeleteGuestRecord && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDeleteGuestTarget({
+                                    bookingId: booking.id,
+                                    bookingRef: booking.bookingNo || booking.id,
+                                    guestName: booking.customerName,
+                                    mobile: booking.mobile,
+                                    roomNumbers: booking.roomNumbers || [],
+                                    contextLabel: booking.isCheckedIn ? 'In-House Guest' : 'Reservation',
+                                  })
+                                }
+                                className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-300 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
+                                title="Permanently Delete Guest & All Linked Data"
+                              >
+                                <Trash2 className="w-3 h-3 shrink-0" />
+                                <span>Delete</span>
+                              </button>
                             )}
 
                             {onPrintGrc && booking.status !== 'Cancelled' && booking.status !== 'No-Show' && (
@@ -3779,6 +3806,25 @@ export const FrontDeskModule: React.FC<FrontDeskModuleProps> = ({
           </div>
         </div>
       )}
+
+      <GuestDeleteConfirmModal
+        target={deleteGuestTarget}
+        onCancel={() => setDeleteGuestTarget(null)}
+        onConfirm={(alsoRemoveGuestProfile) => {
+          if (deleteGuestTarget && onDeleteGuestRecord) {
+            onDeleteGuestRecord({
+              bookingId: deleteGuestTarget.bookingId,
+              checkinId: deleteGuestTarget.checkinId,
+              bookingRef: deleteGuestTarget.bookingRef,
+              guestName: deleteGuestTarget.guestName,
+              mobile: deleteGuestTarget.mobile,
+              roomNumbers: deleteGuestTarget.roomNumbers,
+              alsoRemoveGuestProfile,
+            });
+          }
+          setDeleteGuestTarget(null);
+        }}
+      />
     </div>
   );
 };

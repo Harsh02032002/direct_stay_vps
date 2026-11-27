@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { GuestDeleteConfirmModal, GuestDeleteModalTarget } from './GuestDeleteConfirmModal';
+import { CascadeDeleteTarget } from '../utils/guestCascadeDelete';
 import { 
   Room, Booking, GuestCheckIn, Invoice, Expense, Staff, AuditLog, 
   HotelSettings, WaterBottleRecord, PosOrder, PosItem, UserRole, RoomVerification,
@@ -101,6 +103,7 @@ interface FrontDeskViewProps {
   onUpdateAgentCommissionPayments?: (payments: AgentCommissionPayment[]) => void;
   lostAndFoundItems?: LostAndFoundItem[];
   onUpdateLostAndFoundItems?: (items: LostAndFoundItem[]) => void;
+  onCascadeDeleteGuest?: (target: CascadeDeleteTarget) => void;
 }
 
 export function computeExtraPersonForOccupancy(
@@ -274,8 +277,10 @@ export default function FrontDeskView({
   onUpdateTravelAgents,
   onUpdateAgentCommissionPayments,
   lostAndFoundItems = [],
-  onUpdateLostAndFoundItems
+  onUpdateLostAndFoundItems,
+  onCascadeDeleteGuest,
 }: FrontDeskViewProps) {
+  const [deleteGuestTarget, setDeleteGuestTarget] = useState<GuestDeleteModalTarget | null>(null);
   const checkins: GuestCheckIn[] = React.useMemo(() => {
     const list = [...rawCheckinsProp];
     bookings.forEach(b => {
@@ -3876,6 +3881,7 @@ export default function FrontDeskView({
               onMoveToDeletedFolder={onMoveToDeletedFolder}
               travelAgents={travelAgents}
               onUpdateTravelAgents={onUpdateTravelAgents}
+              onCascadeDeleteGuest={onCascadeDeleteGuest}
             />
           ) : (
             <CalendarBookingView
@@ -4778,6 +4784,29 @@ export default function FrontDeskView({
                               >
                                 <LogOut className="w-3.5 h-3.5" /> Check-Out
                               </button>
+                              {onCascadeDeleteGuest && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDeleteGuestTarget({
+                                      bookingId: guest.bookingId || undefined,
+                                      checkinId: guest.id,
+                                      bookingRef: guest.bookingId || guest.id,
+                                      guestName: guest.guestName,
+                                      mobile: guest.mobile,
+                                      roomNumbers: [
+                                        guest.roomNumber,
+                                        ...(Array.isArray(guest.bookedRooms) ? guest.bookedRooms.map((r) => r.roomNumber) : []),
+                                      ].filter(Boolean),
+                                      contextLabel: 'In-House Guest',
+                                    })
+                                  }
+                                  title="Permanently Delete Guest & All Linked Data"
+                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-300 font-bold rounded-lg transition-colors inline-flex items-center gap-1 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -4990,6 +5019,26 @@ export default function FrontDeskView({
                                       className="px-3 py-1.5 bg-[#17120F] hover:bg-[#2A211B] text-[#C49A3A] border border-[#C49A3A]/50 font-bold rounded-lg transition-colors inline-flex items-center gap-1.5 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
                                     >
                                       <Undo2 className="w-3.5 h-3.5" /> Undo
+                                    </button>
+                                  )}
+                                  {onCascadeDeleteGuest && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setDeleteGuestTarget({
+                                          bookingId: g.bookingId || undefined,
+                                          checkinId: g.id,
+                                          bookingRef: g.bookingId || g.id,
+                                          guestName: g.guestName,
+                                          mobile: g.mobile,
+                                          roomNumbers: [g.roomNumber].filter(Boolean),
+                                          contextLabel: 'Checked-Out Guest',
+                                        })
+                                      }
+                                      title="Permanently Delete Guest & All Linked Data"
+                                      className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-300 font-bold rounded-lg transition-colors inline-flex items-center gap-1 text-xs shadow-2xs cursor-pointer whitespace-nowrap"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" /> Delete
                                     </button>
                                   )}
                                 </div>
@@ -8219,6 +8268,26 @@ export default function FrontDeskView({
           onClose={() => setIsConditionsModalOpen(false)}
         />
       )}
+
+      <GuestDeleteConfirmModal
+        target={deleteGuestTarget}
+        onCancel={() => setDeleteGuestTarget(null)}
+        onConfirm={(alsoRemoveGuestProfile) => {
+          if (deleteGuestTarget && onCascadeDeleteGuest) {
+            onCascadeDeleteGuest({
+              bookingId: deleteGuestTarget.bookingId,
+              checkinId: deleteGuestTarget.checkinId,
+              bookingRef: deleteGuestTarget.bookingRef,
+              guestName: deleteGuestTarget.guestName,
+              mobile: deleteGuestTarget.mobile,
+              roomNumbers: deleteGuestTarget.roomNumbers,
+              hotelId: selectedHotelId,
+              alsoRemoveGuestProfile,
+            });
+          }
+          setDeleteGuestTarget(null);
+        }}
+      />
     </div>
   );
 }

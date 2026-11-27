@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { GuestDeleteConfirmModal, GuestDeleteModalTarget } from './GuestDeleteConfirmModal';
+import { CascadeDeleteTarget } from '../utils/guestCascadeDelete';
 import { Booking, Room, RoomCategory, BookingSource, PaymentMethod, BookingStatus, UserRole, Invoice, WaterBottleRecord, BookedServiceSelection, DeletedItemRecord, TravelAgent, MealPlanType, BookedRoom, GuestCheckIn, PosOrder } from '../types';
 import {
   Search,
@@ -112,6 +114,7 @@ interface ReservationViewProps {
   onMoveToDeletedFolder?: (item: Omit<DeletedItemRecord, 'id' | 'deletedAt' | 'deletedBy'>) => void;
   travelAgents?: TravelAgent[];
   onUpdateTravelAgents?: (agents: TravelAgent[]) => void;
+  onCascadeDeleteGuest?: (target: CascadeDeleteTarget) => void;
 }
 
 const getTodayDateStr = () => {
@@ -197,8 +200,10 @@ export default function ReservationView({
   onClearInitialPreselect,
   onMoveToDeletedFolder,
   travelAgents = [],
-  onUpdateTravelAgents
+  onUpdateTravelAgents,
+  onCascadeDeleteGuest,
 }: ReservationViewProps) {
+  const [deleteGuestTarget, setDeleteGuestTarget] = useState<GuestDeleteModalTarget | null>(null);
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -3478,6 +3483,28 @@ export default function ReservationView({
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Move to Trash</span>
+              </button>
+            )}
+
+            {onCascadeDeleteGuest && (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenMenuId(null);
+                  setDeleteGuestTarget({
+                    bookingId: bk.id,
+                    checkinId: item.linkedCheckin?.id,
+                    bookingRef: bk.id,
+                    guestName: bk.guestName,
+                    mobile: bk.mobile,
+                    roomNumbers: getReservationRoomNumbers(bk),
+                    contextLabel: 'Reservation & Guest Data',
+                  });
+                }}
+                className="w-full px-3.5 py-2 text-left hover:bg-rose-600 hover:text-white flex items-center gap-2.5 text-rose-700 font-bold cursor-pointer border-t border-rose-100"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Permanently (All Data)</span>
               </button>
             )}
           </div>
@@ -7124,6 +7151,26 @@ export default function ReservationView({
           </div>
         </div>
       )}
+
+      <GuestDeleteConfirmModal
+        target={deleteGuestTarget}
+        onCancel={() => setDeleteGuestTarget(null)}
+        onConfirm={(alsoRemoveGuestProfile) => {
+          if (deleteGuestTarget && onCascadeDeleteGuest) {
+            onCascadeDeleteGuest({
+              bookingId: deleteGuestTarget.bookingId,
+              checkinId: deleteGuestTarget.checkinId,
+              bookingRef: deleteGuestTarget.bookingRef,
+              guestName: deleteGuestTarget.guestName,
+              mobile: deleteGuestTarget.mobile,
+              roomNumbers: deleteGuestTarget.roomNumbers,
+              hotelId: hotelSettings?.id,
+              alsoRemoveGuestProfile,
+            });
+          }
+          setDeleteGuestTarget(null);
+        }}
+      />
     </div>
   );
 }
