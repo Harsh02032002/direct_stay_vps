@@ -2417,7 +2417,9 @@ export default function ReservationView({
     const yesterdayStr = getFutureDateStr(-1);
     const thisMonthPrefix = todayStr.slice(0, 7);
 
-    const isEventSegmentView = segmentFilter === 'Event / Banquet';
+    // Group & Event/Banquet bookings are long-running multi-room blocks: their dedicated lists keep showing
+    // them after check-in too (checked-out ones appear when the Status filter is set to Checked-Out).
+    const isEventSegmentView = segmentFilter === 'Event / Banquet' || segmentFilter === 'Group';
     const list = enrichedReservations.filter(item => {
       // Reservations List shows ONLY actual reservations (Draft, Confirmed, Upcoming, Cancelled, No-Show).
       // Exception: In dedicated Event Bookings view, also show active Checked-In Event bookings
@@ -3258,8 +3260,39 @@ export default function ReservationView({
     const canCancel = canPerformReservationAction('cancel', st, currentRole);
     const canNoShow = canPerformReservationAction('noShow', st, currentRole);
 
+    const canDirectDelete =
+      Boolean(onCascadeDeleteGuest) &&
+      (currentRole === 'Admin' || currentRole === 'SuperAdmin' || currentRole === 'Manager');
+
     return (
-      <div className="relative inline-block text-left" data-res-action-menu>
+      <div className="relative inline-flex items-center gap-1 text-left" data-res-action-menu>
+        {canDirectDelete && (
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              setOpenMenuId(null);
+              setDeleteGuestTarget({
+                bookingId: bk.id,
+                checkinId: item.linkedCheckin?.id,
+                bookingRef: bk.id,
+                guestName: bk.guestName,
+                mobile: bk.mobile,
+                roomNumbers: getReservationRoomNumbers(bk),
+                contextLabel:
+                  item.primarySegment === 'Event / Banquet'
+                    ? 'Event Booking & Guest Data'
+                    : item.primarySegment === 'Group'
+                    ? 'Group Booking & Guest Data'
+                    : 'Reservation & Guest Data',
+              });
+            }}
+            className="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 hover:border-rose-600 flex items-center justify-center transition-colors cursor-pointer"
+            title="Delete Booking Permanently"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
         <button
           type="button"
           onClick={e => {
@@ -3954,8 +3987,8 @@ export default function ReservationView({
             <option value="Draft">Draft</option>
             <option value="Confirmed">Confirmed</option>
             <option value="Upcoming">Upcoming</option>
-            {segmentFilter === 'Event / Banquet' && <option value="Checked-In">Checked-In</option>}
-            {segmentFilter === 'Event / Banquet' && <option value="Checked-Out">Checked-Out</option>}
+            {(segmentFilter === 'Event / Banquet' || segmentFilter === 'Group') && <option value="Checked-In">Checked-In</option>}
+            {(segmentFilter === 'Event / Banquet' || segmentFilter === 'Group') && <option value="Checked-Out">Checked-Out</option>}
             <option value="Cancelled">Cancelled</option>
             <option value="No-Show">No-Show</option>
           </select>

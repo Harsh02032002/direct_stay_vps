@@ -84,8 +84,45 @@ function scheduleAtlasStateFlush(rawCol: any) {
   });
 }
 
+// Multi-process safety: if ANOTHER server process (e.g. a local dev server or a second VPS worker)
+// wrote a newer FULL_PMS_BACKUP to Atlas, reload it instead of serving / re-flushing our stale RAM copy.
+// Without this, a long-running process would overwrite newer data with its old cache on its next write.
+let memStateLastRemoteCheckMs = 0;
+async function refreshMemStateIfRemoteNewer(rawCol: any) {
+  if (!memStateDoc || IS_LOCAL_READONLY_SANDBOX) return;
+  if (atlasFlushPending || atlasFlushRunning) return; // our own unflushed writes are newest — never replace them
+  const nowMs = Date.now();
+  if (nowMs - memStateLastRemoteCheckMs < 2000) return;
+  memStateLastRemoteCheckMs = nowMs;
+  try {
+    const head: any = await rawCol.findOne(
+      { _id: "FULL_PMS_BACKUP" as any },
+      { projection: { updatedAt: 1 } }
+    );
+    const remoteTs = String(head?.updatedAt || "");
+    if (!remoteTs || remoteTs <= String(memStateDoc.updatedAt || "")) return;
+    const full: any = await rawCol.findOne({ _id: "FULL_PMS_BACKUP" as any });
+    if (
+      full?.data &&
+      !atlasFlushPending &&
+      !atlasFlushRunning &&
+      String(full.updatedAt || "") > String(memStateDoc.updatedAt || "")
+    ) {
+      memStateDoc = {
+        _id: "FULL_PMS_BACKUP",
+        data: full.data,
+        updatedAt: full.updatedAt,
+      };
+      console.log(`🔄 Reloaded newer pms_app_state from Atlas (remote updatedAt ${remoteTs}).`);
+    }
+  } catch (err: any) {
+    console.warn("⚠️ Remote freshness check skipped:", err?.message || err);
+  }
+}
+
 async function ensureMemStateLoaded(rawCol: any) {
   if (memStateDoc) {
+    await refreshMemStateIfRemoteNewer(rawCol);
     return {
       _id: "FULL_PMS_BACKUP",
       data: { ...memStateDoc.data },
@@ -434,7 +471,11 @@ function generateServerAuditId(prefix = "AUD"): string {
 // Async mutex to serialize state & audit log writes so rapid concurrent events never overwrite each other
 let stateWriteChain: Promise<any> = Promise.resolve();
 function withStateWriteLock<T>(fn: () => Promise<T>): Promise<T> {
-  const next = stateWriteChain.then(fn, fn);
+  const run = () => {
+    memStateLastRemoteCheckMs = 0;
+    return fn();
+  };
+  const next = stateWriteChain.then(run, run);
   stateWriteChain = next.catch(() => {});
   return next;
 }

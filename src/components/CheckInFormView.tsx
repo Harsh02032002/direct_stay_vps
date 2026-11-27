@@ -230,6 +230,9 @@ export default function CheckInFormView({
   // Track booking ID created via "Save as Draft" / "Add to Waitlist" in this form session
   // so clicking Draft -> Waitlist -> Reserve & Check-In updates the SAME booking in-place (ZERO duplicates!)
   const [activeSessionBookingId, setActiveSessionBookingId] = useState<string | null>(null);
+  // Remembers which booking type (individual / group / corporate / event) the session booking was saved as,
+  // so switching type and saving again creates a NEW booking instead of silently overwriting the previous one.
+  const activeSessionCategoryRef = React.useRef<string>('');
 
   useEffect(() => {
     const avail = Math.max(0, Number(waterBottleInventoryProduct?.currentStock ?? 0));
@@ -1319,7 +1322,13 @@ export default function CheckInFormView({
     const effectiveEnd = endStr || getFutureDateStr(1, effectiveStart);
     return bookings.find(b => {
       if (selectedBooking && b.id === selectedBooking.id) return false;
-      if (activeSessionBookingId && b.id === activeSessionBookingId) return false;
+      if (
+        activeSessionBookingId &&
+        b.id === activeSessionBookingId &&
+        (!activeSessionCategoryRef.current || activeSessionCategoryRef.current === bookingCategory)
+      ) {
+        return false;
+      }
       if (editingCheckIn && b.id === editingCheckIn.id) return false;
       const rawSt = String(b.status || '').toLowerCase().replace(/[\s_-]/g, '');
       if (b.status === 'Cancelled' || rawSt === 'cancelled' || rawSt === 'noshow' || rawSt === 'draft' || rawSt === 'waiting') return false;
@@ -2481,6 +2490,7 @@ export default function CheckInFormView({
   const handleSelectAdvanceBooking = (b: Booking) => {
     lastPopulatedBookingRef.current = `${b.id}:${rooms.length > 0 ? 'ready' : 'empty'}`;
     setActiveSessionBookingId(null);
+    activeSessionCategoryRef.current = '';
     setSelectedBooking(b);
     populateFormFromBooking(b, true);
   };
@@ -3077,10 +3087,28 @@ export default function CheckInFormView({
       const existingIds = new Set([...bookings, ...checkins].map(item => String(item.id || '')));
       let nextNum = Math.max(1001, Number(String(Date.now()).slice(-6)));
       while (existingIds.has(`GP-BKG-${nextNum}`)) nextNum += 1;
+      // If the guest/staff switched booking type (e.g. Corporate -> Event) after already saving this session,
+      // treat it as a separate booking (new ID) rather than overwriting the earlier one.
+      const categoryChangedSinceSave =
+        !selectedBooking &&
+        Boolean(activeSessionBookingId) &&
+        Boolean(activeSessionCategoryRef.current) &&
+        activeSessionCategoryRef.current !== bookingCategory;
+      let effectiveGroupBookingId = groupBookingId;
+      if (categoryChangedSinceSave && isMulti) {
+        let grpNum = Math.floor(1000 + Math.random() * 9000);
+        while (existingIds.has(`GRP-BKG-${grpNum}`)) grpNum += 1;
+        effectiveGroupBookingId = `GRP-BKG-${grpNum}`;
+        setGroupBookingId(effectiveGroupBookingId);
+      }
       const newResId =
         selectedBooking?.id ||
-        activeSessionBookingId ||
-        (isMulti ? groupBookingId : !existingIds.has(walkInPreviewBookingId) ? walkInPreviewBookingId : `GP-BKG-${nextNum}`);
+        (categoryChangedSinceSave ? '' : activeSessionBookingId) ||
+        (isMulti
+          ? effectiveGroupBookingId
+          : !existingIds.has(walkInPreviewBookingId)
+          ? walkInPreviewBookingId
+          : `GP-BKG-${nextNum}`);
 
       const activeHotelId =
         selectedBooking?.hotelId ||
@@ -3283,6 +3311,7 @@ export default function CheckInFormView({
       // Remember this booking ID for this form session so Draft -> Waitlist -> Confirm / Check-In
       // converts the SAME booking in-place instead of creating duplicate room bookings!
       setActiveSessionBookingId(newResId);
+      activeSessionCategoryRef.current = bookingCategory;
 
       const resolvedLabel =
         actionLabelOverride ||
@@ -4433,6 +4462,7 @@ export default function CheckInFormView({
     });
     setSelectedBooking(null);
     setActiveSessionBookingId(null);
+    activeSessionCategoryRef.current = '';
     setEditingCheckIn(null);
     setIsViewOnly(false);
     setLoadedExtraChargeIds([]);
@@ -7871,14 +7901,15 @@ export default function CheckInFormView({
                         type="button"
                         onClick={() => {
                           const isEventCat = inlineBookingSuccess.bookingCategory === 'event';
-                          if (inlineBookingSuccess.status === 'Checked-In' && !isEventCat) {
+                          const isGroupCat = inlineBookingSuccess.bookingCategory === 'group';
+                          if (inlineBookingSuccess.status === 'Checked-In' && !isEventCat && !isGroupCat) {
                             onSwitchTab('inhouse');
                             try {
                               window.history.pushState({}, '', '/admin/frontDesk/inhouse');
                             } catch {}
                             return;
                           }
-                          const targetSeg = isEventCat ? 'Event / Banquet' : 'All';
+                          const targetSeg = isEventCat ? 'Event / Banquet' : isGroupCat ? 'Group' : 'All';
                           try {
                             sessionStorage.setItem('pms_reservation_segment', targetSeg);
                             window.dispatchEvent(
@@ -7894,6 +7925,8 @@ export default function CheckInFormView({
                       >
                         {inlineBookingSuccess.bookingCategory === 'event'
                           ? 'View in Event Bookings →'
+                          : inlineBookingSuccess.bookingCategory === 'group'
+                          ? 'View in Group Bookings →'
                           : inlineBookingSuccess.status === 'Checked-In'
                           ? 'View in In-House Guests →'
                           : 'View in Reservation List →'}
@@ -7904,6 +7937,7 @@ export default function CheckInFormView({
                         type="button"
                         onClick={() => {
                           setActiveSessionBookingId(null);
+                          activeSessionCategoryRef.current = '';
                           setSelectedBooking(null);
                           setInlineBookingSuccess(null);
                           setWalkInIdSeed(Number(String(Date.now()).slice(-6)) + 1);
