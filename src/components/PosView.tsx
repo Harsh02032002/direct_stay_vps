@@ -594,7 +594,9 @@ export default function PosView({
       sourceId: orderObj.id,
       amount: Number(orderObj.grandTotal || 0),
       description: `POS Room Charge #${orderObj.orderNumber} (${itemsSummary})${orderObj.isWithoutGst ? ' [GST Exempt]' : ''}`,
-      dateTime: new Date().toISOString(),
+      dateTime: orderObj.date
+        ? `${String(orderObj.date).slice(0, 10)}T${/^\d{2}:\d{2}/.test(String(orderObj.time || '')) ? String(orderObj.time).slice(0, 5) : '12:00'}:00`
+        : new Date().toISOString(),
       ...(orderObj.isWithoutGst ? { isWithoutGst: true, gstExempt: true, taxAmount: 0 } : { isWithoutGst: false, gstExempt: false, taxAmount: Number(orderObj.taxAmount || 0) })
     } as ExtraCharge;
 
@@ -1004,6 +1006,8 @@ export default function PosView({
         isHeld: false,
         status: existing?.kotSent ? existing.status : 'Saved',
         kitchenStatus: existing?.kitchenStatus || 'Pending',
+        date: orderDateInput || existing?.date || new Date().toISOString().split('T')[0],
+        time: orderTimeInput || existing?.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         notes: orderNotes
       };
 
@@ -1249,8 +1253,8 @@ export default function PosView({
       paymentMethod,
       paymentStatus: 'Unpaid',
       status: 'Held',
-      date: new Date().toISOString().split('T')[0],
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      date: orderDateInput || new Date().toISOString().split('T')[0],
+      time: orderTimeInput || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       hotelId: selectedHotelId,
       isHeld: true,
       heldAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -1271,6 +1275,8 @@ export default function PosView({
     setActiveOrderId(heldOrder.id);
     setOrderType(heldOrder.orderType);
     if (heldOrder.tableNo) setTableNo(heldOrder.tableNo);
+    if (heldOrder.date) setOrderDateInput(String(heldOrder.date).slice(0, 10));
+    if (heldOrder.time && /^\d{2}:\d{2}/.test(String(heldOrder.time))) setOrderTimeInput(String(heldOrder.time).slice(0, 5));
 
     // Reconstruct cart
     const reconstructedCart: ExtendedCartItem[] = heldOrder.items.map((it, idx) => {
@@ -1394,7 +1400,7 @@ export default function PosView({
       settledAt: new Date().toISOString(),
       invoiceGenerated: true,
       invoiceNumber: generatedInvNo,
-      invoiceDate: new Date().toISOString().split('T')[0],
+      invoiceDate: settlingOrder.date || orderDateInput || new Date().toISOString().split('T')[0],
       isClosed: true,
       inventoryUpdated: true
     };
@@ -1456,6 +1462,8 @@ export default function PosView({
 
     if (existingActive) {
       setActiveOrderId(existingActive.id);
+      if (existingActive.date) setOrderDateInput(String(existingActive.date).slice(0, 10));
+      if (existingActive.time && /^\d{2}:\d{2}/.test(String(existingActive.time))) setOrderTimeInput(String(existingActive.time).slice(0, 5));
       // Reconstruct cart
       const reconstructedCart: ExtendedCartItem[] = existingActive.items.map((it, idx) => {
         const origItem = items.find(i => i.id === it.itemId) || {

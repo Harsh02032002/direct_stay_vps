@@ -802,7 +802,11 @@ export const PosModule: React.FC<PosModuleProps> = ({
     };
     const onDateFilterEvt = (e: Event) => {
       const dt = String((e as CustomEvent)?.detail?.date ?? '');
-      if (dt) setHistoryDateFilter(dt);
+      if (dt) {
+        operationalDateRef.current = dt;
+        setHistoryDateFilter(dt);
+        setCustomOrderDate(dt);
+      }
     };
     window.addEventListener('directstay:pos-new-order', onNewOrderEvt);
     window.addEventListener('directstay:pos-global-search', onGlobalSearchEvt);
@@ -825,12 +829,34 @@ export const PosModule: React.FC<PosModuleProps> = ({
   const [gstEnabled, setGstEnabled] = useState(true);
   const [customerGstin, setCustomerGstin] = useState('');
   const [companyName, setCompanyName] = useState('');
-  // Back-Dated Food Billing Date & Time
-  const [customOrderDate, setCustomOrderDate] = useState<string>(() => getIstTodayStr());
+  // Back-Dated Food Billing Date & Time (syncs with Standalone POS top-bar operational date too!)
+  const operationalDateRef = useRef<string>(
+    (typeof window !== 'undefined' && (window as any).__directstayPosOperationalDate) || getIstTodayStr()
+  );
+  const [customOrderDate, setCustomOrderDate] = useState<string>(() => operationalDateRef.current || getIstTodayStr());
   const [customOrderTime, setCustomOrderTime] = useState<string>(() => {
     const d = new Date();
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   });
+  const resolveOrderDateTimeStr = (fallbackDt?: string): string => {
+    const cleanDate = String(customOrderDate || '').trim();
+    const fallbackTime =
+      fallbackDt && /\d{2}:\d{2}/.test(fallbackDt)
+        ? (fallbackDt.match(/(\d{2}:\d{2})/)?.[1] || getIstDateTimeStr().slice(11, 16))
+        : getIstDateTimeStr().slice(11, 16);
+    const cleanTime = String(customOrderTime || '').trim() || fallbackTime;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+      return `${cleanDate} ${cleanTime}`;
+    }
+    return fallbackDt || getIstDateTimeStr();
+  };
+  const hydrateOrderDateTimeFromStr = (rawDt?: string) => {
+    const s = String(rawDt || '').trim();
+    const dateMatch = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    const timeMatch = s.match(/[T ](\d{2}:\d{2})/);
+    if (dateMatch) setCustomOrderDate(dateMatch[1]);
+    if (timeMatch) setCustomOrderTime(timeMatch[1]);
+  };
   const [payMode, setPayMode] = useState<
     'Cash' | 'UPI' | 'Card' | 'Bank Transfer' | 'Room Charge' | 'Hybrid'
   >('Cash');
@@ -1124,7 +1150,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
     setGstEnabled(true);
     setCustomerGstin('');
     setCompanyName('');
-    setCustomOrderDate(getIstTodayStr());
+    setCustomOrderDate(operationalDateRef.current || getIstTodayStr());
     const _now = new Date();
     setCustomOrderTime(`${String(_now.getHours()).padStart(2, '0')}:${String(_now.getMinutes()).padStart(2, '0')}`);
     setPayMode('Cash');
@@ -1178,6 +1204,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
     setGstEnabled(!ord.isWithoutGst);
     setCustomerGstin(ord.customerGstin || '');
     setCompanyName(ord.companyName || '');
+    hydrateOrderDateTimeFromStr(ord.dateTime);
 
     if (ord.discountMeta && ord.discountMeta.amount > 0) {
       setDiscountEnabled(true);
@@ -1395,7 +1422,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
       isHeld: true,
       bomDeducted: false,
       holdNote: instructions.trim() || `Held on ${orderType === 'Dine In' ? `Table ${tableNumber}` : orderType}`,
-      dateTime: customOrderDate && customOrderTime ? `${customOrderDate} ${customOrderTime}` : getIstDateTimeStr(),
+      dateTime: resolveOrderDateTimeStr(),
     };
     onCreatePosOrder(heldOrd);
     setCart([]);
@@ -1412,6 +1439,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
     if (held.waiterName) setWaiterName(held.waiterName);
     setCustomerNameInput(held.customerName || '');
     setCustomerPhoneInput(held.customerPhone || '');
+    hydrateOrderDateTimeFromStr(held.dateTime);
     setCart(
       held.items.map((it, idx) => {
         const cleanBaseName = cleanOrderItemBaseName(it.name, it.variant);
@@ -1598,7 +1626,24 @@ export const PosModule: React.FC<PosModuleProps> = ({
       isSubmittingRef.current = true;
       try {
         const nowIso = new Date().toISOString();
-        const prevPayments = editingOrder.payments || [];
+        const prevOrderDateStr = String(editingOrder.dateTime || '').slice(0, 10);
+        const nextOrderDateTimeStr = resolveOrderDateTimeStr(editingOrder.dateTime);
+        const nextOrderDateStr = nextOrderDateTimeStr.slice(0, 10);
+        const effectiveEditPayTimeIso =
+          nextOrderDateStr && nextOrderDateStr !== getIstTodayStr()
+            ? `${nextOrderDateStr}T${customOrderTime || '12:00'}:00`
+            : nowIso;
+        const prevPayments = (editingOrder.payments || []).map((p) => {
+          if (
+            prevOrderDateStr &&
+            nextOrderDateStr &&
+            prevOrderDateStr !== nextOrderDateStr &&
+            String(p.time || '').startsWith(prevOrderDateStr)
+          ) {
+            return { ...p, time: `${nextOrderDateStr}${String(p.time).slice(10)}` };
+          }
+          return p;
+        });
         const appendedPayments = [
           ...prevPayments,
           ...newRows.map((r, i) => ({
@@ -1606,7 +1651,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
             method: r.method,
             amount: r.amount,
             reference: r.reference,
-            time: nowIso,
+            time: effectiveEditPayTimeIso,
             staff: loggedInUser,
             upiUtr: r.upiUtr,
             verifiedBy: r.verifiedBy,
@@ -1738,6 +1783,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
           paymentStatus: payStatusEdit,
           kotStatus: nextKotStatus,
           instructions,
+          dateTime: resolveOrderDateTimeStr(editingOrder.dateTime),
           payments: appendedPayments,
           amountPaid: isRoomPostEdit ? 0 : Math.min(grandTotal, totalPaidAfterEdit),
           balanceDue: balanceDueEdit,
@@ -1895,6 +1941,11 @@ export const PosModule: React.FC<PosModuleProps> = ({
       const isSupplementary = Boolean(openCheckForCurrentTable);
       const kotNumber = `KOT-${(openCheckForCurrentTable ? openCheckForCurrentTable.orders.length + 1 : 1)}-${orderNum.replace('POS-', '')}`;
 
+      const effectiveOrderDateTime = resolveOrderDateTimeStr();
+      const effectivePayTimeIso =
+        customOrderDate && customOrderDate !== getIstTodayStr()
+          ? `${customOrderDate}T${customOrderTime || '12:00'}:00`
+          : nowIso;
       const payments = [
         ...(advanceDepositCredit > 0
           ? [
@@ -1903,7 +1954,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
                 method: 'Advance Deposit',
                 amount: advanceDepositCredit,
                 reference: linkedAdvanceId || 'Advance Booking Deposit',
-                time: nowIso,
+                time: effectivePayTimeIso,
                 staff: loggedInUser,
               },
             ]
@@ -1913,7 +1964,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
           method: r.method,
           amount: r.amount,
           reference: r.reference,
-          time: nowIso,
+          time: effectivePayTimeIso,
           staff: loggedInUser,
           upiUtr: r.upiUtr,
           verifiedBy: r.verifiedBy,
@@ -2018,7 +2069,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
         paymentStatus: payStatus,
         kotStatus: 'KOT Sent',
         instructions,
-        dateTime: customOrderDate && customOrderTime ? `${customOrderDate} ${customOrderTime}` : getIstDateTimeStr(),
+        dateTime: effectiveOrderDateTime,
         payments,
         amountPaid: isRoomPost ? 0 : totalReceivedWithDeposit,
         balanceDue,
@@ -4244,6 +4295,41 @@ export const PosModule: React.FC<PosModuleProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* Bill Date & Time (Back-Date Allowed — Directly Visible on Order Ticket for KOT, Hold, Edit & Settlement) */}
+              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold uppercase text-slate-600 flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-amber-600" />
+                    Food Bill Date &amp; Time
+                  </span>
+                  {customOrderDate !== getIstTodayStr() && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                      Back-Dated
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={customOrderDate}
+                    onChange={(e) => {
+                      const nextVal = e.target.value;
+                      setCustomOrderDate(nextVal);
+                      if (nextVal) operationalDateRef.current = nextVal;
+                    }}
+                    title="Food Bill Date (Back-Date Allowed)"
+                    className="w-full px-2 py-1 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-800 focus:outline-none focus:border-amber-500"
+                  />
+                  <input
+                    type="time"
+                    value={customOrderTime}
+                    onChange={(e) => setCustomOrderTime(e.target.value)}
+                    title="Food Bill Time"
+                    className="w-full px-2 py-1 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-800 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
 
               {/* Running Check / Advance Deposit Banner */}
               {openCheckForCurrentTable && (
@@ -6949,7 +7035,11 @@ export const PosModule: React.FC<PosModuleProps> = ({
                     <input
                       type="date"
                       value={customOrderDate}
-                      onChange={(e) => setCustomOrderDate(e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setCustomOrderDate(v);
+                        if (v) operationalDateRef.current = v;
+                      }}
                       className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-800 focus:outline-none focus:border-amber-500"
                     />
                   </div>

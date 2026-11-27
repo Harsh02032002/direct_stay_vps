@@ -4302,6 +4302,8 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     setPosOrders((prev) => [enrichedOrder, ...prev]);
 
     const todayIso = new Date().toISOString().slice(0, 10);
+    const rawOrderDt = String(enrichedOrder.dateTime || '').trim();
+    const resolvedOrderDate = /^\d{4}-\d{2}-\d{2}/.test(rawOrderDt) ? rawOrderDt.slice(0, 10) : todayIso;
     const dbOrder: PosOrder = {
       id: enrichedOrder.id,
       hotelId: selectedHotelId,
@@ -4350,7 +4352,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         : enrichedOrder.kotStatus === 'Cancelled'
         ? 'Cancelled'
         : 'KOT Sent',
-      date: todayIso,
+      date: resolvedOrderDate,
       ...({
         kitchenStatus: enrichedOrder.kotStatus || 'KOT Sent',
         kotStatus: enrichedOrder.kotStatus || 'KOT Sent',
@@ -4388,7 +4390,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         gstRate: enrichedOrder.isWithoutGst ? 0 : (enrichedOrder.gstRate ?? billSettings.foodGstRate),
         gstAmount: enrichedOrder.taxAmount,
         totalAmount: enrichedOrder.grandTotal,
-        createdAt: enrichedOrder.dateTime || todayIso,
+        createdAt: enrichedOrder.dateTime || resolvedOrderDate,
       } as any),
     };
 
@@ -5362,6 +5364,10 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
                     gstRate: updatedOrd.gstRate,
                     customerGstin: updatedOrd.customerGstin,
                     companyName: updatedOrd.companyName,
+                    date: /^\d{4}-\d{2}-\d{2}/.test(String(updatedOrd.dateTime || '').trim())
+                      ? String(updatedOrd.dateTime).trim().slice(0, 10)
+                      : po.date,
+                    createdAt: updatedOrd.dateTime || (po as any).createdAt || po.date,
                     discountMeta: updatedOrd.discountMeta,
                     settlement: updatedOrd.settlement,
                     priceOverrides: updatedOrd.priceOverrides,

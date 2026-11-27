@@ -197,6 +197,7 @@ export const StandalonePosLayout: React.FC<StandalonePosLayoutProps> = ({
     if (!nextDate) return;
     setSelectedPosDate(nextDate);
     if (typeof window !== 'undefined') {
+      (window as any).__directstayPosOperationalDate = nextDate;
       window.dispatchEvent(
         new CustomEvent('directstay:pos-date-filter', { detail: { date: nextDate } })
       );
