@@ -99,7 +99,7 @@ export default function CheckoutClearanceModal({
 }: CheckoutClearanceModalProps) {
   if (!booking) return null;
 
-  // Hotel's own Configuration â†’ Payment Mode (enabled + custom tenders, live UPI QR / Bank card)
+  // Hotel's own Configuration → Payment Mode (enabled + custom tenders, live UPI QR / Bank card)
   const hotelPayModes = useHotelPaymentModes(hotelId, paymentModes);
   const hotelPayCfg = buildPaymentOptions(hotelPayModes, 'checkout');
   const useConfiguredPay = hotelPayCfg.configured;
@@ -157,7 +157,7 @@ export default function CheckoutClearanceModal({
   const [chargeAmt, setChargeAmt] = useState<number>(0);
   const [coHasDamageFine, setCoHasDamageFine] = useState(false);
 
-  // Bill adjustments & Tax â€” strictly locked if an invoice already exists for this stay
+  // Bill adjustments & Tax — strictly locked if an invoice already exists for this stay
   const [taxSettings] = useHotelTaxSettings();
   const settings = billSettings || normalizeBillSettings(taxSettings);
   const configuredRoomGst = settings.roomGstRate;
@@ -442,7 +442,7 @@ export default function CheckoutClearanceModal({
                 Check-Out Confirmation & Room Clearance
               </h3>
               <p className="text-[11px] text-slate-300 font-mono">
-                Booking #{bookingNo} â€¢ {guestName} {guestMobile ? `(${guestMobile})` : ''} â€¢ Room {roomDisplay}
+                Booking #{bookingNo} • {guestName} {guestMobile ? `(${guestMobile})` : ''} • Room {roomDisplay}
               </p>
             </div>
           </div>
@@ -474,7 +474,7 @@ export default function CheckoutClearanceModal({
             <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
               <span className="text-[10px] font-mono uppercase text-slate-400 block">Stay Duration</span>
               <span className="font-bold text-slate-900 text-xs">
-                {nights} Night(s) â€¢ Rm {roomDisplay}
+                {nights} Night(s) • Rm {roomDisplay}
               </span>
             </div>
             <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-200">
@@ -496,7 +496,7 @@ export default function CheckoutClearanceModal({
               </div>
               <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded font-mono text-[10px] font-bold">
                 {isGstEnabled
-                  ? `Room GST ${settings.roomGstRate}% â€¢ F&B GST ${settings.foodGstRate}%`
+                  ? `Room GST ${settings.roomGstRate}% • F&B GST ${settings.foodGstRate}%`
                   : '0% Bill of Supply (Without GST)'}
               </span>
             </div>
@@ -517,7 +517,7 @@ export default function CheckoutClearanceModal({
                     c.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-800'
                   }`}
                 >
-                  <span>{c.ok ? 'âœ“' : 'âœ•'}</span>
+                  <span>{c.ok ? '✓' : '✕'}</span>
                   <span className="truncate">#{c.num} {c.label}</span>
                 </div>
               ))}
@@ -565,7 +565,7 @@ export default function CheckoutClearanceModal({
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10px] uppercase font-bold text-slate-600">
-                  Existing Folio Items Already Posted ({existingServices.length} â€” Included Once, Never Duplicated)
+                  Existing Folio Items Already Posted ({existingServices.length} — Included Once, Never Duplicated)
                 </span>
               </div>
               <div className="border bg-white rounded-xl divide-y max-h-28 overflow-y-auto">
@@ -613,7 +613,7 @@ export default function CheckoutClearanceModal({
                       : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50'
                   }`}
                 >
-                  âœ“ Room OK (â‚¹0 Fine)
+                  ✓ Room OK (₹0 Fine)
                 </button>
                 <button
                   type="button"
@@ -624,7 +624,7 @@ export default function CheckoutClearanceModal({
                       : 'bg-white text-[#D92D4B] border-rose-300 hover:bg-rose-50'
                   }`}
                 >
-                  âš ï¸ Add Damage Fine
+                  ⚠️ Add Damage Fine
                 </button>
                 {onRegisterLostFound && (
                   <button
@@ -636,7 +636,7 @@ export default function CheckoutClearanceModal({
                         : 'bg-white text-amber-800 border-amber-300 hover:bg-amber-50'
                     }`}
                   >
-                    ðŸ§³ Found Item in Room {coLfLoggedItems.length > 0 ? `(${coLfLoggedItems.length})` : ''}
+                    🧳 Found Item in Room {coLfLoggedItems.length > 0 ? `(${coLfLoggedItems.length})` : ''}
                   </button>
                 )}
               </div>
@@ -646,7 +646,7 @@ export default function CheckoutClearanceModal({
               <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-300 space-y-2.5 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-amber-950">
-                    Register Item Found in Room {roomDisplay} â†’ Central Lost &amp; Found Register
+                    Register Item Found in Room {roomDisplay} → Central Lost &amp; Found Register
                   </span>
                   <span className="text-[10px] font-mono text-amber-800">Guest: {guestName}</span>
                 </div>
@@ -701,7 +701,7 @@ export default function CheckoutClearanceModal({
                         key={i}
                         className="px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-900 text-[10.5px] font-bold"
                       >
-                        âœ“ Logged: {it.itemName} ({it.category})
+                        ✓ Logged: {it.itemName} ({it.category})
                       </span>
                     ))}
                   </div>
@@ -733,7 +733,7 @@ export default function CheckoutClearanceModal({
                     }}
                     className="px-2.5 py-1 bg-white hover:bg-rose-100 text-[#9E2A2B] border border-rose-200 rounded-lg text-[10.5px] font-mono font-bold transition cursor-pointer"
                   >
-                    + {preset.label} (â‚¹{preset.amt})
+                    + {preset.label} (₹{preset.amt})
                   </button>
                 ))}
               </div>
@@ -767,7 +767,7 @@ export default function CheckoutClearanceModal({
                 />
               </div>
               <div className="sm:col-span-2">
-                <label className="text-[10px] font-mono uppercase text-slate-500 block mb-1">Amount (â‚¹)</label>
+                <label className="text-[10px] font-mono uppercase text-slate-500 block mb-1">Amount (₹)</label>
                 <input
                   type="number"
                   step="any"
@@ -796,7 +796,7 @@ export default function CheckoutClearanceModal({
                   <div key={ec.id} className="px-3 py-1.5 flex justify-between items-center text-xs">
                     <div>
                       <span className="font-bold text-[#9E2A2B] font-mono text-[10px] mr-2">
-                        [NEW â€¢ {ec.serviceType}]
+                        [NEW • {ec.serviceType}]
                       </span>
                       <span className="font-medium text-slate-800">{ec.description}</span>
                     </div>
@@ -835,7 +835,7 @@ export default function CheckoutClearanceModal({
                   <span className="font-mono font-bold">{formatINRDecimal(extrasTotal)}</span>
                 </div>
                 <div className="flex justify-between items-center pt-1 border-t border-dashed">
-                  <span>Discount / Concession (â‚¹):</span>
+                  <span>Discount / Concession (₹):</span>
                   <input
                     type="number"
                     min={0}
@@ -943,7 +943,7 @@ export default function CheckoutClearanceModal({
                     </div>
                   ) : !isGstEnabled ? (
                     <div className="text-[11px] font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1.5 rounded-lg">
-                      Bill of Supply â€” â‚¹0.00 Tax
+                      Bill of Supply — ₹0.00 Tax
                     </div>
                   ) : null}
                 </div>
@@ -975,7 +975,7 @@ export default function CheckoutClearanceModal({
                         className="flex justify-between items-center text-[11px] bg-white px-2.5 py-1.5 rounded-lg border border-slate-200"
                       >
                         <span>
-                          <strong>{p.paymentMethod}</strong> ({p.date}) â€¢ {p.transactionId}
+                          <strong>{p.paymentMethod}</strong> ({p.date}) • {p.transactionId}
                         </span>
                         <span className="font-mono font-bold text-emerald-700">
                           {formatINRDecimal(p.amount)}
@@ -1050,7 +1050,7 @@ export default function CheckoutClearanceModal({
             ) : netOutstanding === 0 ? (
               <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 font-bold flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-600" />
-                Full Bill Already Settled (â‚¹0.00 Due). Ready to complete checkout and release room as Dirty!
+                Full Bill Already Settled (₹0.00 Due). Ready to complete checkout and release room as Dirty!
               </div>
             ) : (
               <div className="space-y-3">
@@ -1087,9 +1087,9 @@ export default function CheckoutClearanceModal({
                     className="w-4 h-4 accent-[#15805D]"
                   />
                   <span>
-                    Mark Bill as Fully Paid (â‚¹0 Due)
+                    Mark Bill as Fully Paid (₹0 Due)
                     {remainingAfterCollection > 0
-                      ? ` â€” Collect ${formatINRDecimal(netOutstanding)} to clear`
+                      ? ` — Collect ${formatINRDecimal(netOutstanding)} to clear`
                       : ` (${formatINRDecimal(netOutstanding)} Collected)`}
                   </span>
                 </label>
@@ -1134,14 +1134,14 @@ export default function CheckoutClearanceModal({
                         </>
                       )}
                       {!isSplitPayment && (!useConfiguredPay || hotelPayCfg.hybridAllowed) && (
-                        <option value="__hybrid__">â‡„ Hybrid / Split Payment</option>
+                        <option value="__hybrid__">⇄ Hybrid / Split Payment</option>
                       )}
-                      {isSplitPayment && <option value="__single__">â† Back to Single Payment</option>}
+                      {isSplitPayment && <option value="__single__">← Back to Single Payment</option>}
                     </select>
                   </div>
                   <div>
                     <label className="block text-[10px] font-mono uppercase font-bold text-slate-500 mb-1">
-                      Amount Collecting (â‚¹)
+                      Amount Collecting (₹)
                     </label>
                     <input
                       type="number"
@@ -1218,7 +1218,7 @@ export default function CheckoutClearanceModal({
                     </div>
                     <div>
                       <label className="block text-[10px] font-mono uppercase font-bold text-amber-900 mb-1">
-                        Split Amount 2 (â‚¹)
+                        Split Amount 2 (₹)
                       </label>
                       <input
                         type="number"
@@ -1302,7 +1302,7 @@ export default function CheckoutClearanceModal({
                           </div>
                           <div>
                             <label className="block text-[10px] font-mono uppercase font-bold text-amber-900 mb-1">
-                              Split Amount {idx + 3} (â‚¹)
+                              Split Amount {idx + 3} (₹)
                             </label>
                             <input
                               type="number"
@@ -1346,7 +1346,7 @@ export default function CheckoutClearanceModal({
                             className="px-2.5 py-2 rounded-lg text-rose-700 hover:bg-rose-50 border border-rose-200 font-bold text-xs cursor-pointer"
                             title="Remove this payment row"
                           >
-                            âœ•
+                            ✕
                           </button>
                         </div>
                         {useConfiguredPay && (
@@ -1389,7 +1389,7 @@ export default function CheckoutClearanceModal({
                 {remainingAfterCollection > 0 && (
                   <div className="flex items-center justify-between p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800">
                     <span>
-                      âš ï¸ Unsettled Balance of <strong>{formatINRDecimal(remainingAfterCollection)}</strong> remains.
+                      ⚠️ Unsettled Balance of <strong>{formatINRDecimal(remainingAfterCollection)}</strong> remains.
                     </span>
                     <label className="flex items-center gap-1.5 font-bold cursor-pointer">
                       <input

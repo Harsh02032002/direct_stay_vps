@@ -218,7 +218,7 @@ export default function RoomManagementView({
     const s = parseInt(startStr.replace(/\D/g, ''), 10);
     const e = parseInt(endStr.replace(/\D/g, ''), 10);
     if (Number.isNaN(s) || Number.isNaN(e) || s <= 0 || e < s) {
-      setFormError('Please enter a valid numeric range (From Room No. must be â‰¤ To Room No.).');
+      setFormError('Please enter a valid numeric range (From Room No. must be ≤ To Room No.).');
       return;
     }
     const count = e - s + 1;
@@ -643,7 +643,7 @@ export default function RoomManagementView({
           return;
         }
         if (rowRate <= 0) {
-          setFormError(`Room ${cleanNum} must have a positive Base Price (â‚¹).`);
+          setFormError(`Room ${cleanNum} must have a positive Base Price (₹).`);
           return;
         }
         validRoomsToAdd.push({
@@ -1047,7 +1047,7 @@ export default function RoomManagementView({
 
   return (
     <div className="space-y-6">
-      {/* ðŸ›ï¸ ROOMS MODULE TOP HEADER & NAVIGATION BAR */}
+      {/* 🛏️ ROOMS MODULE TOP HEADER & NAVIGATION BAR */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5 shadow-xs space-y-4 no-print">
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
@@ -1211,7 +1211,7 @@ export default function RoomManagementView({
                   onClick={() => setActiveSubTab('categories')}
                   className="px-3 py-1.5 bg-luxury-beige-100 hover:bg-luxury-beige-200 text-luxury-brown-900 text-xs font-bold rounded-lg transition-colors border border-luxury-brown-200"
                 >
-                  Manage Categories â†’
+                  Manage Categories →
                 </button>
               </div>
 
@@ -1241,7 +1241,7 @@ export default function RoomManagementView({
                           <td className="p-3 font-bold text-luxury-brown-900">{catTotal}</td>
                           <td className="p-3 text-emerald-700 font-bold">{catAvail}</td>
                           <td className="p-3 text-rose-700 font-bold">{catOcc}</td>
-                          <td className="p-3 font-bold text-luxury-gold-700">â‚¹{Number(cat.rate || 0).toLocaleString()}</td>
+                          <td className="p-3 font-bold text-luxury-gold-700">₹{Number(cat.rate || 0).toLocaleString()}</td>
                           <td className="p-3 text-right">
                             <div className="flex items-center justify-end gap-2">
                               <div className="w-16 bg-gray-200 rounded-full h-2 overflow-hidden">
@@ -1390,7 +1390,7 @@ export default function RoomManagementView({
                         </div>
                         <div className="text-[11px] sm:text-xs text-slate-600 flex items-center gap-1">
                           <span className="text-slate-400 font-medium">Base Tariff:</span>
-                          <strong className="text-[#17120F] font-bold font-mono">â‚¹{Number(catRooms[0]?.rate || 2000).toLocaleString('en-IN')}</strong>
+                          <strong className="text-[#17120F] font-bold font-mono">₹{Number(catRooms[0]?.rate || 2000).toLocaleString('en-IN')}</strong>
                           <span className="text-slate-400">/ night</span>
                         </div>
                       </div>
@@ -1416,7 +1416,7 @@ export default function RoomManagementView({
                         Room {room.number}
                       </h4>
                       <span className="text-[10px] uppercase font-mono text-luxury-brown-500">
-                        {room.category} â€¢ {room.floor || '1st Floor'}
+                        {room.category} • {room.floor || '1st Floor'}
                       </span>
                     </div>
                     <span
@@ -1432,7 +1432,7 @@ export default function RoomManagementView({
                     <div className="flex justify-between text-[10px] font-mono">
                       <span className="text-luxury-brown-500">TARIFF:</span>
                       <strong className="text-luxury-gold-700">
-                        â‚¹{Number(room.rate || 0).toLocaleString()}/N
+                        ₹{Number(room.rate || 0).toLocaleString()}/N
                       </strong>
                     </div>
                     <div className="flex justify-between text-[10px] font-mono">
@@ -1456,7 +1456,7 @@ export default function RoomManagementView({
                     <div className="flex justify-between text-[10px] font-mono">
                       <span className="text-luxury-brown-500">EXTRA BED:</span>
                       <strong className={room.allowExtraBed !== false ? 'text-emerald-700 font-bold' : 'text-rose-700 font-bold'}>
-                        {room.allowExtraBed !== false ? 'âœ“ Possible' : 'âœ• Not Allowed'}
+                        {room.allowExtraBed !== false ? '✓ Possible' : '✕ Not Allowed'}
                       </strong>
                     </div>
                   </div>
@@ -1577,7 +1577,7 @@ export default function RoomManagementView({
 
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider font-mono text-luxury-brown-600 block font-bold">Base Tariff (â‚¹) *</label>
+                      <label className="text-[10px] uppercase tracking-wider font-mono text-luxury-brown-600 block font-bold">Base Tariff (₹) *</label>
                       <input 
                         type="number" 
                         step="any"
@@ -1588,7 +1588,7 @@ export default function RoomManagementView({
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase tracking-wider font-mono text-luxury-brown-600 block font-bold">Extra Pax Fee (â‚¹)</label>
+                      <label className="text-[10px] uppercase tracking-wider font-mono text-luxury-brown-600 block font-bold">Extra Pax Fee (₹)</label>
                       <input 
                         type="number" 
                         step="any"
@@ -1653,7 +1653,7 @@ export default function RoomManagementView({
                 </form>
               ) : (
                 <div className="bg-luxury-beige-100/30 border border-luxury-brown-100 rounded-2xl p-5 text-center text-xs text-luxury-brown-500 flex flex-col justify-center items-center gap-2">
-                  <span>ðŸ”’ Operational Read-Only</span>
+                  <span>🔒 Operational Read-Only</span>
                   <p className="text-[10px] leading-normal">Staff profiles are restricted from altering standard hotel categories and dynamic pricing rules.</p>
                 </div>
               )}
@@ -1665,7 +1665,7 @@ export default function RoomManagementView({
                     <tr className="bg-luxury-beige-50 text-luxury-brown-800 font-serif font-bold border-b border-luxury-brown-100">
                       <th className="p-3">Category Name</th>
                       <th className="p-3">Bed Type</th>
-                      <th className="p-3">Nightly Rate (â‚¹)</th>
+                      <th className="p-3">Nightly Rate (₹)</th>
                       <th className="p-3">Base / Max</th>
                       <th className="p-3">Extra Pax Fee</th>
                       <th className="p-3">Rooms Mapped</th>
@@ -1689,13 +1689,13 @@ export default function RoomManagementView({
                                 className="w-20 px-2 py-1 border border-luxury-brown-200 rounded text-center text-xs text-luxury-brown-950 focus:border-luxury-gold-500 focus:outline-none"
                               />
                             ) : (
-                              <span>â‚¹{cat.rate}</span>
+                              <span>₹{cat.rate}</span>
                             )}
                           </td>
                           <td className="p-3">
                             <span>{cat.baseOcc} / {cat.maxOcc} Pax</span>
                           </td>
-                          <td className="p-3 font-bold text-emerald-700">â‚¹{cat.extra}</td>
+                          <td className="p-3 font-bold text-emerald-700">₹{cat.extra}</td>
                           <td className="p-3">
                             <span className="font-bold text-luxury-brown-900 bg-luxury-beige-100 px-2.5 py-1 rounded-full text-[10px]">
                               {roomsInCat} Units
@@ -1946,7 +1946,7 @@ export default function RoomManagementView({
                       <div>
                         <h4 className="font-serif font-bold text-luxury-brown-950 text-base">Room {room.number}</h4>
                         <span className="text-[10px] uppercase font-mono text-luxury-brown-500">
-                          {room.category} â€¢ {room.floor || '1st Floor'}
+                          {room.category} • {room.floor || '1st Floor'}
                         </span>
                       </div>
                       <span className={`text-[9px] font-mono font-bold px-2.5 py-1 border rounded-full uppercase tracking-wide ${getStatusBadge(room.status)}`}>
@@ -1957,7 +1957,7 @@ export default function RoomManagementView({
                     <div className="bg-luxury-beige-50 p-2.5 rounded-xl text-xs space-y-1 border border-luxury-brown-100">
                       <div className="flex justify-between text-[10px] font-mono">
                         <span className="text-luxury-brown-500">TARIFF:</span>
-                        <strong className="text-luxury-gold-700">â‚¹{Number(room.rate || 0).toLocaleString()}/N</strong>
+                        <strong className="text-luxury-gold-700">₹{Number(room.rate || 0).toLocaleString()}/N</strong>
                       </div>
                       <div className="flex justify-between text-[10px] font-mono">
                         <span className="text-luxury-brown-500">HOUSEKEEPING:</span>
@@ -2049,7 +2049,7 @@ export default function RoomManagementView({
                   <div className="flex justify-between items-start">
                     <div>
                       <h4 className="font-serif font-bold text-luxury-brown-950 text-base">Room {room.number}</h4>
-                      <span className="text-[10px] uppercase font-mono text-luxury-brown-500">{room.category} â€¢ {room.floor || '1st Floor'}</span>
+                      <span className="text-[10px] uppercase font-mono text-luxury-brown-500">{room.category} • {room.floor || '1st Floor'}</span>
                     </div>
                     <span className={`text-[9px] font-mono font-bold px-2.5 py-1 border rounded-full uppercase tracking-wide ${getStatusBadge(room.status)}`}>
                       {room.status}
@@ -2059,7 +2059,7 @@ export default function RoomManagementView({
                   <div className="bg-luxury-beige-50 p-2.5 rounded-xl text-xs space-y-1 border border-luxury-brown-100">
                     <div className="flex justify-between text-[10px] font-mono">
                       <span className="text-luxury-brown-500">TARIFF:</span>
-                      <strong className="text-luxury-gold-700">â‚¹{Number(room.rate || 0).toLocaleString()}/N</strong>
+                      <strong className="text-luxury-gold-700">₹{Number(room.rate || 0).toLocaleString()}/N</strong>
                     </div>
                     <div className="flex justify-between text-[10px] font-mono">
                       <span className="text-luxury-brown-500">CLEANING:</span>
@@ -2070,7 +2070,7 @@ export default function RoomManagementView({
                     <div className="flex justify-between text-[10px] font-mono">
                       <span className="text-luxury-brown-500">EXTRA BED:</span>
                       <strong className={room.allowExtraBed !== false ? 'text-emerald-700 font-bold' : 'text-rose-700 font-bold'}>
-                        {room.allowExtraBed !== false ? 'âœ“ Possible' : 'âœ• Not Allowed'}
+                        {room.allowExtraBed !== false ? '✓ Possible' : '✕ Not Allowed'}
                       </strong>
                     </div>
                     {room.outOfOrderReason && (
@@ -2176,7 +2176,7 @@ export default function RoomManagementView({
                 </div>
               </div>
 
-              {/* âš¡ EARLY CHECK-IN PRICING RULES */}
+              {/* ⚡ EARLY CHECK-IN PRICING RULES */}
               <div className="bg-gradient-to-br from-[#FFFDF7] via-[#FDF8EC] to-[#FAF1DC] p-4 rounded-2xl border border-[#DFC07A] space-y-3.5 shadow-2xs">
                 <div className="flex flex-wrap items-center justify-between gap-2.5">
                   <div>
@@ -2216,7 +2216,7 @@ export default function RoomManagementView({
                               : 'text-slate-600 hover:bg-slate-50'
                           }`}
                         >
-                          Per Hour (â‚¹/hr)
+                          Per Hour (₹/hr)
                         </button>
                         <button
                           type="button"
@@ -2227,7 +2227,7 @@ export default function RoomManagementView({
                               : 'text-slate-600 hover:bg-slate-50'
                           }`}
                         >
-                          Fixed Flat (â‚¹)
+                          Fixed Flat (₹)
                         </button>
                       </div>
                     </div>
@@ -2235,7 +2235,7 @@ export default function RoomManagementView({
                     {earlyCheckInType === 'hourly' ? (
                       <div className="space-y-1">
                         <label className="text-[10.5px] font-mono uppercase font-bold text-[#7A5915] block">
-                          Early Check-In Rate (â‚¹ / Hour) *
+                          Early Check-In Rate (₹ / Hour) *
                         </label>
                         <input
                           type="text"
@@ -2250,13 +2250,13 @@ export default function RoomManagementView({
                           className="w-full px-3 py-2 bg-white border border-[#DFC07A] rounded-xl text-xs font-mono font-extrabold text-[#1F2937] focus:outline-none focus:border-[#C49A3A]"
                         />
                         <span className="text-[10px] text-slate-500 block">
-                          Default â‚¹0 â€¢ Current rate: â‚¹{earlyCheckInHourlyRate.toLocaleString('en-IN')}/hr (editable at check-in)
+                          Default ₹0 • Current rate: ₹{earlyCheckInHourlyRate.toLocaleString('en-IN')}/hr (editable at check-in)
                         </span>
                       </div>
                     ) : (
                       <div className="space-y-1">
                         <label className="text-[10.5px] font-mono uppercase font-bold text-[#7A5915] block">
-                          Fixed Early Check-In Charge (â‚¹) *
+                          Fixed Early Check-In Charge (₹) *
                         </label>
                         <input
                           type="text"
@@ -2271,7 +2271,7 @@ export default function RoomManagementView({
                           className="w-full px-3 py-2 bg-white border border-[#DFC07A] rounded-xl text-xs font-mono font-extrabold text-[#1F2937] focus:outline-none focus:border-[#C49A3A]"
                         />
                         <span className="text-[10px] text-slate-500 block">
-                          Default â‚¹0 â€¢ Flat â‚¹{earlyCheckInFixedRate.toLocaleString('en-IN')} surcharge for early arrival (editable at check-in)
+                          Default ₹0 • Flat ₹{earlyCheckInFixedRate.toLocaleString('en-IN')} surcharge for early arrival (editable at check-in)
                         </span>
                       </div>
                     )}
@@ -2307,7 +2307,7 @@ export default function RoomManagementView({
                 </div>
               </div>
 
-              {/* ðŸ•’ BACK-DATED CHECK-IN & PAST-TIME ENTRY POLICY */}
+              {/* 🕒 BACK-DATED CHECK-IN & PAST-TIME ENTRY POLICY */}
               <div className="bg-gradient-to-r from-amber-50/70 via-stone-50 to-amber-50/40 p-4 rounded-xl space-y-3 border border-luxury-gold-200/80 shadow-xs">
                 <div className="flex items-center justify-between gap-3">
                   <div className="space-y-0.5">
@@ -2323,7 +2323,7 @@ export default function RoomManagementView({
                       ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                       : 'bg-slate-100 text-slate-600 border border-slate-300'
                   }`}>
-                    {allowBackDatedCheckIn ? 'â— Active' : 'â—‹ Disabled'}
+                    {allowBackDatedCheckIn ? '● Active' : '○ Disabled'}
                   </span>
                 </div>
 
@@ -2344,7 +2344,7 @@ export default function RoomManagementView({
                 </div>
               </div>
 
-              {/* ðŸ½ï¸ BACK-DATED FOOD BILLING & RESTAURANT ENTRY POLICY */}
+              {/* 🍽️ BACK-DATED FOOD BILLING & RESTAURANT ENTRY POLICY */}
               <div className="bg-gradient-to-r from-amber-50/70 via-stone-50 to-amber-50/40 p-4 rounded-xl space-y-3 border border-luxury-gold-200/80 shadow-xs">
                 <div className="flex items-center justify-between gap-3">
                   <div className="space-y-0.5">
@@ -2360,7 +2360,7 @@ export default function RoomManagementView({
                       ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                       : 'bg-slate-100 text-slate-600 border border-slate-300'
                   }`}>
-                    {allowBackDatedFoodBill ? 'â— Active' : 'â—‹ Disabled'}
+                    {allowBackDatedFoodBill ? '● Active' : '○ Disabled'}
                   </span>
                 </div>
 
@@ -2424,14 +2424,14 @@ export default function RoomManagementView({
                     : addCreationMode === 'bulk'
                     ? 'Bulk Add Rooms (Multi-Floor Builder)'
                     : addCreationMode === 'range'
-                    ? 'Add Room Range (From â†’ To)'
+                    ? 'Add Room Range (From → To)'
                     : 'Register New Hotel Room Entity'}
                 </h3>
                 <p className="text-[10px] text-[#9A7120] uppercase tracking-widest font-mono font-bold">
                   {isRestrictedRole
                     ? 'Status Adjustments Only'
                     : formMode === 'add'
-                    ? 'Single Room â€¢ Room Range â€¢ Multi-Floor Bulk Setup'
+                    ? 'Single Room • Room Range • Multi-Floor Bulk Setup'
                     : 'Database Level Room Definition'}
                 </p>
               </div>
@@ -2440,7 +2440,7 @@ export default function RoomManagementView({
                 onClick={() => setIsFormOpen(false)}
                 className="text-slate-600 hover:bg-white/80 px-2.5 py-1 text-xs rounded-lg cursor-pointer font-semibold border border-transparent hover:border-[#E5D2A6]"
               >
-                âœ• Close
+                ✕ Close
               </button>
             </div>
 
@@ -2451,8 +2451,8 @@ export default function RoomManagementView({
                   {(
                     [
                       { id: 'single', label: 'Single Room', sub: '1 room' },
-                      { id: 'range', label: 'Room Range', sub: 'e.g. 101 â†’ 110' },
-                      { id: 'bulk', label: 'Bulk Multi-Floor', sub: 'Floors Ã— Rooms' },
+                      { id: 'range', label: 'Room Range', sub: 'e.g. 101 → 110' },
+                      { id: 'bulk', label: 'Bulk Multi-Floor', sub: 'Floors × Rooms' },
                     ] as const
                   ).map(tab => {
                     const active = addCreationMode === tab.id;
@@ -2596,10 +2596,10 @@ export default function RoomManagementView({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <span className="text-xs font-serif font-bold text-[#263449] block">
-                        Generate Rooms by Range (From â†’ To)
+                        Generate Rooms by Range (From → To)
                       </span>
                       <span className="text-[11px] text-slate-500">
-                        Enter starting &amp; ending room numbers and custom floor â€” edit or remove any room in the list below.
+                        Enter starting &amp; ending room numbers and custom floor — edit or remove any room in the list below.
                       </span>
                     </div>
                   </div>
@@ -2648,7 +2648,7 @@ export default function RoomManagementView({
                       onClick={() => generateRangeDraftRows(rangeStartNum, rangeEndNum, floor, category, rate)}
                       className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-[#D4A745] to-[#BE8F2E] hover:from-[#C49837] hover:to-[#A87D24] text-white text-xs font-extrabold cursor-pointer shadow-xs"
                     >
-                      Generate List â†“
+                      Generate List ↓
                     </button>
                   </div>
                 </div>
@@ -2662,7 +2662,7 @@ export default function RoomManagementView({
                       Bulk Multi-Floor Room Builder
                     </span>
                     <span className="text-[11px] text-slate-500">
-                      Enter starting room number, number of floors &amp; rooms per floor â€” edit any room or remove skipped numbers below.
+                      Enter starting room number, number of floors &amp; rooms per floor — edit any room or remove skipped numbers below.
                     </span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
@@ -2761,7 +2761,7 @@ export default function RoomManagementView({
                       }
                       className="py-2 px-4 rounded-xl bg-gradient-to-r from-[#D4A745] to-[#BE8F2E] hover:from-[#C49837] hover:to-[#A87D24] text-white text-xs font-extrabold cursor-pointer shadow-xs"
                     >
-                      Generate Room List â†“
+                      Generate Room List ↓
                     </button>
                   </div>
                 </div>
@@ -2880,7 +2880,7 @@ export default function RoomManagementView({
 
                     {bulkDraftRows.length === 0 ? (
                       <div className="p-6 text-center text-xs text-slate-500">
-                        Enter your range or floor counts above and click <strong>Generate List â†“</strong> to preview, edit, or remove rooms.
+                        Enter your range or floor counts above and click <strong>Generate List ↓</strong> to preview, edit, or remove rooms.
                       </div>
                     ) : (
                       <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
@@ -2888,7 +2888,7 @@ export default function RoomManagementView({
                           <span className="col-span-2">Room No.</span>
                           <span className="col-span-3">Floor</span>
                           <span className="col-span-3">Category / Type</span>
-                          <span className="col-span-3 text-right">Base Price (â‚¹)</span>
+                          <span className="col-span-3 text-right">Base Price (₹)</span>
                           <span className="col-span-1 text-center">Del</span>
                         </div>
                         {bulkDraftRows.map(row => {
@@ -3051,7 +3051,7 @@ export default function RoomManagementView({
                         }}
                         className="text-[10px] font-bold text-[#C49A3A] hover:underline cursor-pointer"
                       >
-                        {isCustomCategoryMode ? 'â† Choose Existing' : '+ New Category'}
+                        {isCustomCategoryMode ? '← Choose Existing' : '+ New Category'}
                       </button>
                     )}
                   </div>
@@ -3075,7 +3075,7 @@ export default function RoomManagementView({
                       )}
                       {categories.map(cat => (
                         <option key={cat.name} value={cat.name}>
-                          {cat.name} (â‚¹{cat.rate.toLocaleString('en-IN')}/Night)
+                          {cat.name} (₹{cat.rate.toLocaleString('en-IN')}/Night)
                         </option>
                       ))}
                       <option value="__ADD_NEW_CATEGORY__">+ Add New Custom Category...</option>
@@ -3111,7 +3111,7 @@ export default function RoomManagementView({
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Base Price (â‚¹ / Night) *</label>
+                <label className="text-xs font-mono text-luxury-brown-600 block uppercase font-bold">Base Price (₹ / Night) *</label>
                 <input
                   type="text" inputMode="numeric" required={formMode === 'edit' || addCreationMode === 'single'} placeholder="0"
                   disabled={isRestrictedRole}
@@ -3192,7 +3192,7 @@ export default function RoomManagementView({
                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
-                      âœ“ Yes (Allowed)
+                      ✓ Yes (Allowed)
                     </button>
                     <button
                       type="button"
@@ -3204,7 +3204,7 @@ export default function RoomManagementView({
                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
-                      âœ• No (Small Room)
+                      ✕ No (Small Room)
                     </button>
                   </div>
                 </div>
@@ -3393,7 +3393,7 @@ export default function RoomManagementView({
           <div className="bg-white rounded-3xl border border-luxury-gold-500/30 shadow-2xl max-w-md w-full p-6 space-y-4">
             <div className="flex justify-between items-center border-b pb-3">
               <div>
-                <h3 className="font-serif font-bold text-luxury-brown-950 text-base">Quick Status Update â€¢ Room {selectedRoomForStatus.number}</h3>
+                <h3 className="font-serif font-bold text-luxury-brown-950 text-base">Quick Status Update • Room {selectedRoomForStatus.number}</h3>
                 <p className="text-xs text-luxury-brown-500">Current Status: <strong>{selectedRoomForStatus.status}</strong></p>
               </div>
               <button onClick={() => setSelectedRoomForStatus(null)} className="text-luxury-brown-400 hover:text-black">
@@ -3408,37 +3408,37 @@ export default function RoomManagementView({
                   onClick={() => handleUpdateRoomStatusDirect(selectedRoomForStatus.id, 'Available', 'Clean')}
                   className="p-2.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-xl text-left border border-emerald-300"
                 >
-                  âœ“ Available & Clean
+                  ✓ Available & Clean
                 </button>
                 <button
                   onClick={() => handleUpdateRoomStatusDirect(selectedRoomForStatus.id, 'Dirty', 'Dirty')}
                   className="p-2.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-xl text-left border border-amber-300"
                 >
-                  ðŸ§¹ Dirty (Needs Housekeeping)
+                  🧹 Dirty (Needs Housekeeping)
                 </button>
                 <button
                   onClick={() => handleUpdateRoomStatusDirect(selectedRoomForStatus.id, 'Inspection', 'Needs Inspection')}
                   className="p-2.5 bg-purple-100 hover:bg-purple-200 text-purple-900 rounded-xl text-left border border-purple-300"
                 >
-                  ðŸ” Ready For Inspection
+                  🔍 Ready For Inspection
                 </button>
                 <button
                   onClick={() => handleUpdateRoomStatusDirect(selectedRoomForStatus.id, 'Maintenance', 'In Progress', 'Scheduled Maintenance')}
                   className="p-2.5 bg-amber-50 hover:bg-amber-100 text-amber-950 rounded-xl text-left border border-amber-300"
                 >
-                  ðŸ›  Maintenance
+                  🛠 Maintenance
                 </button>
                 <button
                   onClick={() => handleUpdateRoomStatusDirect(selectedRoomForStatus.id, 'Out of Order', 'Dirty', blockReasonInput || 'Out of Order')}
                   className="p-2.5 bg-red-100 hover:bg-red-200 text-red-950 rounded-xl text-left border border-red-300"
                 >
-                  âš ï¸ Out of Order (OOO)
+                  ⚠️ Out of Order (OOO)
                 </button>
                 <button
                   onClick={() => handleUpdateRoomStatusDirect(selectedRoomForStatus.id, 'Blocked', 'Clean', blockReasonInput || 'Blocked for VIP')}
                   className="p-2.5 bg-zinc-200 hover:bg-zinc-300 text-zinc-900 rounded-xl text-left border border-zinc-400"
                 >
-                  ðŸ”’ Block Room
+                  🔒 Block Room
                 </button>
               </div>
             </div>
@@ -3473,14 +3473,14 @@ export default function RoomManagementView({
                   Smart Room QR Standee
                 </span>
                 <h3 className="text-lg font-serif font-bold text-luxury-brown-900">
-                  Room {qrModalRoom.number} â€” {qrModalRoom.category || (qrModalRoom as any).type || 'Room'}
+                  Room {qrModalRoom.number} — {qrModalRoom.category || (qrModalRoom as any).type || 'Room'}
                 </h3>
               </div>
               <button
                 onClick={() => setQrModalRoom(null)}
                 className="text-gray-400 hover:text-gray-700 p-1.5 rounded-lg hover:bg-gray-100 cursor-pointer"
               >
-                âœ•
+                ✕
               </button>
             </div>
 
@@ -3558,10 +3558,10 @@ export default function RoomManagementView({
                   </span>
                 </div>
                 <h3 className="text-2xl font-serif font-bold text-luxury-brown-950 mt-1">
-                  Room {viewRoomDetails.number} â€” {viewRoomDetails.category || (viewRoomDetails as any).type || 'Standard'}
+                  Room {viewRoomDetails.number} — {viewRoomDetails.category || (viewRoomDetails as any).type || 'Standard'}
                 </h3>
                 <p className="text-xs text-luxury-brown-500">
-                  Floor: {viewRoomDetails.floor || '1st Floor'} â€¢ Bed: {viewRoomDetails.bedType || 'King Bed'} â€¢ Tariff: â‚¹{(viewRoomDetails.rate || 0).toLocaleString('en-IN')}/night
+                  Floor: {viewRoomDetails.floor || '1st Floor'} • Bed: {viewRoomDetails.bedType || 'King Bed'} • Tariff: ₹{(viewRoomDetails.rate || 0).toLocaleString('en-IN')}/night
                 </p>
               </div>
               <button
@@ -3591,7 +3591,7 @@ export default function RoomManagementView({
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-luxury-beige-50/60 p-4 rounded-2xl border border-luxury-beige-200">
               <div className="bg-white p-3 rounded-xl border border-luxury-brown-100 shadow-xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-luxury-brown-400 block">Nightly Tariff</span>
-                <span className="text-base font-bold font-serif text-luxury-brown-900">â‚¹{(viewRoomDetails.rate || 0).toLocaleString('en-IN')}</span>
+                <span className="text-base font-bold font-serif text-luxury-brown-900">₹{(viewRoomDetails.rate || 0).toLocaleString('en-IN')}</span>
               </div>
               <div className="bg-white p-3 rounded-xl border border-luxury-brown-100 shadow-xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-luxury-brown-400 block">Housekeeping</span>
@@ -3608,7 +3608,7 @@ export default function RoomManagementView({
               <div className="bg-white p-3 rounded-xl border border-luxury-brown-100 shadow-xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-luxury-brown-400 block">Extra Bed</span>
                 <span className={`text-sm font-bold block ${viewRoomDetails.allowExtraBed !== false ? 'text-emerald-700' : 'text-rose-700'}`}>
-                  {viewRoomDetails.allowExtraBed !== false ? `Allowed (+â‚¹${viewRoomDetails.extraPersonCharge || 500})` : 'Not Allowed'}
+                  {viewRoomDetails.allowExtraBed !== false ? `Allowed (+₹${viewRoomDetails.extraPersonCharge || 500})` : 'Not Allowed'}
                 </span>
               </div>
             </div>
@@ -3654,11 +3654,11 @@ export default function RoomManagementView({
                       </div>
                       <div>
                         <span className="text-[10px] text-luxury-brown-500 uppercase font-bold block">Advance Paid</span>
-                        <span className="font-bold text-emerald-700">â‚¹{(activeBooking.advanceAmount || (activeBooking as any).advancePaid || 0).toLocaleString('en-IN')}</span>
+                        <span className="font-bold text-emerald-700">₹{(activeBooking.advanceAmount || (activeBooking as any).advancePaid || 0).toLocaleString('en-IN')}</span>
                       </div>
                       <div>
                         <span className="text-[10px] text-luxury-brown-500 uppercase font-bold block">Total Amount</span>
-                        <span className="font-bold text-luxury-brown-900">â‚¹{(activeBooking.bookingAmount || (activeBooking as any).totalAmount || 0).toLocaleString('en-IN')}</span>
+                        <span className="font-bold text-luxury-brown-900">₹{(activeBooking.bookingAmount || (activeBooking as any).totalAmount || 0).toLocaleString('en-IN')}</span>
                       </div>
                     </div>
                   </div>

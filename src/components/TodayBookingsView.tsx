@@ -4737,7 +4737,7 @@ export default function TodayBookingsView({
                     Post Food Bill &amp; Room Service
                   </h3>
                   <p className="text-xs text-luxury-brown-200 font-mono">
-                    Room #{foodBillModalData.room.number} â€¢ {foodBillModalData.room.category} â€¢ {foodBillModalData.booking?.guestName || foodBillModalData.checkin?.guestName || 'Occupied Guest'}
+                    Room #{foodBillModalData.room.number} • {foodBillModalData.room.category} • {foodBillModalData.booking?.guestName || foodBillModalData.checkin?.guestName || 'Occupied Guest'}
                   </p>
                 </div>
               </div>
@@ -4769,7 +4769,7 @@ export default function TodayBookingsView({
               {/* Base Food Amount */}
               <div className="space-y-1">
                 <label className="font-bold text-luxury-brown-900 block">
-                  Food Base Amount (â‚¹) *
+                  Food Base Amount (₹) *
                 </label>
                 <input
                   type="number"
@@ -4858,17 +4858,17 @@ export default function TodayBookingsView({
                     <div className="pt-2 border-t border-slate-200 space-y-1 text-slate-600 font-mono text-[11px]">
                       <div className="flex justify-between">
                         <span>Food Base Amount:</span>
-                        <strong className="text-slate-800">â‚¹{base.toLocaleString()}</strong>
+                        <strong className="text-slate-800">₹{base.toLocaleString()}</strong>
                       </div>
                       {foodBillApplyGst && (
                         <div className="flex justify-between text-emerald-700">
                           <span>5% GST (2.5% CGST + 2.5% SGST):</span>
-                          <strong>â‚¹{gst.toLocaleString()}</strong>
+                          <strong>₹{gst.toLocaleString()}</strong>
                         </div>
                       )}
                       <div className="flex justify-between text-xs font-black text-slate-900 pt-1 border-t border-slate-200">
                         <span>Total Payable Food Bill:</span>
-                        <span className="text-emerald-700 font-sans font-extrabold text-sm">â‚¹{total.toLocaleString()}</span>
+                        <span className="text-emerald-700 font-sans font-extrabold text-sm">₹{total.toLocaleString()}</span>
                       </div>
                     </div>
                   );
