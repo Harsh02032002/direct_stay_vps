@@ -202,7 +202,14 @@ async function postSyncPayload(payload: Record<string, any>): Promise<{ success:
     for (const [k, v] of Object.entries(payload)) {
       if (k === 'hotels' && Array.isArray(v)) {
         sanitizedPayload[k] = v.filter((h: any) => h && h.id === callerHotelId);
-      } else if (Array.isArray(v) && k !== 'customPages' && k !== 'packages' && k !== 'registeredHotels') {
+      } else if (
+        Array.isArray(v) &&
+        k !== 'customPages' &&
+        k !== 'packages' &&
+        k !== 'registeredHotels' &&
+        k !== 'explicitDeletedInvoiceIds' &&
+        k !== 'explicitDeletedBookingIds'
+      ) {
         sanitizedPayload[k] = v
           .filter((item: any) => item && (!item.hotelId || item.hotelId === callerHotelId || (item.hotelId === 'hotel-1' && !item._preserveHotel1)))
           .map((item: any) => ({ ...item, hotelId: callerHotelId }));

@@ -3312,9 +3312,21 @@ async function startServer() {
           }
         }
 
-        // Super Admin credentials can never be written through the generic state sync
+        // Super Admin credentials & transient cascade-delete directives can never be persisted in pms_app_state
         delete (data as any).superAdminPass;
         delete (data as any).superAdminEmail;
+        const rawExplicitDelInvIds: string[] = Array.isArray((data as any).explicitDeletedInvoiceIds)
+          ? (data as any).explicitDeletedInvoiceIds.map((x: any) => String(x || "").trim()).filter(Boolean)
+          : [];
+        const rawExplicitDelBkgIds: string[] = Array.isArray((data as any).explicitDeletedBookingIds)
+          ? (data as any).explicitDeletedBookingIds.map((x: any) => String(x || "").trim()).filter(Boolean)
+          : [];
+        delete (data as any).explicitDeletedInvoiceIds;
+        delete (data as any).explicitDeletedBookingIds;
+        changedKeys.delete("explicitDeletedInvoiceIds");
+        changedKeys.delete("explicitDeletedBookingIds");
+        const explicitDeletedInvSet = new Set<string>(isPrivilegedAdmin ? rawExplicitDelInvIds : []);
+        const explicitDeletedBkgSet = new Set<string>(isPrivilegedAdmin ? rawExplicitDelBkgIds : []);
 
         const mergedStateData: Record<string, any> = {
           ...prevData,
@@ -3789,14 +3801,41 @@ async function startServer() {
             };
           });
 
-          // Preserve any historical finalized invoices that a client payload omitted (never silently delete finalized invoices)
+          // Preserve any historical finalized invoices that a client payload omitted —
+          // UNLESS explicitly cascade-deleted by an authorized Admin/Owner/SuperAdmin for their own hotel.
           const presentInvIds = new Set(dedupedInvs.map((i: any) => String(i?.id || "")).filter(Boolean));
           for (const [prevId, prevInv] of prevInvoicesById.entries()) {
             if (isFinalizedInvRecord(prevInv) && !presentInvIds.has(prevId)) {
-              dedupedInvs.push(prevInv);
+              const belongsToCaller =
+                isSuperAdminCaller || !callerHotelId || !prevInv?.hotelId || prevInv.hotelId === callerHotelId;
+              const isExplicitlyDeleted =
+                belongsToCaller &&
+                (explicitDeletedInvSet.has(prevId) ||
+                  (prevInv?.bookingId && explicitDeletedBkgSet.has(String(prevInv.bookingId))) ||
+                  (prevInv?.checkInId && explicitDeletedBkgSet.has(String(prevInv.checkInId))) ||
+                  (prevInv?.checkinId && explicitDeletedBkgSet.has(String(prevInv.checkinId))));
+              if (!isExplicitlyDeleted) {
+                dedupedInvs.push(prevInv);
+              }
             }
           }
           mergedStateData.invoices = dedupedInvs;
+        }
+
+        // Clean up GRC registry entries for explicitly cascade-deleted bookings/checkins
+        if (explicitDeletedBkgSet.size > 0) {
+          try {
+            const delArr = Array.from(explicitDeletedBkgSet);
+            const grcDelFilter: any = {
+              $or: [{ bookingId: { $in: delArr } }, { checkinId: { $in: delArr } }],
+            };
+            if (!isSuperAdminCaller && callerHotelId) {
+              grcDelFilter.hotelId = callerHotelId;
+            }
+            await db.collection("grc_registry").deleteMany(grcDelFilter);
+          } catch {
+            // Non-fatal GRC registry cleanup
+          }
         }
 
         const prevNotifIds = new Set(

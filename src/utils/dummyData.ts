@@ -671,6 +671,8 @@ export const savePmsData = (
     posCategories?: PosCategory[];
     posTables?: PosTableRecord[];
     leaveRequests?: StaffLeaveRequest[];
+    explicitDeletedInvoiceIds?: string[];
+    explicitDeletedBookingIds?: string[];
   },
   skipCloudSync = false
 ) => {

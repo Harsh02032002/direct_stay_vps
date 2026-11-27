@@ -231,7 +231,15 @@ export function computeDailyCollectionSheet(input: DailyCollectionReportInput) {
       (!!inDate && !outDate && inDate <= selectedDate) ||
       (bookedOn === selectedDate && Number(b.advanceAmount || 0) > 0);
 
-    if (isActive && b.status !== 'Cancelled') {
+    const stLower = String(b.status || '').toLowerCase().trim();
+    const isNonBillableStatus =
+      stLower === 'cancelled' ||
+      stLower === 'waiting' ||
+      stLower === 'waitlist' ||
+      stLower === 'draft' ||
+      stLower === 'no-show';
+
+    if (isActive && !isNonBillableStatus) {
       const key = makeRowKey(b.roomNumber, b.guestName);
       const existing = rowsMap.get(key);
       if (existing) {
@@ -1130,7 +1138,17 @@ export function computeAuthoritativeOpeningCash(params: {
   });
 
   (bookings || []).forEach((b) => {
-    if (!b || b.status === 'Cancelled') return;
+    const bStLower = String(b?.status || '').toLowerCase().trim();
+    if (
+      !b ||
+      bStLower === 'cancelled' ||
+      bStLower === 'waiting' ||
+      bStLower === 'waitlist' ||
+      bStLower === 'draft' ||
+      bStLower === 'no-show'
+    ) {
+      return;
+    }
     const stayKey = String(b.id || `${b.roomNumber}_${b.guestName}`);
     if (Array.isArray((b as any).payments) && (b as any).payments.length > 0) {
       (b as any).payments.forEach((p: any, i: number) => {

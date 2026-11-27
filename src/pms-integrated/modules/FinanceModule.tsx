@@ -732,7 +732,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
 
     filteredBookingsForPl.forEach((b) => {
       refunds += Number(b.refundAmount) || 0;
-      if (b.status === 'Cancelled' || b.status === 'No-Show') return;
+      const stL = String(b.status || '').toLowerCase().trim();
+      if (stL === 'cancelled' || stL === 'no-show' || stL === 'waiting' || stL === 'waitlist' || stL === 'draft') return;
       const rm = Number(b.roomSubtotal) || 0;
       const srv = Number(b.otherServicesTotal) || 0;
       const disc = Number(b.discountAmount) || 0;
@@ -788,9 +789,17 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
 
   // Pending Guest / Room Balance Due in selected date range
   const pendingDueBookings = useMemo(() => {
-    return filteredBookingsForPl.filter(
-      (b) => b.status !== 'Cancelled' && b.status !== 'No-Show' && (Number(b.dueAmount) || 0) > 0
-    );
+    return filteredBookingsForPl.filter((b) => {
+      const stL = String(b.status || '').toLowerCase().trim();
+      return (
+        stL !== 'cancelled' &&
+        stL !== 'no-show' &&
+        stL !== 'waiting' &&
+        stL !== 'waitlist' &&
+        stL !== 'draft' &&
+        (Number(b.dueAmount) || 0) > 0
+      );
+    });
   }, [filteredBookingsForPl]);
 
   const totalPendingBalanceDue = useMemo(() => {
@@ -1058,7 +1067,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
 
     // 1. Bookings (includes Room + Extra Bed/Person + Early Check-In + Water + Room-Billed POS + Services; b.taxAmount comes from single bill calculator!)
     filteredBookingsForPl.forEach((b) => {
-      if (b.status === 'Cancelled' || b.status === 'No-Show') return;
+      const stL = String(b.status || '').toLowerCase().trim();
+      if (stL === 'cancelled' || stL === 'no-show' || stL === 'waiting' || stL === 'waitlist' || stL === 'draft') return;
       const bkgTaxable = Math.max(
         0,
         r2((Number(b.roomSubtotal) || 0) + (Number(b.otherServicesTotal) || 0) - (Number(b.discountAmount) || 0))

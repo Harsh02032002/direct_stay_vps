@@ -2847,6 +2847,15 @@ export default function App() {
       waterBottles: mergedWaterBottles,
       laundryOrders: mergedLaundryOrders,
       vouchers: mergedVouchers,
+      explicitDeletedInvoiceIds: result.removedInvoiceIds,
+      explicitDeletedBookingIds: Array.from(
+        new Set([
+          ...result.removedBookingIds,
+          ...result.removedCheckinIds,
+          ...(target.bookingId ? [String(target.bookingId)] : []),
+          ...(target.checkinId ? [String(target.checkinId)] : []),
+        ])
+      ),
       ...(target.alsoRemoveGuestProfile ? { hotels: nextHotels } : {}),
     });
 

@@ -34,6 +34,9 @@ export interface CascadeDeleteCollections {
 }
 
 export interface CascadeDeleteResult extends CascadeDeleteCollections {
+  removedInvoiceIds: string[];
+  removedBookingIds: string[];
+  removedCheckinIds: string[];
   summary: {
     bookingsRemoved: number;
     checkinsRemoved: number;
@@ -49,13 +52,15 @@ export interface CascadeDeleteResult extends CascadeDeleteCollections {
 
 const norm = (v?: string | null): string => String(v || '').trim().toLowerCase();
 const normPhone = (v?: string | null): string => String(v || '').replace(/\D/g, '').slice(-10);
+const normDate = (v?: string | null): string => String(v || '').trim().slice(0, 10);
 
 /**
  * Pure, deterministic cascade-delete helper for removing a guest booking / stay
  * and EVERY linked record across bookings, checkins, rooms, invoices, POS orders,
  * water bottles, laundry orders, allocated services, and finance vouchers.
  *
- * Scoped strictly to the matched bookingId / checkinId (never touches unrelated guests).
+ * Checks BOTH `checkInId` (capital I) and `checkinId` (lowercase i), plus `bookingId`
+ * and `groupBookingId`, so zero orphan records remain in Reports, Finance, or Invoices.
  */
 export function computeGuestCascadeDelete(
   target: CascadeDeleteTarget,
@@ -63,8 +68,10 @@ export function computeGuestCascadeDelete(
 ): CascadeDeleteResult {
   const targetBookingIds = new Set<string>();
   const targetCheckinIds = new Set<string>();
+  const targetGroupIds = new Set<string>();
   const targetBookingRefs = new Set<string>();
   const affectedRoomNumbers = new Set<string>();
+  const targetStaySignatures = new Set<string>(); // `${guestName}|${roomNumber}|${checkInDate}`
 
   if (target.bookingId) targetBookingIds.add(String(target.bookingId));
   if (target.checkinId) targetCheckinIds.add(String(target.checkinId));
@@ -73,24 +80,34 @@ export function computeGuestCascadeDelete(
     if (rn && String(rn).trim()) affectedRoomNumbers.add(String(rn).trim());
   });
 
+  const addSignature = (guestName?: string, roomNumber?: string, checkInDate?: string) => {
+    const g = norm(guestName);
+    const r = norm(roomNumber);
+    const d = normDate(checkInDate);
+    if (g && r && d) targetStaySignatures.add(`${g}|${r}|${d}`);
+  };
+
   // 1. Expand linked IDs across bookings <-> checkins so both sides are always matched
   for (const ck of data.checkins) {
     const ckId = String(ck.id || '');
     const ckBkgId = String(ck.bookingId || '');
     const ckGroupId = String((ck as any).groupBookingId || '');
     if (
-      (ckId && targetCheckinIds.has(ckId)) ||
-      (ckBkgId && targetBookingIds.has(ckBkgId)) ||
-      (ckId && targetBookingIds.has(ckId)) ||
-      (ckBkgId && targetCheckinIds.has(ckBkgId))
+      (ckId && (targetCheckinIds.has(ckId) || targetBookingIds.has(ckId))) ||
+      (ckBkgId && (targetBookingIds.has(ckBkgId) || targetCheckinIds.has(ckBkgId))) ||
+      (ckGroupId && targetGroupIds.has(ckGroupId))
     ) {
       if (ckId) targetCheckinIds.add(ckId);
       if (ckBkgId) targetBookingIds.add(ckBkgId);
-      if (ckGroupId && targetBookingIds.has(ckGroupId)) targetCheckinIds.add(ckId);
+      if (ckGroupId) targetGroupIds.add(ckGroupId);
       if (ck.roomNumber) affectedRoomNumbers.add(String(ck.roomNumber).trim());
+      addSignature(ck.guestName, ck.roomNumber, ck.checkInDate);
       if (Array.isArray(ck.bookedRooms)) {
         ck.bookedRooms.forEach((br) => {
-          if (br?.roomNumber) affectedRoomNumbers.add(String(br.roomNumber).trim());
+          if (br?.roomNumber) {
+            affectedRoomNumbers.add(String(br.roomNumber).trim());
+            addSignature(ck.guestName, br.roomNumber, ck.checkInDate);
+          }
         });
       }
     }
@@ -99,101 +116,128 @@ export function computeGuestCascadeDelete(
   for (const bk of data.bookings) {
     const bkId = String(bk.id || '');
     const bkNo = norm((bk as any).bookingNo || (bk as any).bookingNumber || bk.id);
+    const bkGroupId = String((bk as any).groupBookingId || '');
     if (
       (bkId && (targetBookingIds.has(bkId) || targetCheckinIds.has(bkId))) ||
-      (bkNo && targetBookingRefs.has(bkNo))
+      (bkNo && targetBookingRefs.has(bkNo)) ||
+      (bkGroupId && targetGroupIds.has(bkGroupId))
     ) {
       if (bkId) targetBookingIds.add(bkId);
       if (bkNo) targetBookingRefs.add(bkNo);
+      if (bkGroupId) targetGroupIds.add(bkGroupId);
       if (bk.roomNumber) affectedRoomNumbers.add(String(bk.roomNumber).trim());
+      addSignature(bk.guestName, bk.roomNumber, bk.checkInDate);
       if (Array.isArray((bk as any).bookedRooms)) {
         (bk as any).bookedRooms.forEach((br: any) => {
-          if (br?.roomNumber) affectedRoomNumbers.add(String(br.roomNumber).trim());
+          if (br?.roomNumber) {
+            affectedRoomNumbers.add(String(br.roomNumber).trim());
+            addSignature(bk.guestName, br.roomNumber, bk.checkInDate);
+          }
         });
       }
       if (Array.isArray((bk as any).roomNumbers)) {
         (bk as any).roomNumbers.forEach((rn: any) => {
-          if (rn) affectedRoomNumbers.add(String(rn).trim());
+          if (rn) {
+            affectedRoomNumbers.add(String(rn).trim());
+            addSignature(bk.guestName, String(rn), bk.checkInDate);
+          }
         });
       }
     }
   }
 
-  // Re-scan checkins once more in case booking expansion discovered new booking IDs
+  // Re-scan checkins once more in case booking expansion discovered new booking/group IDs
   for (const ck of data.checkins) {
     const ckId = String(ck.id || '');
     const ckBkgId = String(ck.bookingId || '');
-    if ((ckBkgId && targetBookingIds.has(ckBkgId)) || (ckId && targetBookingIds.has(ckId))) {
+    const ckGroupId = String((ck as any).groupBookingId || '');
+    if (
+      (ckBkgId && targetBookingIds.has(ckBkgId)) ||
+      (ckId && targetBookingIds.has(ckId)) ||
+      (ckGroupId && targetGroupIds.has(ckGroupId))
+    ) {
       if (ckId) targetCheckinIds.add(ckId);
       if (ck.roomNumber) affectedRoomNumbers.add(String(ck.roomNumber).trim());
+      addSignature(ck.guestName, ck.roomNumber, ck.checkInDate);
     }
   }
 
   const matchesId = (id?: string | null): boolean => {
     const s = String(id || '');
     if (!s) return false;
-    return targetBookingIds.has(s) || targetCheckinIds.has(s);
+    return targetBookingIds.has(s) || targetCheckinIds.has(s) || targetGroupIds.has(s);
+  };
+
+  const matchesRecordIds = (rec: any): boolean => {
+    if (!rec) return false;
+    return (
+      matchesId(rec.bookingId) ||
+      matchesId(rec.checkInId) ||
+      matchesId(rec.checkinId) ||
+      matchesId(rec.groupBookingId)
+    );
   };
 
   // 2. Filter bookings
+  const removedBookingIds: string[] = [];
   const nextBookings = data.bookings.filter((bk) => {
     const bkNo = norm((bk as any).bookingNo || (bk as any).bookingNumber || bk.id);
-    if (matchesId(bk.id)) return false;
-    if (bkNo && targetBookingRefs.has(bkNo)) return false;
+    if (matchesId(bk.id) || (bkNo && targetBookingRefs.has(bkNo))) {
+      if (bk.id) removedBookingIds.push(String(bk.id));
+      return false;
+    }
     return true;
   });
 
   // 3. Filter checkins
+  const removedCheckinIds: string[] = [];
   const nextCheckins = data.checkins.filter((ck) => {
-    if (matchesId(ck.id) || matchesId(ck.bookingId)) return false;
+    if (matchesId(ck.id) || matchesId(ck.bookingId) || matchesId((ck as any).groupBookingId)) {
+      if (ck.id) removedCheckinIds.push(String(ck.id));
+      return false;
+    }
     return true;
   });
 
-  // 4. Collect invoice IDs to remove (for voucher cascade too)
+  // 4. Filter invoices (matches bookingId, checkInId, checkinId, groupBookingId, OR exact stay signature)
   const removedInvoiceIds = new Set<string>();
+  const removedInvoiceNumbers = new Set<string>();
   const nextInvoices = data.invoices.filter((inv) => {
-    const invBkg = (inv as any).bookingId;
-    const invCk = (inv as any).checkinId;
-    if (matchesId(invBkg) || matchesId(invCk)) {
+    const invSig = `${norm(inv.guestName)}|${norm(inv.roomNumber)}|${normDate(inv.checkInDate)}`;
+    const matchedBySig = invSig.length > 4 && targetStaySignatures.has(invSig);
+    if (matchesRecordIds(inv) || matchedBySig) {
       if (inv.id) removedInvoiceIds.add(String(inv.id));
+      if (inv.invoiceNumber) removedInvoiceNumbers.add(norm(inv.invoiceNumber));
       return false;
     }
     return true;
   });
 
   // 5. Filter POS orders linked to this stay/booking
-  const nextPosOrders = data.posOrders.filter((po) => {
-    if (matchesId((po as any).checkinId) || matchesId((po as any).bookingId)) return false;
-    return true;
-  });
+  const nextPosOrders = data.posOrders.filter((po) => !matchesRecordIds(po));
 
   // 6. Filter Water Bottle records linked to this stay/booking
-  const nextWaterBottles = data.waterBottles.filter((wb) => {
-    if (matchesId((wb as any).checkinId) || matchesId((wb as any).bookingId)) return false;
-    return true;
-  });
+  const nextWaterBottles = data.waterBottles.filter((wb) => !matchesRecordIds(wb));
 
   // 7. Filter Laundry Orders linked to this stay/booking
-  const nextLaundryOrders = data.laundryOrders.filter((lo) => {
-    if (matchesId((lo as any).checkinId) || matchesId((lo as any).bookingId)) return false;
-    return true;
-  });
+  const nextLaundryOrders = data.laundryOrders.filter((lo) => !matchesRecordIds(lo));
 
   // 8. Filter Allocated Guest Services linked to this stay/booking
-  const nextAllocatedServices = data.allocatedServices.filter((as) => {
-    if (matchesId((as as any).checkinId) || matchesId((as as any).bookingId)) return false;
-    return true;
-  });
+  const nextAllocatedServices = data.allocatedServices.filter((as) => !matchesRecordIds(as));
 
   // 9. Filter Finance Vouchers linked to this booking/checkin/invoice
   const nextVouchers = data.vouchers.filter((v) => {
     const srcId = String((v as any).sourceId || '');
     const refNo = norm((v as any).referenceNumber || (v as any).referenceNo);
     const party = norm((v as any).partyName);
+    if (matchesRecordIds(v)) return false;
     if (srcId && (matchesId(srcId) || removedInvoiceIds.has(srcId))) return false;
-    if (refNo && targetBookingRefs.has(refNo)) return false;
+    if (refNo && (targetBookingRefs.has(refNo) || removedInvoiceNumbers.has(refNo))) return false;
     for (const ref of targetBookingRefs) {
       if (ref && ref.length >= 6 && party.includes(ref)) return false;
+    }
+    for (const invNo of removedInvoiceNumbers) {
+      if (invNo && invNo.length >= 5 && party.includes(invNo)) return false;
     }
     return true;
   });
@@ -237,6 +281,9 @@ export function computeGuestCascadeDelete(
     laundryOrders: nextLaundryOrders,
     allocatedServices: nextAllocatedServices,
     vouchers: nextVouchers,
+    removedInvoiceIds: Array.from(removedInvoiceIds),
+    removedBookingIds,
+    removedCheckinIds,
     summary: {
       bookingsRemoved: data.bookings.length - nextBookings.length,
       checkinsRemoved: data.checkins.length - nextCheckins.length,
