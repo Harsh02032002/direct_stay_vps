@@ -38,9 +38,50 @@ export interface PaymentOption {
   isCustom: boolean;
 }
 
+/**
+ * Old builds pre-filled Payment Mode setup with demo/sample values (fake UPI VPA, EDC terminal,
+ * HDFC bank account, PayU key…). Those were never entered by the hotel, so any value that is an
+ * EXACT leftover of that demo seed is treated as "not set" — no hotel ever collects money into a
+ * fake UPI ID / bank account and every field starts blank for the hotel to fill in.
+ * Values typed by the hotel itself are never touched.
+ */
+const SEED_DEMO_VALUES = {
+  upiId: 'directstayhotel@upi',
+  merchantName: 'Harsh Hotel DirectStay',
+  terminalId: 'POS-TERM-8891',
+  bankName: 'HDFC Bank Ltd',
+  accountNumber: '50200088992211',
+  ifscCode: 'HDFC0001234',
+  payuKey: 'PAYU_LIVE_KEY_99',
+  payuSalt: 'PAYU_SALT_DIRECTSTAY',
+};
+
+export function stripSeedDemoPaymentValues<T extends Record<string, any>>(mode: T): T {
+  if (!mode || typeof mode !== 'object') return mode;
+  const m: Record<string, any> = { ...mode };
+  const eq = (k: keyof typeof SEED_DEMO_VALUES) =>
+    String(m[k] ?? '').trim().toLowerCase() === SEED_DEMO_VALUES[k].toLowerCase();
+
+  const upiIsSeed = eq('upiId');
+  if (upiIsSeed) m.upiId = '';
+  if (upiIsSeed && eq('merchantName')) m.merchantName = '';
+  if (eq('terminalId')) m.terminalId = '';
+  const bankIsSeed = eq('ifscCode') || eq('accountNumber');
+  if (bankIsSeed) {
+    if (eq('ifscCode')) m.ifscCode = '';
+    if (eq('accountNumber')) m.accountNumber = '';
+    if (eq('bankName')) m.bankName = '';
+  }
+  if (eq('payuKey')) m.payuKey = '';
+  if (eq('payuSalt')) m.payuSalt = '';
+  return m as T;
+}
+
 const cleanModes = (arr: any): HotelPaymentMode[] =>
   Array.isArray(arr)
-    ? arr.filter((m) => m && typeof m === 'object' && m.id && m.name)
+    ? arr
+        .filter((m) => m && typeof m === 'object' && m.id && m.name)
+        .map((m) => stripSeedDemoPaymentValues(m))
     : [];
 
 export function readHotelPaymentModes(hotelId?: string, fallback?: any[] | null): HotelPaymentMode[] {

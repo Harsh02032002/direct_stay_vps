@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Hotel, HotelSettings } from '../../types';
 import { showToast } from '../../utils/toast';
+import { stripSeedDemoPaymentValues } from '../PaymentModeDetailsCard';
 
 export interface PaymentMethodConfig {
   id: string;
@@ -48,8 +49,6 @@ const DEFAULT_PAYMENT_MODES: PaymentMethodConfig[] = [
     name: 'UPI & Instant QR Code',
     type: 'UPI',
     enabled: true,
-    upiId: 'directstayhotel@upi',
-    merchantName: 'Harsh Hotel DirectStay',
     notes: 'Dynamic BharatQR / PhonePe / GPay / Paytm QR code generator at Front Desk & POS',
   },
   {
@@ -57,8 +56,6 @@ const DEFAULT_PAYMENT_MODES: PaymentMethodConfig[] = [
     name: 'Debit & Credit Cards',
     type: 'Card',
     enabled: true,
-    terminalId: 'POS-TERM-8891',
-    surchargePercent: 0,
     notes: 'EDC Swipe machine for Visa, Mastercard, RuPay & Amex',
   },
   {
@@ -66,9 +63,6 @@ const DEFAULT_PAYMENT_MODES: PaymentMethodConfig[] = [
     name: 'Bank Transfer (NEFT / RTGS / IMPS)',
     type: 'Bank',
     enabled: true,
-    bankName: 'HDFC Bank Ltd',
-    accountNumber: '50200088992211',
-    ifscCode: 'HDFC0001234',
     notes: 'Direct hotel current account for corporate advance deposits',
   },
   {
@@ -76,8 +70,6 @@ const DEFAULT_PAYMENT_MODES: PaymentMethodConfig[] = [
     name: 'Online Gateway (PayU)',
     type: 'Gateway',
     enabled: true,
-    payuKey: 'PAYU_LIVE_KEY_99',
-    payuSalt: 'PAYU_SALT_DIRECTSTAY',
     isTestMode: false,
     notes: 'Direct online checkout payments for DirectStay booking engine & digital links',
   },
@@ -118,9 +110,9 @@ export default function PaymentModeView({
   const [modes, setModes] = useState<PaymentMethodConfig[]>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
-      if (saved) return JSON.parse(saved);
+      if (saved) return (JSON.parse(saved) as PaymentMethodConfig[]).map((m) => stripSeedDemoPaymentValues(m));
       if (Array.isArray(activeHotel?.paymentModes) && activeHotel.paymentModes.length > 0) {
-        return activeHotel.paymentModes;
+        return (activeHotel.paymentModes as PaymentMethodConfig[]).map((m) => stripSeedDemoPaymentValues(m));
       }
     } catch {}
     return DEFAULT_PAYMENT_MODES;
@@ -350,7 +342,7 @@ export default function PaymentModeView({
                     <label className="text-[11px] font-bold text-luxury-brown-700">UPI VPA ID (Virtual Payment Address)</label>
                     <input
                       type="text"
-                      placeholder="e.g. hotel@okhdfcbank"
+                      placeholder="Your UPI ID"
                       value={mode.upiId || ''}
                       onChange={(e) => updateModeField(mode.id, 'upiId', e.target.value)}
                       className="w-full text-xs bg-white border border-luxury-brown-100 rounded-xl px-3 py-2 font-mono"
@@ -360,7 +352,7 @@ export default function PaymentModeView({
                     <label className="text-[11px] font-bold text-luxury-brown-700">Merchant Business Name</label>
                     <input
                       type="text"
-                      placeholder="e.g. Harsh Hotel DirectStay"
+                      placeholder="Business name shown to guest"
                       value={mode.merchantName || ''}
                       onChange={(e) => updateModeField(mode.id, 'merchantName', e.target.value)}
                       className="w-full text-xs bg-white border border-luxury-brown-100 rounded-xl px-3 py-2"
@@ -375,7 +367,7 @@ export default function PaymentModeView({
                     <label className="text-[11px] font-bold text-luxury-brown-700">EDC Terminal ID</label>
                     <input
                       type="text"
-                      placeholder="e.g. TERM-8891"
+                      placeholder="Terminal ID"
                       value={mode.terminalId || ''}
                       onChange={(e) => updateModeField(mode.id, 'terminalId', e.target.value)}
                       className="w-full text-xs bg-white border border-luxury-brown-100 rounded-xl px-3 py-2 font-mono"
@@ -388,8 +380,15 @@ export default function PaymentModeView({
                       min={0}
                       max={5}
                       step={0.1}
-                      value={mode.surchargePercent || 0}
-                      onChange={(e) => updateModeField(mode.id, 'surchargePercent', Number(e.target.value))}
+                      placeholder="0"
+                      value={mode.surchargePercent ? mode.surchargePercent : ''}
+                      onChange={(e) =>
+                        updateModeField(
+                          mode.id,
+                          'surchargePercent',
+                          e.target.value === '' ? undefined : Number(e.target.value)
+                        )
+                      }
                       className="w-full text-xs bg-white border border-luxury-brown-100 rounded-xl px-3 py-2 font-mono"
                     />
                   </div>
@@ -403,7 +402,7 @@ export default function PaymentModeView({
                       <label className="text-[10px] font-bold text-luxury-brown-700">Bank Name</label>
                       <input
                         type="text"
-                        placeholder="HDFC Bank"
+                        placeholder="Bank name"
                         value={mode.bankName || ''}
                         onChange={(e) => updateModeField(mode.id, 'bankName', e.target.value)}
                         className="w-full text-xs bg-white border border-luxury-brown-100 rounded-xl px-3 py-1.5"
@@ -413,7 +412,7 @@ export default function PaymentModeView({
                       <label className="text-[10px] font-bold text-luxury-brown-700">IFSC Code</label>
                       <input
                         type="text"
-                        placeholder="HDFC0001234"
+                        placeholder="IFSC code"
                         value={mode.ifscCode || ''}
                         onChange={(e) => updateModeField(mode.id, 'ifscCode', e.target.value.toUpperCase())}
                         className="w-full text-xs bg-white border border-luxury-brown-100 rounded-xl px-3 py-1.5 font-mono uppercase"
@@ -424,7 +423,7 @@ export default function PaymentModeView({
                     <label className="text-[10px] font-bold text-luxury-brown-700">Current Account Number</label>
                     <input
                       type="text"
-                      placeholder="50200088992211"
+                      placeholder="Account number"
                       value={mode.accountNumber || ''}
                       onChange={(e) => updateModeField(mode.id, 'accountNumber', e.target.value)}
                       className="w-full text-xs bg-white border border-luxury-brown-100 rounded-xl px-3 py-1.5 font-mono"
