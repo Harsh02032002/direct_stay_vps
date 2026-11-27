@@ -12435,9 +12435,19 @@ An error occurred while connecting to the Gemini engines: *"${err.message}"*.
     process.argv.some((a) => a.endsWith("server.cjs") || a.endsWith("app.js"));
 
   if (!isProd) {
+    const realRoot = fs.realpathSync(process.cwd());
+    if (realRoot !== process.cwd()) {
+      try {
+        process.chdir(realRoot);
+      } catch {}
+    }
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      root: realRoot,
+      server: {
+        middlewareMode: true,
+        fs: { allow: [realRoot] },
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

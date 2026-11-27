@@ -5848,6 +5848,7 @@ export default function CheckInFormView({
                               </label>
                               <input
                                 type="number"
+                                step="any"
                                 min={0}
                                 value={manualDiscount}
                                 onWheel={(e) => e.currentTarget.blur()}
@@ -6937,6 +6938,7 @@ export default function CheckInFormView({
                     <label className="text-xs font-mono text-emerald-800 block uppercase font-bold">Discount Concession (₹)</label>
                     <input
                       type="number"
+                      step="any"
                       min={0}
                       value={manualDiscount}
                       onWheel={(e) => e.currentTarget.blur()}
@@ -6971,6 +6973,7 @@ export default function CheckInFormView({
                     <label className="text-xs font-mono text-emerald-800 block uppercase font-bold">Discount Concession (₹)</label>
                     <input
                       type="number"
+                      step="any"
                       min={0}
                       value={manualDiscount}
                       onChange={(e) => setManualDiscount(Math.max(0, Number(e.target.value) || 0))}
@@ -7067,6 +7070,7 @@ export default function CheckInFormView({
                       <span className="text-gray-500 block text-[9px] uppercase font-bold">Extra Person Rate / Night (₹)</span>
                       <input
                         type="number"
+                        step="any"
                         min={0}
                         value={extraPersonCharge}
                         onChange={(e) => setExtraPersonCharge(Math.max(0, Number(e.target.value) || 0))}
@@ -9573,6 +9577,7 @@ export default function CheckInFormView({
                             />
                             <input
                               type="number"
+                              step="any"
                               min={0}
                               value={row.rate}
                               placeholder="Price ₹"
@@ -10558,6 +10563,7 @@ export default function CheckInFormView({
                               <div className="grid grid-cols-2 gap-2">
                                 <input
                                   type="number"
+                                  step="any"
                                   min={0}
                                   value={discountInputValue || ''}
                                   onChange={e => setDiscountInputValue(Math.max(0, Number(e.target.value) || 0))}
