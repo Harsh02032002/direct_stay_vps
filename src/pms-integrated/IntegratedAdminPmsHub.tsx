@@ -2439,17 +2439,59 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     }
   };
 
-  const syncBookingsToDb = (nextBookings: BookingRecord[]) => {
+  const isPosOrderDead = (o: any): boolean =>
+    ['cancelled', 'voided'].includes(String(o?.status || '').toLowerCase()) ||
+    String(o?.kotStatus || '').toLowerCase() === 'cancelled' ||
+    String(o?.kitchenStatus || '').toLowerCase() === 'cancelled';
+
+  const recordMatchesDeadPos = (
+    rec: any,
+    deadList: Array<{ id?: string; orderNumber?: string; folioChargeId?: string; description?: string }>
+  ): boolean => {
+    if (!rec || deadList.length === 0) return false;
+    const recId = String(rec?.id || '');
+    const recSrc = String(rec?.sourceId || '');
+    const recOrd = String(rec?.orderNumber || '');
+    const desc = String(rec?.description || rec?.itemsSummary || '');
+    return deadList.some((d) => {
+      const did = String(d?.id || '');
+      const dno = String(d?.orderNumber || '');
+      const dfc = String(d?.folioChargeId || '');
+      if (did && (recId === did || recId === `EC-POS-${did}` || recSrc === did)) return true;
+      if (dfc && recId === dfc) return true;
+      if (dno && (recOrd === dno || recId === dno || recId === `EC-POS-${dno}` || recSrc === dno)) return true;
+      if (dno) {
+        const esc = dno.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`#${esc}(?![\\w-])`, 'i').test(desc)) return true;
+      }
+      return false;
+    });
+  };
+
+  const syncBookingsToDb = (
+    nextBookings: BookingRecord[],
+    removedChargesOrPos: Array<{ id?: string; orderNumber?: string; folioChargeId?: string; description?: string }> = []
+  ) => {
+    const deadPosList = [
+      ...appPosOrders.filter((po) => isPosOrderDead(po)),
+      ...removedChargesOrPos,
+    ];
     setBookings(nextBookings);
     if (onUpdateBookings) {
       onUpdateBookings(
-        nextBookings.map((b) =>
-          mapRecordToAppBooking(
-            b,
-            selectedHotelId,
-            appBookings.find((ab) => ab.id === b.id)
-          )
-        )
+        nextBookings.map((b) => {
+          const prevAppBkg = appBookings.find((ab) => ab.id === b.id);
+          const cleanedPrev =
+            prevAppBkg && deadPosList.length > 0 && Array.isArray((prevAppBkg as any).otherServices)
+              ? ({
+                  ...prevAppBkg,
+                  otherServices: (prevAppBkg as any).otherServices.filter(
+                    (sv: any) => !recordMatchesDeadPos(sv, deadPosList)
+                  ),
+                } as Booking)
+              : prevAppBkg;
+          return mapRecordToAppBooking(b, selectedHotelId, cleanedPrev);
+        })
       );
     }
     if (onUpdateCheckins && appCheckins.length > 0) {
@@ -2487,8 +2529,10 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           } as any);
         });
 
-        // Merge any newly added checkout/folio extra services without duplicating existing extraCharges (BUG-P2-04)
-        const existingExtras = Array.isArray(c.extraCharges) ? [...c.extraCharges] : [];
+        // Merge any newly added checkout/folio extra services WITHOUT resurrecting deleted/cancelled POS or removed room charges!
+        const existingExtras = (Array.isArray(c.extraCharges) ? [...c.extraCharges] : []).filter(
+          (ec: any) => !recordMatchesDeadPos(ec, deadPosList)
+        );
         const existingExtraKeys = new Set(
           existingExtras
             .flatMap((ec: any) => [String(ec?.id || ''), String(ec?.sourceId || '')])
@@ -2496,6 +2540,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         );
         const syncedExtras = [...existingExtras];
         (Array.isArray(matchedBkg.otherServices) ? matchedBkg.otherServices : []).forEach((sv) => {
+          if (recordMatchesDeadPos(sv, deadPosList)) return;
           const svId = String(sv?.id || '').trim();
           const svOrd = String(sv?.orderNumber || '').trim();
           const svAmt = r2(sv?.amount || 0);
@@ -4180,10 +4225,33 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
 
   const reconcileBookingIdsWithPosOrders = (
     bookingIdsToSync: Array<string | undefined>,
-    nextAppPosOrders: PosOrder[]
+    nextAppPosOrders: PosOrder[],
+    deadPosOrders: Array<{ id?: string; orderNumber?: string; folioChargeId?: string; roomNumber?: string; bookingId?: string; checkInId?: string; checkinId?: string }> = [],
+    fallbackRoomNumbers: Array<string | undefined> = []
   ) => {
-    const validIds = new Set(bookingIdsToSync.filter(Boolean) as string[]);
+    const validIds = new Set(bookingIdsToSync.filter(Boolean).map(String));
+    const roomSet = new Set(
+      [
+        ...fallbackRoomNumbers,
+        ...deadPosOrders.map((d) => d.roomNumber),
+      ]
+        .filter(Boolean)
+        .map((r) => String(r).trim())
+    );
+    // Also match active stay(s) by roomNumber if the POS order had no bookingId stored
+    if (roomSet.size > 0) {
+      bookings.forEach((b) => {
+        if (b.status !== 'Cancelled' && (b.roomNumbers || []).some((rn) => roomSet.has(String(rn).trim()))) {
+          validIds.add(b.id);
+        }
+      });
+    }
     if (validIds.size === 0) return;
+
+    const allDeadPos = [
+      ...nextAppPosOrders.filter((po) => isPosOrderDead(po)),
+      ...deadPosOrders,
+    ];
     const todayIso = new Date().toISOString().slice(0, 10);
     const roomStayKinds = new Set<string>([
       'room',
@@ -4199,9 +4267,28 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       const linkedCheckin = appCheckins.find(
         (c) => c.id === b.id || (c as any).bookingId === b.id
       );
+      const cleanedRawBkg =
+        rawAppBkg && allDeadPos.length > 0 && Array.isArray((rawAppBkg as any).otherServices)
+          ? {
+              ...rawAppBkg,
+              otherServices: (rawAppBkg as any).otherServices.filter(
+                (sv: any) => !recordMatchesDeadPos(sv, allDeadPos)
+              ),
+            }
+          : rawAppBkg;
+      const cleanedCheckin =
+        linkedCheckin && allDeadPos.length > 0 && Array.isArray(linkedCheckin.extraCharges)
+          ? {
+              ...linkedCheckin,
+              extraCharges: linkedCheckin.extraCharges.filter(
+                (ec: any) => !recordMatchesDeadPos(ec, allDeadPos)
+              ),
+            }
+          : linkedCheckin;
+
       const { bill } = buildStayBill({
-        booking: rawAppBkg || b,
-        checkin: linkedCheckin || null,
+        booking: cleanedRawBkg || b,
+        checkin: cleanedCheckin || null,
         posOrders: nextAppPosOrders,
         laundryOrders: appLaundryOrders,
         waterBottles: appWaterBottles,
@@ -4264,7 +4351,70 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       return updated;
     });
 
-    syncBookingsToDb(nextBookings);
+    syncBookingsToDb(nextBookings, allDeadPos);
+  };
+
+  // Delete / remove a Room Food Bill or extra service directly from the Room / Booking Details Drawer
+  const handleRemoveServiceFromBooking = (bookingId: string, srv: OtherServiceItem) => {
+    const cleanId = String(srv.id || '').replace(/^EC-POS-/i, '');
+    const ordMatch = String(srv.description || '').match(/#([A-Za-z0-9_-]+)/);
+    const ordFromDesc = ordMatch ? ordMatch[1] : '';
+    const srvOrd = String(srv.orderNumber || '').replace(/^EC-POS-/i, '');
+
+    const matchesPosOrder = (po: any): boolean => {
+      const pid = String(po?.id || '');
+      const pno = String(po?.orderNumber || '');
+      if (cleanId && (pid === cleanId || pno === cleanId)) return true;
+      if (srvOrd && (pid === srvOrd || pno === srvOrd)) return true;
+      if (ordFromDesc && (pid === ordFromDesc || pno === ordFromDesc)) return true;
+      return false;
+    };
+
+    const matchedPos = appPosOrders.filter(matchesPosOrder);
+    let nextAppOrders = appPosOrders;
+    if (matchedPos.length > 0) {
+      nextAppOrders = appPosOrders.map((po) =>
+        matchesPosOrder(po)
+          ? ({
+              ...po,
+              status: 'Cancelled',
+              kitchenStatus: 'Cancelled',
+              kotStatus: 'Cancelled',
+              balanceDue: 0,
+              voidReason: 'Removed from Room Folio',
+              voidedAt: new Date().toISOString(),
+            } as any)
+          : po
+      );
+      setPosOrders((prev) =>
+        prev.map((o) =>
+          matchesPosOrder(o)
+            ? { ...o, kotStatus: 'Cancelled', balanceDue: 0, voidReason: 'Removed from Room Folio' }
+            : o
+        )
+      );
+      if (onUpdatePosOrders) {
+        onUpdatePosOrders(nextAppOrders);
+      }
+    }
+
+    const removedMarker = [
+      { id: srv.id, orderNumber: srv.orderNumber || ordFromDesc, folioChargeId: srv.id, description: srv.description },
+      ...matchedPos.map((p: any) => ({
+        id: p.id,
+        orderNumber: p.orderNumber,
+        folioChargeId: p.folioChargeId || `EC-POS-${p.id}`,
+        roomNumber: p.roomNumber,
+      })),
+    ];
+
+    reconcileBookingIdsWithPosOrders([bookingId], nextAppOrders, removedMarker, [srv.roomNumber]);
+    logAudit(
+      'Front Desk',
+      'Room Service / Food Charge Removed',
+      `Removed "${srv.description}" (₹${srv.amount}) from Booking #${bookingId}${matchedPos.length > 0 ? ' & cancelled linked POS order' : ''}.`,
+      'warning'
+    );
   };
 
   // 9. Create POS Order (Uses billSettings.foodGstRate; excludes counter-paid Dine-In/Takeaway from room folio; recalculates Room Service via buildStayBill so F&B GST is NEVER taxed twice!)
@@ -5326,9 +5476,28 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
               onUpdatePosOrders(nextAppOrders);
             }
             const targetOrd = appPosOrders.find((po) => po.id === ordId);
-            if (targetOrd?.bookingId) {
-              reconcileBookingIdsWithPosOrders([targetOrd.bookingId], nextAppOrders);
+            if (targetOrd) {
+              reconcileBookingIdsWithPosOrders(
+                [targetOrd.bookingId, (targetOrd as any).checkInId, (targetOrd as any).checkinId],
+                nextAppOrders,
+                status === 'Cancelled' ? [targetOrd as any] : [],
+                [targetOrd.roomNumber]
+              );
             }
+          }}
+          onDeletePosOrder={(deletedOrd) => {
+            const matchedApp = appPosOrders.find((po) => po.id === deletedOrd.id);
+            setPosOrders((prev) => prev.filter((o) => o.id !== deletedOrd.id));
+            const nextAppOrders = appPosOrders.filter((po) => po.id !== deletedOrd.id);
+            if (onUpdatePosOrders) {
+              onUpdatePosOrders(nextAppOrders);
+            }
+            reconcileBookingIdsWithPosOrders(
+              [deletedOrd.bookingId, matchedApp?.bookingId, (matchedApp as any)?.checkInId, (matchedApp as any)?.checkinId],
+              nextAppOrders,
+              [deletedOrd as any, ...(matchedApp ? [matchedApp as any] : [])],
+              [deletedOrd.roomNumber, matchedApp?.roomNumber]
+            );
           }}
           onUpdatePosOrder={(updatedOrd) => {
             const prevOrd = posOrders.find((o) => o.id === updatedOrd.id);
@@ -5435,7 +5604,9 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
             }
             reconcileBookingIdsWithPosOrders(
               [prevOrd?.bookingId, updatedOrd.bookingId],
-              nextAppOrders
+              nextAppOrders,
+              updatedOrd.kotStatus === 'Cancelled' ? [updatedOrd as any, ...(prevOrd ? [prevOrd as any] : [])] : [],
+              [prevOrd?.roomNumber, updatedOrd.roomNumber]
             );
           }}
           onAddMenuItem={(item) => {
@@ -6390,6 +6561,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           }
         }}
         onOpenAddPosOrder={(b) => setRoomOrderBooking(b)}
+        onRemoveService={handleRemoveServiceFromBooking}
         onExtendStay={handleExtendStay}
         onPrintGrc={handlePrintGrc}
         onCancelBooking={(b) => {

@@ -14,6 +14,7 @@ import {
   CreditCard,
   CalendarPlus,
   Printer,
+  Trash2,
 } from 'lucide-react';
 import { BookingRecord, GuestPerson } from '../types';
 import { formatINRDecimal, getDayName } from '../utils/formatters';
@@ -34,6 +35,7 @@ interface BookingDetailsDrawerProps {
   onExtendStay?: (bookingId: string, extraDays: number) => void;
   onCancelBooking?: (booking: BookingRecord) => void;
   onPrintGrc?: (booking: BookingRecord) => void;
+  onRemoveService?: (bookingId: string, srv: BookingRecord['otherServices'][number]) => void;
 }
 
 export default function BookingDetailsDrawer({
@@ -49,6 +51,7 @@ export default function BookingDetailsDrawer({
   onExtendStay,
   onCancelBooking,
   onPrintGrc,
+  onRemoveService,
 }: BookingDetailsDrawerProps) {
   const [activeTopView, setActiveTopView] = useState<'overview' | 'guestCard'>('overview');
   const [invoiceScope, setInvoiceScope] = useState<'Only Booking' | 'Booking + Other Services'>(
@@ -346,9 +349,26 @@ export default function BookingDetailsDrawer({
                       {srv.description} • {srv.dateTime}
                     </p>
                   </div>
-                  <strong className="font-mono text-slate-900">
-                    {formatINRDecimal(srv.amount)}
-                  </strong>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <strong className="font-mono text-slate-900">
+                      {formatINRDecimal(srv.amount)}
+                    </strong>
+                    {!booking.isCheckedOut && onRemoveService && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!window.confirm(`Remove "${srv.description}" (${formatINRDecimal(srv.amount)}) from Room ${booking.roomNumbers.join(', ')}?`)) {
+                            return;
+                          }
+                          onRemoveService(booking.id, srv);
+                        }}
+                        className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 cursor-pointer"
+                        title="Delete / remove this charge from Room Folio"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))
             )}

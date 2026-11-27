@@ -3774,6 +3774,7 @@ export default function App() {
             policies={policies}
             waterBottles={waterBottles}
             posOrders={posOrders}
+            onUpdatePosOrders={handleUpdatePosOrders}
             posItems={posItems}
             inventoryProducts={inventoryProducts}
             onUpdateInventoryProducts={handleUpdateInventoryProducts}

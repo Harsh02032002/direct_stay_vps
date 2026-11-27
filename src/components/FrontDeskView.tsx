@@ -76,6 +76,7 @@ interface FrontDeskViewProps {
   policies: HotelPolicy[];
   waterBottles: WaterBottleRecord[];
   posOrders?: PosOrder[];
+  onUpdatePosOrders?: (orders: PosOrder[]) => void;
   posItems?: PosItem[];
   auditLogs: AuditLog[];
   roomVerifications?: RoomVerification[];
@@ -251,6 +252,7 @@ export default function FrontDeskView({
   policies = [],
   waterBottles = [],
   posOrders = [],
+  onUpdatePosOrders,
   posItems = [],
   auditLogs = [],
   roomVerifications = [],
@@ -1153,14 +1155,53 @@ export default function FrontDeskView({
     setCoDamageAmount(0);
   };
 
+  const chargeMatchesPosOrder = (ec: ExtraCharge | undefined, po: PosOrder): boolean => {
+    if (!ec || !po) return false;
+    const ecId = String(ec.id || '');
+    const ecSrc = String((ec as any).sourceId || '');
+    const desc = String(ec.description || '');
+    const pid = String(po.id || '');
+    const pno = String(po.orderNumber || '');
+    if (pid && (ecId === `EC-POS-${pid}` || ecId === pid || ecSrc === pid)) return true;
+    if ((po as any).folioChargeId && ecId === String((po as any).folioChargeId)) return true;
+    if (pno) {
+      if (ecId === pno || ecId === `EC-POS-${pno}` || ecSrc === pno) return true;
+      const esc = pno.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`#${esc}(?![\\w-])`, 'i').test(desc)) return true;
+    }
+    return false;
+  };
+
+  const cancelLinkedPosOrdersForRemovedCharges = (removedCharges: ExtraCharge[]) => {
+    if (!onUpdatePosOrders || !Array.isArray(removedCharges) || removedCharges.length === 0) return;
+    let changed = false;
+    const nextPos = posOrders.map((po) => {
+      if (!removedCharges.some((ec) => chargeMatchesPosOrder(ec, po))) return po;
+      changed = true;
+      return {
+        ...po,
+        status: 'Cancelled' as any,
+        kitchenStatus: 'Cancelled' as any,
+        ...({ kotStatus: 'Cancelled', balanceDue: 0, voidReason: 'Removed from Room Folio', voidedAt: new Date().toISOString() } as any),
+      };
+    });
+    if (changed) {
+      onUpdatePosOrders(nextPos);
+    }
+  };
+
   const handleRemoveChargeFromConfirmGuest = (chargeId: string) => {
     if (!checkoutConfirmGuest) return;
+    const removed = (checkoutConfirmGuest.extraCharges || []).find(ec => ec.id === chargeId);
     const updatedGuest: GuestCheckIn = {
       ...checkoutConfirmGuest,
       extraCharges: (checkoutConfirmGuest.extraCharges || []).filter(ec => ec.id !== chargeId)
     };
     setCheckoutConfirmGuest(updatedGuest);
     onUpdateCheckins(checkins.map(c => (c.id === updatedGuest.id ? updatedGuest : c)));
+    if (removed) {
+      cancelLinkedPosOrdersForRemovedCharges([removed]);
+    }
   };
 
   const handleConfirmFinalCheckOut = () => {
@@ -2498,13 +2539,22 @@ export default function FrontDeskView({
       isInclusive,
     });
 
-    // When Extra Services were edited in the modal, let edited draftCheckin.extraCharges be authoritative over stale waterBottles
+    // When Extra Services were edited in the modal, let edited draftCheckin.extraCharges be authoritative over stale waterBottles & removed POS orders
     const effectiveWaterBottles = editExtraChargesDirty ? [] : waterBottles;
+    const removedEditExtras = editExtraChargesDirty
+      ? (editingInHouseGuest.extraCharges || []).filter(
+          (orig) => !editGuestExtraCharges.some((cur) => cur.id === orig.id)
+        )
+      : [];
+    const effectivePosOrders =
+      removedEditExtras.length > 0
+        ? posOrders.filter((po) => !removedEditExtras.some((ec) => chargeMatchesPosOrder(ec, po)))
+        : posOrders;
 
     const stay = buildStayBill({
       booking: matchedBooking,
       checkin: draftCheckin,
-      posOrders,
+      posOrders: effectivePosOrders,
       waterBottles: effectiveWaterBottles,
       rooms,
       settings: effectiveSettings,
@@ -2806,6 +2856,14 @@ export default function FrontDeskView({
     };
 
     onUpdateCheckins(checkins.map(c => (c.id === editingInHouseGuest.id ? updatedCheckin : c)));
+    if (editExtraChargesDirty) {
+      const removedExtras = (editingInHouseGuest.extraCharges || []).filter(
+        (orig) => !editGuestExtraCharges.some((cur) => cur.id === orig.id)
+      );
+      if (removedExtras.length > 0) {
+        cancelLinkedPosOrdersForRemovedCharges(removedExtras);
+      }
+    }
 
     // Sync matching Booking record if exists (preserving existing payments when payment was not edited)
     let matchedBookingObj: Booking | null = null;

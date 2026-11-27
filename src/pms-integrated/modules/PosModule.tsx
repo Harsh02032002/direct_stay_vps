@@ -92,6 +92,7 @@ interface PosModuleProps {
   onCreatePosOrder: (order: PosOrderRecord, postToBookingId?: string) => void;
   onUpdateKotStatus: (orderId: string, nextStatus: PosOrderRecord['kotStatus']) => void;
   onUpdatePosOrder?: (order: PosOrderRecord) => void;
+  onDeletePosOrder?: (order: PosOrderRecord) => void;
   onAddMenuItem?: (item: PosMenuItem) => void;
   onUpdateMenuItem?: (item: PosMenuItem) => void;
   onDeleteMenuItem?: (itemId: string) => void;
@@ -341,6 +342,7 @@ export const PosModule: React.FC<PosModuleProps> = ({
   onCreatePosOrder,
   onUpdateKotStatus,
   onUpdatePosOrder,
+  onDeletePosOrder,
   onAddMenuItem,
   onUpdateMenuItem,
   onDeleteMenuItem,
@@ -2683,8 +2685,11 @@ export const PosModule: React.FC<PosModuleProps> = ({
       refundAmount: refAmt > 0 ? refAmt : undefined,
       bomReversed: reversedBomFlag,
     };
-    if (onUpdatePosOrder) onUpdatePosOrder(updated);
-    onUpdateKotStatus(voidModalOrder.id, 'Cancelled');
+    if (onUpdatePosOrder) {
+      onUpdatePosOrder(updated);
+    } else {
+      onUpdateKotStatus(voidModalOrder.id, 'Cancelled');
+    }
     broadcastPosEvent('ORDER_VOIDED', { orderId: voidModalOrder.id });
     if (onAddAuditLog) {
       onAddAuditLog(
@@ -6376,6 +6381,20 @@ export const PosModule: React.FC<PosModuleProps> = ({
                               title="Void / Cancel this order"
                             >
                               Void
+                            </button>
+                          )}
+                          {ord.kotStatus === 'Cancelled' && onDeletePosOrder && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!window.confirm(`Permanently delete Food Bill ${ord.orderNumber} and remove any linked room folio charge?`)) return;
+                                onDeletePosOrder(ord);
+                                showToast(`Food Bill ${ord.orderNumber} permanently deleted.`, 'info');
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-rose-100 hover:text-rose-700 border border-slate-200 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                              title="Permanently delete cancelled Food Bill"
+                            >
+                              <Trash2 className="w-3 h-3" /> Delete
                             </button>
                           )}
                           {ord.kotStatus !== 'Cancelled' &&
