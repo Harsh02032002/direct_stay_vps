@@ -313,6 +313,23 @@ export default function EditInvoiceModal({
 
   const roomSource: AnyRec | null = group ? (group.isSplit ? group.roomInv : clicked) : null;
 
+  // Older invoices sometimes keep restaurant / room-service lines inside "other services" (foodCharges = 0).
+  // Pull those out so they show as Food lines and can be split into a separate Food Bill.
+  const hiddenFoodLines: AnyRec[] =
+    clicked && group && !group.isSplit && num(clicked.foodCharges) <= 0 && Array.isArray(clicked.ledgerLines)
+      ? clicked.ledgerLines.filter(
+          (l: AnyRec) =>
+            l &&
+            l.type === 'charge' &&
+            !['food', 'room', 'extra_bed', 'extra_person', 'early_checkin', 'late_checkout', 'fine', 'water', 'laundry'].includes(
+              String(l.kind || '')
+            ) &&
+            /food|restaurant|room service|f&b|kot|pos/i.test(String(l.description || '')) &&
+            num(l.charges) > 0
+        )
+      : [];
+  const hiddenFoodSum = r2(hiddenFoodLines.reduce((s, l) => s + num(l.charges), 0));
+
   const initialFoodLines = (): FoodLine[] => {
     if (!clicked || !group) return [];
     const mk = (d: string, a: number, i: number): FoodLine => ({
@@ -330,7 +347,9 @@ export default function EditInvoiceModal({
       return num(fi.foodCharges) > 0 ? [mk('Restaurant & Food Charges', num(fi.foodCharges), 0)] : [];
     }
     const foodTotal = num(clicked.foodCharges);
-    if (foodTotal <= 0) return [];
+    if (foodTotal <= 0) {
+      return hiddenFoodLines.map((l, i) => mk(String(l.description || 'Food'), num(l.charges), i));
+    }
     const detailed = extractDetailedFoodLinesForStay({
       invoice: clicked as any,
       checkinRecord: group.checkin as any,
@@ -369,11 +388,15 @@ export default function EditInvoiceModal({
   const [earlyLate, setEarlyLate] = useState<string>(String(num(rs.earlyCheckInCharges) + num(rs.lateCheckOutCharges)));
   const [services, setServices] = useState<string>(
     String(
-      r2(
-        num(rs.waterCharges) +
-          num(rs.laundryCharges) +
-          num(rs.serviceCharges) +
-          Math.max(0, num(rs.otherCharges) - (rsIsV2 ? rsFine : 0))
+      Math.max(
+        0,
+        r2(
+          num(rs.waterCharges) +
+            num(rs.laundryCharges) +
+            num(rs.serviceCharges) +
+            Math.max(0, num(rs.otherCharges) - (rsIsV2 ? rsFine : 0)) -
+            hiddenFoodSum
+        )
       )
     )
   );
@@ -403,7 +426,6 @@ export default function EditInvoiceModal({
 
   if (!clicked || !group) return null;
 
-  const hasFoodInitially = group.isSplit || num(clicked.foodCharges) > 0 || foodLines.length > 0;
   const nights = nightsBetween(checkInDate, checkOutDate);
   const roomNoList = roomNumbers
     .split(',')
@@ -471,6 +493,10 @@ export default function EditInvoiceModal({
     setRoomPay(a.room);
     setFoodPay(a.food);
     setWantSplit(true);
+    // No food detected on this invoice? Give an empty food line so the Food Bill can be filled right away.
+    if (foodLines.length === 0) {
+      setFoodLines([{ id: `fl-split-${Date.now()}`, description: '', amount: '' }]);
+    }
     setTab('room');
   };
   const disableSplit = () => {
@@ -652,7 +678,8 @@ export default function EditInvoiceModal({
           </div>
 
           {/* Bill selector */}
-          {(splitActive || hasFoodInitially) && (
+          {/* Always available: even if no food line was detected on the invoice, food can be added here and split out */}
+          {(
             <div className="flex flex-wrap items-center gap-2">
               {splitActive ? (
                 <>
