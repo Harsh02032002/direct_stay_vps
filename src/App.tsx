@@ -1560,6 +1560,79 @@ export default function App() {
     const targetHotelId = effectiveTenantHotelId || selectedHotelId || hotels[0]?.id || 'hotel-1';
     const otherOrders = rawPosOrders.filter(o => (o.hotelId || 'hotel-1') !== targetHotelId);
     const newRaw = [...otherOrders, ...updatedOrders.map(o => ({ ...o, hotelId: o.hotelId || targetHotelId }))];
+
+    // When a food order is DELETED or CANCELLED / VOIDED, its Room Charge must also leave the room folio
+    // (check-in extraCharges EC-POS-x + booking otherServices copy), otherwise the guest stays billed for it.
+    const isDeadPos = (o: any): boolean =>
+      ['cancelled', 'voided'].includes(String(o?.status || '').toLowerCase()) ||
+      String(o?.kotStatus || '').toLowerCase() === 'cancelled' ||
+      String(o?.kitchenStatus || '').toLowerCase() === 'cancelled';
+    const prevHotelOrders = rawPosOrders.filter(o => (o.hotelId || 'hotel-1') === targetHotelId);
+    const nextById = new Map<string, any>(updatedOrders.map(o => [String(o.id), o]));
+    const deadOrders: any[] = [];
+    prevHotelOrders.forEach(prevOrd => {
+      const nextOrd = nextById.get(String(prevOrd.id));
+      if (!nextOrd) deadOrders.push(prevOrd); // deleted
+      else if (isDeadPos(nextOrd) && !isDeadPos(prevOrd)) deadOrders.push(nextOrd); // newly cancelled / voided
+    });
+
+    if (deadOrders.length > 0) {
+      const matchesDeadOrder = (rec: any): boolean => {
+        const recId = String(rec?.id || '');
+        const recSrc = String(rec?.sourceId || '');
+        const desc = String(rec?.description || rec?.itemsSummary || '');
+        return deadOrders.some(d => {
+          const did = String(d.id || '');
+          const dno = String(d.orderNumber || '');
+          if (did && (recId === `EC-POS-${did}` || recId === did || recSrc === did)) return true;
+          if (d.folioChargeId && recId === String(d.folioChargeId)) return true;
+          if (dno && String(rec?.orderNumber || '') === dno) return true;
+          if (dno) {
+            const esc = dno.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            if (new RegExp(`#${esc}(?![\\w-])`, 'i').test(desc)) return true;
+          }
+          return false;
+        });
+      };
+
+      let checkinsChanged = false;
+      const purgedCheckins = rawCheckins.map(c => {
+        if ((c.hotelId || 'hotel-1') !== targetHotelId) return c;
+        const charges = Array.isArray(c.extraCharges) ? c.extraCharges : [];
+        const removed = charges.filter(ec => matchesDeadOrder(ec));
+        if (removed.length === 0) return c;
+        checkinsChanged = true;
+        const removedAmt = removed.reduce((s, ec) => s + (Number(ec.amount) || 0), 0);
+        return {
+          ...c,
+          extraCharges: charges.filter(ec => !matchesDeadOrder(ec)),
+          pendingAmount: Math.max(0, (Number(c.pendingAmount) || 0) - removedAmt),
+        };
+      });
+
+      let bookingsChanged = false;
+      const purgedBookings = rawBookings.map(b => {
+        if ((b.hotelId || 'hotel-1') !== targetHotelId) return b;
+        const svcs: any[] = Array.isArray((b as any).otherServices) ? (b as any).otherServices : [];
+        if (!svcs.some(sv => matchesDeadOrder(sv))) return b;
+        bookingsChanged = true;
+        return { ...b, otherServices: svcs.filter(sv => !matchesDeadOrder(sv)) } as Booking;
+      });
+
+      setRawPosOrders(newRaw);
+      const patch: Record<string, any> = { posOrders: newRaw };
+      if (checkinsChanged) {
+        setRawCheckins(purgedCheckins);
+        patch.checkins = purgedCheckins;
+      }
+      if (bookingsChanged) {
+        setRawBookings(purgedBookings);
+        patch.bookings = purgedBookings;
+      }
+      savePmsData(patch);
+      return;
+    }
+
     setRawPosOrders(newRaw);
     savePmsData({ posOrders: newRaw });
   };

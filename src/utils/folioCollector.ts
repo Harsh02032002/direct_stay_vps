@@ -309,13 +309,38 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
   };
 
   // 2a. POS orders (accurate pre-tax) — first, so they win de-dup
+  const isCancelledPosOrder = (po: AnyRec): boolean =>
+    String(po?.status || '').toLowerCase() === 'cancelled' ||
+    String(po?.status || '').toLowerCase() === 'voided' ||
+    String(po?.kotStatus || '').toLowerCase() === 'cancelled' ||
+    String(po?.kitchenStatus || '').toLowerCase() === 'cancelled';
+
+  // Cancelled / voided POS orders must NEVER stay billed on the room folio through a stale
+  // check-in extraCharge (EC-POS-x) or booking otherService copy of that same order.
+  const deadPosKeys = new Set<string>();
+  const deadPosOrderNos: string[] = [];
+  (input.posOrders || []).forEach((po) => {
+    if (!po || !isCancelledPosOrder(po)) return;
+    if (po.id) deadPosKeys.add(`pos:${po.id}`);
+    if (po.orderNumber) {
+      deadPosKeys.add(`pos:${po.orderNumber}`);
+      deadPosOrderNos.push(String(po.orderNumber));
+    }
+  });
+  const isDeadPosCharge = (key: string | undefined, description: unknown): boolean => {
+    if (deadPosKeys.size === 0) return false;
+    if (key && deadPosKeys.has(key)) return true;
+    const d = String(description || '');
+    return deadPosOrderNos.some((no) => {
+      if (!no) return false;
+      const esc = no.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`#${esc}(?![\\w-])`, 'i').test(d);
+    });
+  };
+
   (input.posOrders || []).forEach((po) => {
     if (!po || isPaidAtCounter(po) || !belongsToStay(po) || po.isHeld) return;
-    if (
-      String(po.status || '').toLowerCase() === 'cancelled' ||
-      String(po.kotStatus || '').toLowerCase() === 'cancelled' ||
-      String(po.kitchenStatus || '').toLowerCase() === 'cancelled'
-    ) {
+    if (isCancelledPosOrder(po)) {
       return;
     }
     const items = Array.isArray(po.items)
@@ -388,6 +413,7 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
     if (!ec) return;
     const kind = kindFromLabel(ec.category, ec.sourceType, undefined, ec.description);
     const key = sourceKeyFromId(ec.id, ec.sourceType, ec.sourceId) || `id:${ec.id}`;
+    if (isDeadPosCharge(key, ec.description)) return;
     const ecNoGst = Boolean(ec.isWithoutGst || ec.gstExempt || /\[GST Exempt\]/i.test(String(ec.description || '')));
     // POS folio lines carry GST-inclusive grand total unless explicitly marked GST-exempt
     const amount =
@@ -417,6 +443,7 @@ export function collectStayCharges(input: CollectStayInput): CollectStayResult {
     const key =
       fromEc ||
       (kind === 'food' ? `pos:${id}` : kind === 'laundry' ? `laundry:${id}` : kind === 'water' ? `water:${id}` : `id:${id}`);
+    if (isDeadPosCharge(key, sv.description || sv.itemsSummary)) return;
     const amount =
       kind === 'food'
         ? n(sv.taxAmount) > 0
