@@ -863,7 +863,67 @@ export default function CheckInFormView({
   const [departureTime, setDepartureTime] = useState(defaultHotelCheckOutTime);
 
   // Redesigned Single-Page Check-In / Reservation States
-  const [bookingCategory, setBookingCategory] = useState<'individual' | 'group' | 'corporate' | 'event'>('individual');
+  const resolveBookingCategoryFromRecord = (
+    rec?: any,
+    fallbackBooking?: any
+  ): 'individual' | 'group' | 'corporate' | 'event' => {
+    const rawExplicit = String(
+      rec?.bookingCategory ||
+        rec?.bookingType ||
+        fallbackBooking?.bookingCategory ||
+        fallbackBooking?.bookingType ||
+        ''
+    )
+      .trim()
+      .toLowerCase();
+    if (rawExplicit) {
+      if (rawExplicit.includes('event') || rawExplicit.includes('banquet')) return 'event';
+      if (rawExplicit.includes('corp')) return 'corporate';
+      if (rawExplicit.includes('group')) return 'group';
+      if (rawExplicit.includes('indiv')) return 'individual';
+    }
+    const src = rec || fallbackBooking;
+    if (!src) return 'individual';
+    const multiCount =
+      (Array.isArray(src.bookedRooms) && src.bookedRooms.length) ||
+      String(src.roomNumber || '')
+        .split(',')
+        .map((x: string) => x.trim())
+        .filter(Boolean).length;
+    if (src.isGroupCheckIn || multiCount > 1) return 'group';
+    if (
+      src.companyName ||
+      src.gstNumber ||
+      String(src.bookingSource || '').toLowerCase() === 'corporate'
+    ) {
+      return 'corporate';
+    }
+    return 'individual';
+  };
+
+  const bookingCategoryToDisplayType = (
+    cat: 'individual' | 'group' | 'corporate' | 'event'
+  ): 'Individual' | 'Group' | 'Corporate' | 'Event / Banquet' =>
+    cat === 'event'
+      ? 'Event / Banquet'
+      : cat === 'corporate'
+      ? 'Corporate'
+      : cat === 'group'
+      ? 'Group'
+      : 'Individual';
+
+  const [bookingCategory, setBookingCategory] = useState<'individual' | 'group' | 'corporate' | 'event'>(() => {
+    const initialSource = editingCheckIn || selectedBooking;
+    const matchedBkg = editingCheckIn
+      ? bookings.find(
+          b =>
+            b.id === editingCheckIn.id ||
+            (editingCheckIn.bookingId && b.id === editingCheckIn.bookingId) ||
+            (b.roomNumber === editingCheckIn.roomNumber && b.guestName === editingCheckIn.guestName && !b.isCompleted)
+        )
+      : selectedBooking;
+    return resolveBookingCategoryFromRecord(initialSource, matchedBkg);
+  });
   const [addressLine2, setAddressLine2] = useState<string>('');
   const [pincode, setPincode] = useState<string>('');
   const [guestSearchTerm, setGuestSearchTerm] = useState<string>('');
@@ -945,21 +1005,23 @@ export default function CheckInFormView({
     }
   };
 
-  // Sync bookingCategory when an existing booking is loaded (never altering its saved dates!)
+  // Sync bookingCategory when an existing booking OR in-house check-in is loaded for editing (never altering its saved dates!)
   useEffect(() => {
-    if (!selectedBooking) return;
-    const multiCount =
-      (selectedBooking.bookedRooms && selectedBooking.bookedRooms.length) ||
-      String(selectedBooking.roomNumber || '').split(',').map(x => x.trim()).filter(Boolean).length;
-    if (multiCount > 1) {
-      setBookingCategory('group');
-    } else if (selectedBooking.companyName || selectedBooking.gstNumber) {
-      setBookingCategory('corporate');
-    } else {
-      setBookingCategory('individual');
+    if (editingCheckIn) {
+      const matchedBkg = bookings.find(
+        b =>
+          b.id === editingCheckIn.id ||
+          (editingCheckIn.bookingId && b.id === editingCheckIn.bookingId) ||
+          (b.roomNumber === editingCheckIn.roomNumber && b.guestName === editingCheckIn.guestName && !b.isCompleted)
+      );
+      const resolvedCat = resolveBookingCategoryFromRecord(editingCheckIn, matchedBkg);
+      setBookingCategory(resolvedCat);
+      return;
     }
+    if (!selectedBooking) return;
+    setBookingCategory(resolveBookingCategoryFromRecord(selectedBooking));
     setShowAdvanceLookup(true);
-  }, [selectedBooking]);
+  }, [editingCheckIn, selectedBooking]);
 
   const handleArrivalDateChange = (rawNewDate: string) => {
     if (!rawNewDate) return;
@@ -3121,6 +3183,10 @@ export default function CheckInFormView({
           bookingCategory === 'corporate'
             ? 'Corporate'
             : walkInBookingSource || 'Direct',
+        ...({
+          bookingCategory,
+          bookingType: bookingCategoryToDisplayType(bookingCategory),
+        } as any),
         status: targetStatus as BookingStatus,
         isCheckedIn: false,
         isCompleted: false,
@@ -3865,8 +3931,12 @@ export default function CheckInFormView({
       bookingStatus: effectiveBooking
         ? ('Confirmed' as BookingStatus)
         : (editingCheckIn?.bookingStatus || walkInBookingStatus),
-      // Group Details
-      isGroupCheckIn: checkInMode === 'group',
+      // Group Details & Booking Type
+      isGroupCheckIn: checkInMode === 'group' || bookingCategory === 'group',
+      ...({
+        bookingCategory,
+        bookingType: bookingCategoryToDisplayType(bookingCategory),
+      } as any),
       groupBookingId: checkInMode === 'group' ? groupBookingId : undefined,
       groupName: checkInMode === 'group' ? (groupName || `${guestName} Group`) : undefined,
       // Extra Bed Details (explicitly zeroed when unchecked so previous values never linger)
@@ -3944,7 +4014,11 @@ export default function CheckInFormView({
               roomNumber: checkInMode === 'group' ? groupRooms.map(gr => gr.roomNumber).join(', ') : primaryRoom,
               roomType: (roomType || b.roomType) as any,
               bookedRooms: finalBookedRooms,
-              isGroupCheckIn: checkInMode === 'group',
+              isGroupCheckIn: checkInMode === 'group' || bookingCategory === 'group',
+              ...({
+                bookingCategory,
+                bookingType: bookingCategoryToDisplayType(bookingCategory),
+              } as any),
               roomSubtotal: effectiveRoomChargesTotal,
               bookingAmount: effectiveRoomChargesTotal,
               hasExtraBed: checkInMode === 'single' ? Boolean(hasExtraBed) : groupRooms.some(g => g.hasExtraBed),
@@ -4027,7 +4101,11 @@ export default function CheckInFormView({
         roomNumber: checkInMode === 'group' ? groupRooms.map(gr => gr.roomNumber).join(', ') : primaryRoom,
         roomType: roomType as any,
         bookedRooms: finalBookedRooms,
-        isGroupCheckIn: checkInMode === 'group',
+        isGroupCheckIn: checkInMode === 'group' || bookingCategory === 'group',
+        ...({
+          bookingCategory,
+          bookingType: bookingCategoryToDisplayType(bookingCategory),
+        } as any),
         bookingDate: walkInBookingDate || getTodayDateStr(),
         roomSubtotal: effectiveRoomChargesTotal,
         bookingAmount: effectiveRoomChargesTotal,
