@@ -18,9 +18,11 @@ import { BookingRecord, InvoiceRecord, InvoiceScope } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { useHotelTaxSettings } from '../utils/taxSettings';
 import {
+  BillCharge,
   BillSettings,
   BillChargeKind,
   BillPayment,
+  calculateBill,
   normalizeBillSettings,
   r2,
 } from '../../utils/billCalculator';
@@ -34,6 +36,7 @@ import {
 import {
   invoiceRecordToPrintHtml,
   extractDetailedFoodLinesForStay,
+  isGenericFoodSummaryLine,
 } from '../../utils/pdfDownload';
 import { openPrintWindow } from '../../utils/printDocument';
 
@@ -41,6 +44,7 @@ interface InvoiceModuleProps {
   activeSubTab: string;
   onSubTabChange: (subTab: string) => void;
   invoices: InvoiceRecord[];
+  appInvoices?: Record<string, any>[];
   bookings: BookingRecord[];
   billSettings?: BillSettings;
   hotelSettings?: Record<string, any>;
@@ -160,6 +164,7 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
   activeSubTab,
   onSubTabChange,
   invoices,
+  appInvoices = [],
   bookings,
   billSettings,
   hotelSettings,
@@ -450,6 +455,12 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
           })
         : checkRec;
 
+    const detailedFoodItems = extractDetailedFoodLinesForStay({
+      checkinRecord: (linkedChk || null) as any,
+      bookingRecord: (rawBkg || targetBooking) as any,
+      posOrders,
+    });
+
     return {
       stay,
       bill: reconciled.bill,
@@ -458,6 +469,7 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
       supersededIds: reconciled.supersededInvoiceIds,
       potentialExcess: checkRec.potentialExcessOverTarget,
       hasCharges: reconciled.scopedCharges.length > 0,
+      detailedFoodItems,
     };
   }, [
     targetBooking,
@@ -650,14 +662,14 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  2. Scope (Full Bill / Room Only / Services Only)
+                  2. Scope (Full Bill / Room Only / Food &amp; Services Bill)
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   {(
                     [
                       { value: 'Booking + Other Services', label: 'Full Bill' },
                       { value: 'Only Booking', label: 'Room Only' },
-                      { value: 'Only Other Services', label: 'Services Only' },
+                      { value: 'Only Other Services', label: 'Food / Services Bill' },
                     ] as const
                   ).map((opt) => (
                     <button
@@ -754,10 +766,30 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                     </div>
                   )}
                   {selectedScope !== 'Only Booking' && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Food (Pre-Tax) / Water / Laundry / Add-Ons:</span>
-                      <strong className="font-mono">{formatCurrency(servicesTotal)}</strong>
-                    </div>
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Food (Pre-Tax) / Water / Laundry / Add-Ons:</span>
+                        <strong className="font-mono">{formatCurrency(servicesTotal)}</strong>
+                      </div>
+                      {createPreview.detailedFoodItems.length > 0 && (
+                        <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200 space-y-1">
+                          <div className="text-[10px] font-extrabold uppercase text-amber-900 flex items-center justify-between">
+                            <span>Item-Wise Food Details Included ({createPreview.detailedFoodItems.length} item{createPreview.detailedFoodItems.length > 1 ? 's' : ''})</span>
+                            <span>SAC 996331</span>
+                          </div>
+                          <div className="max-h-28 overflow-y-auto space-y-0.5 text-[11px] font-mono">
+                            {createPreview.detailedFoodItems.map((it, idx) => (
+                              <div key={idx} className="flex justify-between gap-2 text-slate-700">
+                                <span className="truncate" title={it.description}>
+                                  {it.itemName} <span className="text-slate-400">({it.qty}×₹{it.rate.toFixed(2)}) [#{it.orderNo}]</span>
+                                </span>
+                                <strong className="shrink-0 text-slate-900">{formatCurrency(it.amount)}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
                   {bill.discount > 0 && (
                     <div className="flex justify-between text-emerald-700">
@@ -1024,6 +1056,64 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                             String(inv.invoiceNumber || '').toUpperCase().startsWith('CN/'))
                       );
                       const isRowSuperseded = !isFolioRow && !isRowCreditNote && !isActiveInvoice(inv);
+                      const rawScopeLower = String(inv.rawInvoiceScope || (inv as any).invoiceScope || '').toLowerCase();
+                      const isRowFoodBill = Boolean(
+                        !isFolioRow &&
+                          !isRowCreditNote &&
+                          (rawScopeLower === 'food_only' ||
+                            String(inv.invoiceNumber || '').toUpperCase().endsWith('-F') ||
+                            (displayScope === 'Only Other Services' && Number(inv.foodCharges || 0) > 0))
+                      );
+                      const isRowRoomBill = Boolean(
+                        !isFolioRow &&
+                          !isRowCreditNote &&
+                          (rawScopeLower === 'room_only' ||
+                            (displayScope === 'Only Booking' && inv.isFoodRoomSplitSettled === true))
+                      );
+                      const sameStayActive =
+                        !isFolioRow && !isRowCreditNote && !isRowSuperseded
+                          ? invoices.filter(
+                              (other) =>
+                                !other.id.startsWith('FOLIO-') &&
+                                isActiveInvoice(other) &&
+                                ((inv.bookingId && other.bookingId === inv.bookingId) ||
+                                  (inv.bookingNo && other.bookingNo === inv.bookingNo))
+                            )
+                          : [];
+                      const companionFoodInv =
+                        sameStayActive.find((other) => {
+                          const rs = String(other.rawInvoiceScope || (other as any).invoiceScope || '').toLowerCase();
+                          const ds = resolveInvoiceScope(other);
+                          return (
+                            rs === 'food_only' ||
+                            String(other.invoiceNumber || '').toUpperCase().endsWith('-F') ||
+                            (ds === 'Only Other Services' && Number(other.foodCharges || 0) > 0)
+                          );
+                        }) || null;
+                      const companionRoomInv =
+                        sameStayActive.find((other) => {
+                          const rs = String(other.rawInvoiceScope || (other as any).invoiceScope || '').toLowerCase();
+                          const ds = resolveInvoiceScope(other);
+                          return rs === 'room_only' || ds === 'Only Booking';
+                        }) || null;
+                      const isSplitFoodRoomActive = Boolean(
+                        !isRowCreditNote &&
+                          !isRowSuperseded &&
+                          !isFolioRow &&
+                          (inv.isFoodRoomSplitSettled === true ||
+                            isRowFoodBill ||
+                            isRowRoomBill ||
+                            Boolean(companionFoodInv))
+                      );
+                      const savedFoodChargeLines = Array.isArray(inv.ledgerLines)
+                        ? inv.ledgerLines.filter(
+                            (l: any) =>
+                              l &&
+                              l.type === 'charge' &&
+                              (l.kind === 'food' ||
+                                /food|restaurant|room service|kot|pos/i.test(String(l.description || '')))
+                          )
+                        : [];
                       const serviceList = isFolioRow ? linkedBooking?.otherServices || [] : [];
 
                       return (
@@ -1122,14 +1212,22 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                           <td className="py-3.5 px-4">
                             <span
                               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${
-                                displayScope === 'Booking + Other Services'
+                                isRowFoodBill
+                                  ? 'bg-amber-100 text-amber-950 border border-amber-300'
+                                  : isRowRoomBill
+                                  ? 'bg-slate-100 text-slate-800 border border-slate-300'
+                                  : displayScope === 'Booking + Other Services'
                                   ? 'bg-amber-100 text-amber-900'
                                   : displayScope === 'Only Other Services'
                                   ? 'bg-purple-100 text-purple-900'
                                   : 'bg-slate-100 text-slate-700'
                               }`}
                             >
-                              {displayScope === 'Only Booking'
+                              {isRowFoodBill
+                                ? 'Food Bill'
+                                : isRowRoomBill
+                                ? 'Room Bill'
+                                : displayScope === 'Only Booking'
                                 ? 'Room Only'
                                 : displayScope === 'Only Other Services'
                                 ? 'Services Only'
@@ -1137,12 +1235,42 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                             </span>
                           </td>
                           <td className="py-3.5 px-4">
-                            <div className="font-semibold text-slate-800">
-                              Room: {formatCurrency(effectiveRoomCharges)}
-                            </div>
-                            {effectiveServicesCharges > 0 && (
-                              <div className="text-[11px] text-amber-700 font-bold mt-0.5">
-                                + Add-Ons: {formatCurrency(effectiveServicesCharges)}
+                            {isRowFoodBill && effectiveRoomCharges <= 0 ? (
+                              <div className="font-bold text-amber-900">
+                                Food Bill: {formatCurrency(effectiveServicesCharges || Number(inv.foodCharges || 0))}
+                              </div>
+                            ) : (
+                              <>
+                                <div className="font-semibold text-slate-800">
+                                  Room: {formatCurrency(effectiveRoomCharges)}
+                                </div>
+                                {effectiveServicesCharges > 0 && (
+                                  <div className="text-[11px] text-amber-700 font-bold mt-0.5">
+                                    + Add-Ons: {formatCurrency(effectiveServicesCharges)}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                            {isRowFoodBill && savedFoodChargeLines.length > 0 && (
+                              <div className="mt-1 space-y-0.5 max-w-xs">
+                                {savedFoodChargeLines.slice(0, 3).map((fl: any, idx: number) => (
+                                  <div
+                                    key={idx}
+                                    className="text-[10px] bg-amber-50/90 border border-amber-200/80 text-amber-950 px-1.5 py-0.5 rounded flex items-center justify-between gap-2"
+                                  >
+                                    <span className="truncate" title={String(fl.description || '')}>
+                                      {String(fl.description || 'Food Item')}
+                                    </span>
+                                    <span className="font-mono font-bold shrink-0">
+                                      {formatCurrency(Number(fl.charges || 0))}
+                                    </span>
+                                  </div>
+                                ))}
+                                {savedFoodChargeLines.length > 3 && (
+                                  <div className="text-[9.5px] font-bold text-amber-800 pl-1">
+                                    +{savedFoodChargeLines.length - 3} more food item(s)
+                                  </div>
+                                )}
                               </div>
                             )}
                             {serviceList.length > 0 && (
@@ -1252,16 +1380,283 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                       String(c?.id || '') === String(inv.bookingId || '') ||
                                       String(c?.bookingId || '') === String(inv.bookingId || '')
                                   ) || null;
-                                // ONLY show Room Bill / Food Bill / Combined Bill buttons when user explicitly split Room & Food during Checkout
-                                const isCheckoutSplitSettled = Boolean(
-                                  !isRowCreditNote &&
-                                    !isFolioRow &&
-                                    ((inv as any).isFoodRoomSplitSettled === true ||
-                                      String((inv as any).invoiceScope || '').toLowerCase() === 'room_only' ||
-                                      String((inv as any).invoiceScope || '').toLowerCase() === 'food_only')
-                                );
+
+                                const rawCurrentInv =
+                                  appInvoices.find((ai) => String(ai?.id || '') === String(inv.id)) || null;
+                                const rawFoodInv = companionFoodInv
+                                  ? appInvoices.find((ai) => String(ai?.id || '') === String(companionFoodInv.id)) || null
+                                  : isRowFoodBill
+                                  ? rawCurrentInv
+                                  : null;
+                                const rawRoomInv = companionRoomInv
+                                  ? appInvoices.find((ai) => String(ai?.id || '') === String(companionRoomInv.id)) || null
+                                  : isRowRoomBill
+                                  ? rawCurrentInv
+                                  : null;
+
+                                const isRecGst = (rec: any): boolean =>
+                                  !(
+                                    rec?.isWithoutGst === true ||
+                                    (rec?.gstRate !== undefined && Number(rec.gstRate) <= 0) ||
+                                    (rec?.gstRate === undefined &&
+                                      Number(rec?.gst ?? rec?.taxAmount ?? rec?.totalTax ?? 0) <= 0)
+                                  );
 
                                 const printScopedPdf = (filterKind: 'all' | 'room_only' | 'food_only') => {
+                                  // 1. Prefer the actual saved split invoice record (preserves exact INV/...-F number,
+                                  //    itemized edited food dishes, GST mode & Food/Room payment breakdown).
+                                  if (filterKind === 'food_only' && rawFoodInv) {
+                                    const foodGstOn = isRecGst(rawFoodInv);
+                                    openPrintWindow(
+                                      invoiceRecordToPrintHtml(
+                                        { ...(rawFoodInv as any), isWithoutGst: !foodGstOn },
+                                        (hotelSettings || settings) as any,
+                                        rawAppCk as any,
+                                        rawAppBkg as any,
+                                        'food_only',
+                                        posOrders
+                                      ),
+                                      true
+                                    );
+                                    return;
+                                  }
+
+                                  if (filterKind === 'room_only' && rawRoomInv) {
+                                    const roomGstOn = isRecGst(rawRoomInv);
+                                    openPrintWindow(
+                                      invoiceRecordToPrintHtml(
+                                        { ...(rawRoomInv as any), isWithoutGst: !roomGstOn },
+                                        (hotelSettings || settings) as any,
+                                        rawAppCk as any,
+                                        rawAppBkg as any,
+                                        'room_only',
+                                        posOrders
+                                      ),
+                                      true
+                                    );
+                                    return;
+                                  }
+
+                                  // Combined Bill for a stay split into separate Room + Food invoices:
+                                  // merge both saved records so edits to either bill appear cleanly together.
+                                  if (
+                                    filterKind === 'all' &&
+                                    rawRoomInv &&
+                                    rawFoodInv &&
+                                    String(rawRoomInv.id) !== String(rawFoodInv.id)
+                                  ) {
+                                    const roomFallback =
+                                      (Array.isArray(rawRoomInv.roomNumbers) && rawRoomInv.roomNumbers[0]) ||
+                                      rawRoomInv.roomNumber ||
+                                      inv.roomNumbers?.[0] ||
+                                      '';
+                                    const extractChargesFromSaved = (
+                                      src: any,
+                                      mode: 'room' | 'food'
+                                    ): BillCharge[] => {
+                                      const lines = Array.isArray(src?.ledgerLines)
+                                        ? src.ledgerLines.filter((l: any) => l && l.type === 'charge' && Number(l.charges) > 0)
+                                        : [];
+                                      if (mode === 'food') {
+                                        const foodL = lines.filter(
+                                          (l: any) =>
+                                            l.kind === 'food' ||
+                                            /food|restaurant|room service|kot|pos/i.test(String(l.description || ''))
+                                        );
+                                        const hasDetailed =
+                                          foodL.length > 0 && foodL.some((l: any) => !isGenericFoodSummaryLine(l.description));
+                                        if (hasDetailed) {
+                                          return foodL.map((l: any, idx: number) => ({
+                                            id: `cmb-f-${idx}`,
+                                            kind: 'food' as const,
+                                            description: String(l.description || 'Food Item'),
+                                            amount: r2(Number(l.charges || 0)),
+                                            date: l.date || src.checkOutDate || src.dateCreated,
+                                            roomNumber: String(l.roomNumber || roomFallback),
+                                          }));
+                                        }
+                                        const det = extractDetailedFoodLinesForStay({
+                                          invoice: src as any,
+                                          checkinRecord: rawAppCk as any,
+                                          bookingRecord: rawAppBkg as any,
+                                          posOrders,
+                                        });
+                                        if (det.length > 0) {
+                                          return det.map((it, idx) => ({
+                                            id: `cmb-fd-${idx}`,
+                                            kind: 'food' as const,
+                                            description: it.description,
+                                            amount: r2(it.amount),
+                                            date: it.dateIso || src.checkOutDate || src.dateCreated,
+                                            roomNumber: String(roomFallback),
+                                          }));
+                                        }
+                                        if (foodL.length > 0) {
+                                          return foodL.map((l: any, idx: number) => ({
+                                            id: `cmb-fg-${idx}`,
+                                            kind: 'food' as const,
+                                            description: String(l.description || 'Restaurant & Food Charges'),
+                                            amount: r2(Number(l.charges || 0)),
+                                            date: l.date || src.checkOutDate || src.dateCreated,
+                                            roomNumber: String(l.roomNumber || roomFallback),
+                                          }));
+                                        }
+                                        const fa = r2(Number(src?.foodCharges || 0));
+                                        return fa > 0
+                                          ? [
+                                              {
+                                                id: 'cmb-f-legacy',
+                                                kind: 'food' as const,
+                                                description: 'Restaurant & Food Charges',
+                                                amount: fa,
+                                                date: src.checkOutDate || src.dateCreated,
+                                                roomNumber: String(roomFallback),
+                                              },
+                                            ]
+                                          : [];
+                                      }
+                                      if (lines.length > 0) {
+                                        return lines
+                                          .filter((l: any) => l.kind !== 'food')
+                                          .map((l: any, idx: number) => ({
+                                            id: `cmb-r-${idx}`,
+                                            kind: (l.kind || 'room') as BillChargeKind,
+                                            description: String(l.description || 'Room Charges'),
+                                            amount: r2(Number(l.charges || 0)),
+                                            date: l.date || src.checkInDate || src.dateCreated,
+                                            roomNumber: String(l.roomNumber || roomFallback),
+                                          }));
+                                      }
+                                      const out: BillCharge[] = [];
+                                      const pushIf = (kind: BillChargeKind, desc: string, amt: number) => {
+                                        if (amt > 0) {
+                                          out.push({
+                                            id: `cmb-r-${kind}`,
+                                            kind,
+                                            description: desc,
+                                            amount: r2(amt),
+                                            roomNumber: String(roomFallback),
+                                          });
+                                        }
+                                      };
+                                      pushIf('room', 'Room Charges', Number(src?.roomCharges || 0));
+                                      pushIf('extra_bed', 'Extra Bed Charges', Number(src?.extraBedCharges || 0));
+                                      pushIf('extra_person', 'Extra Person Charges', Number(src?.extraPersonCharges || 0));
+                                      pushIf('early_checkin', 'Early Check-In Charges', Number(src?.earlyCheckInCharges || 0));
+                                      pushIf('late_checkout', 'Late Check-Out Charges', Number(src?.lateCheckOutCharges || 0));
+                                      pushIf('water', 'Water Bottle Charges', Number(src?.waterCharges || 0));
+                                      pushIf('laundry', 'Laundry Charges', Number(src?.laundryCharges || 0));
+                                      pushIf('service', 'Extra Guest Services', Number(src?.serviceCharges || 0));
+                                      pushIf('fine', 'Damage / Fine', Number(src?.fineCharges || 0));
+                                      return out;
+                                    };
+                                    const extractPaysFromSaved = (src: any, tag: string): BillPayment[] => {
+                                      const hist = Array.isArray(src?.paymentHistory)
+                                        ? src.paymentHistory.filter((p: any) => p && Number(p.amount) > 0)
+                                        : [];
+                                      if (hist.length > 0) {
+                                        return hist.map((p: any, idx: number) => ({
+                                          id: String(p.id || `cmb-p-${tag}-${idx}`),
+                                          amount: r2(Number(p.amount || 0)),
+                                          method: String(p.paymentMethod || p.method || 'Cash'),
+                                          date: String(p.date || src.dateCreated || '').slice(0, 10),
+                                          reference: p.referenceNo || p.reference || undefined,
+                                          note: p.notes || p.note || `${tag} Settlement`,
+                                        }));
+                                      }
+                                      const paid = r2(Number(src?.paidAmount ?? src?.amountPaid ?? src?.advancePaid ?? 0));
+                                      return paid > 0
+                                        ? [
+                                            {
+                                              id: `cmb-p-${tag}-sum`,
+                                              amount: paid,
+                                              method: String(src?.paymentMethod || 'Cash'),
+                                              date: String(src?.dateCreated || '').slice(0, 10),
+                                              note: `${tag} Settlement`,
+                                            },
+                                          ]
+                                        : [];
+                                    };
+
+                                    const mergedCharges = [
+                                      ...extractChargesFromSaved(rawRoomInv, 'room'),
+                                      ...extractChargesFromSaved(rawFoodInv, 'food'),
+                                    ];
+                                    const mergedPays = [
+                                      ...extractPaysFromSaved(rawRoomInv, 'Room Bill'),
+                                      ...extractPaysFromSaved(rawFoodInv, 'Food Bill'),
+                                    ];
+                                    const combinedGstOn = isRecGst(rawRoomInv) || isRecGst(rawFoodInv);
+                                    const combinedBill = calculateBill({
+                                      charges: mergedCharges,
+                                      payments: mergedPays,
+                                      discount: r2(Number(rawRoomInv.discount || 0)),
+                                      gstEnabled: combinedGstOn,
+                                      settings: { ...settings, roomRateIncludesGst: false },
+                                    });
+                                    const combinedPrintable = buildInvoiceRecord({
+                                      id: String(rawRoomInv.id),
+                                      invoiceNumber: String(rawRoomInv.invoiceNumber || inv.invoiceNumber),
+                                      hotelId: (hotelSettings as any)?.id || rawRoomInv.hotelId || 'hotel-1',
+                                      bookingId: String(rawRoomInv.bookingId || inv.bookingId),
+                                      checkInId: String(rawRoomInv.checkInId || (rawAppCk as any)?.id || inv.bookingId),
+                                      guestName: String(rawRoomInv.guestName || inv.customerName),
+                                      guestMobile: String(rawRoomInv.guestMobile || rawRoomInv.mobile || inv.mobile || ''),
+                                      companyName: rawRoomInv.companyName || inv.companyName,
+                                      guestGstNumber: rawRoomInv.guestGstNumber || rawRoomInv.gstNumber || inv.gstNumber,
+                                      roomNumbers:
+                                        Array.isArray(rawRoomInv.roomNumbers) && rawRoomInv.roomNumbers.length > 0
+                                          ? rawRoomInv.roomNumbers
+                                          : inv.roomNumbers || bookingForModal.roomNumbers || [],
+                                      checkInDate: String(rawRoomInv.checkInDate || bookingForModal.checkInDate),
+                                      checkOutDate: String(rawRoomInv.checkOutDate || bookingForModal.checkOutDate),
+                                      nights: Number(rawRoomInv.nights || bookingForModal.nights || 1),
+                                      bill: combinedBill,
+                                      paymentMethod: (rawRoomInv.paymentMethod as any) || (inv.paymentMethod as any) || 'UPI',
+                                      dateCreated: String(rawRoomInv.dateCreated || inv.createdAt || new Date().toISOString().slice(0, 10)),
+                                      invoiceStatus: 'Finalized',
+                                      extra: {
+                                        paymentHistory: mergedPays.map((p) => ({
+                                          id: p.id,
+                                          amount: p.amount,
+                                          paymentMethod: p.method,
+                                          date: p.date,
+                                          referenceNo: p.reference,
+                                          notes: p.note,
+                                        })),
+                                      },
+                                    });
+                                    openPrintWindow(
+                                      invoiceRecordToPrintHtml(
+                                        { ...(combinedPrintable as any), isWithoutGst: !combinedGstOn },
+                                        (hotelSettings || settings) as any,
+                                        rawAppCk as any,
+                                        rawAppBkg as any,
+                                        'all',
+                                        posOrders
+                                      ),
+                                      true
+                                    );
+                                    return;
+                                  }
+
+                                  // 2. Fallback for single combined checkout split-settled invoice (no separate -F record)
+                                  if (rawCurrentInv && !isFolioRow) {
+                                    const curGstOn = isRecGst(rawCurrentInv);
+                                    openPrintWindow(
+                                      invoiceRecordToPrintHtml(
+                                        { ...(rawCurrentInv as any), isWithoutGst: !curGstOn },
+                                        (hotelSettings || settings) as any,
+                                        rawAppCk as any,
+                                        rawAppBkg as any,
+                                        filterKind,
+                                        posOrders
+                                      ),
+                                      true
+                                    );
+                                    return;
+                                  }
+
                                   const liveStay = buildStayBill({
                                     booking: (rawAppBkg || bookingForModal) as any,
                                     checkin: rawAppCk as any,
@@ -1317,7 +1712,7 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                   );
                                 };
 
-                                if (isCheckoutSplitSettled) {
+                                if (isSplitFoodRoomActive) {
                                   return (
                                     <>
                                       <button
@@ -1340,13 +1735,7 @@ export const InvoiceModule: React.FC<InvoiceModuleProps> = ({
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() =>
-                                          onOpenInvoiceModal(
-                                            bookingForModal,
-                                            'Booking + Other Services',
-                                            isFolioRow ? undefined : inv
-                                          )
-                                        }
+                                        onClick={() => printScopedPdf('all')}
                                         className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
                                         title="Print Combined Room + Food Tax Invoice"
                                       >

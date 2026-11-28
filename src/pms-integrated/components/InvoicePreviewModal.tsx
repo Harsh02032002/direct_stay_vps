@@ -27,6 +27,11 @@ import {
 } from '../../utils/stayBilling';
 import { renderInvoiceHtml } from '../../utils/printTemplates';
 import { openPrintWindow } from '../../utils/printDocument';
+import {
+  extractDetailedFoodLinesForStay,
+  FOOD_LINE_REGEX,
+  isGenericFoodSummaryLine,
+} from '../../utils/pdfDownload';
 
 interface InvoicePreviewModalProps {
   booking: BookingRecord | null;
@@ -446,6 +451,82 @@ export default function InvoicePreviewModal({
     const displayInvoiceNumber =
       invoiceRecord?.invoiceNumber || `FOLIO/${booking.bookingNo.replace(/^#/, '')}`;
 
+    const rawScopeStr = String(
+      invoiceRecord?.rawInvoiceScope || (rawInvoice as any)?.invoiceScope || ''
+    ).toLowerCase();
+    const isFoodBillView = Boolean(
+      rawScopeStr === 'food_only' ||
+        String(displayInvoiceNumber || '').toUpperCase().endsWith('-F') ||
+        (activeScope === 'Only Other Services' &&
+          effectiveBill.chargeLines.length > 0 &&
+          effectiveBill.chargeLines.every((l) => l.kind === 'food' || FOOD_LINE_REGEX.test(l.description || '')))
+    );
+    const isRoomBillView = Boolean(rawScopeStr === 'room_only');
+
+    // Expand generic POS food summary lines ("Food Bill — Order #POS-xxx" / "Food & Beverage Charges")
+    // into item-wise dish rows so Separate Food Bill previews match Checkout's Separate Food Bill.
+    if (isFoodBillView || activeScope === 'Only Other Services') {
+      const isFoodChargeLine = (l: BillLedgerLine) =>
+        l.type === 'charge' && (l.kind === 'food' || FOOD_LINE_REGEX.test(l.description || ''));
+      const existingFoodLines = effectiveBill.chargeLines.filter(isFoodChargeLine);
+      const onlyGenericFood =
+        existingFoodLines.length > 0 && existingFoodLines.every((l) => isGenericFoodSummaryLine(l.description));
+      if (onlyGenericFood) {
+        const detailedFoodItems = extractDetailedFoodLinesForStay({
+          invoice: (rawInvoice || invoiceRecord || null) as any,
+          checkinRecord: (rawCheckin || null) as any,
+          bookingRecord: (rawBooking || booking) as any,
+          posOrders,
+        });
+        if (detailedFoodItems.length > 0) {
+          const existingFoodSum = r2(existingFoodLines.reduce((s, l) => s + (Number(l.charges) || 0), 0));
+          const detSum = r2(detailedFoodItems.reduce((s, it) => s + (Number(it.amount) || 0), 0));
+          const shouldScale =
+            existingFoodSum > 0 && detSum > 0 && Math.abs(detSum - existingFoodSum) > 0.05;
+          const fallbackRoom =
+            effectiveFolio.roomNumbers[0] ||
+            existingFoodLines[0]?.roomNumber ||
+            (Array.isArray(booking.roomNumbers) ? booking.roomNumbers[0] : '') ||
+            '';
+          let running = 0;
+          const expandedFoodLedger: BillLedgerLine[] = detailedFoodItems.map((it, idx) => {
+            let amt = r2(it.amount);
+            if (shouldScale) {
+              amt =
+                idx === detailedFoodItems.length - 1
+                  ? Math.max(0, r2(existingFoodSum - running))
+                  : r2((amt / detSum) * existingFoodSum);
+            }
+            running = r2(running + amt);
+            return {
+              type: 'charge' as const,
+              kind: 'food' as const,
+              dateLabel: it.dateLabel,
+              roomNumber: fallbackRoom,
+              description: it.description,
+              sac: settings.foodSac || '996331',
+              charges: amt,
+              receipts: 0,
+            };
+          });
+
+          const firstFoodIdx = effectiveBill.lines.findIndex(isFoodChargeLine);
+          const nonFoodLines = effectiveBill.lines.filter((l) => !isFoodChargeLine(l));
+          const insertAt = firstFoodIdx >= 0 ? Math.min(firstFoodIdx, nonFoodLines.length) : 0;
+          const nextLines = [
+            ...nonFoodLines.slice(0, insertAt),
+            ...expandedFoodLedger,
+            ...nonFoodLines.slice(insertAt),
+          ];
+          effectiveBill = {
+            ...effectiveBill,
+            lines: nextLines,
+            chargeLines: nextLines.filter((l) => l.type === 'charge'),
+          };
+        }
+      }
+    }
+
     const isCreditNoteModal = Boolean(
       (invoiceRecord as any)?.isCreditNote ||
         (rawInvoice as any)?.isCreditNote ||
@@ -457,6 +538,16 @@ export default function InvoicePreviewModal({
       (isCreditNoteModal && String(displayInvoiceNumber || '').toUpperCase().startsWith('CN/')
         ? String(displayInvoiceNumber).slice(3)
         : '');
+
+    const scopedDocTitle = isFoodBillView
+      ? effectiveBill.isGstInvoice
+        ? 'RESTAURANT & FOOD TAX INVOICE'
+        : 'RESTAURANT & FOOD BILL OF SUPPLY'
+      : isRoomBillView
+      ? effectiveBill.isGstInvoice
+        ? 'ROOM TARIFF TAX INVOICE'
+        : 'ROOM TARIFF BILL OF SUPPLY'
+      : undefined;
 
     const html = renderInvoiceHtml({
       ...toInvoicePrintData({
@@ -472,6 +563,7 @@ export default function InvoicePreviewModal({
         folio: effectiveFolio,
         bill: effectiveBill,
       }),
+      ...(scopedDocTitle && !isCreditNoteModal ? { documentTitle: scopedDocTitle } : {}),
       ...(isCreditNoteModal
         ? {
             isCreditNote: true,

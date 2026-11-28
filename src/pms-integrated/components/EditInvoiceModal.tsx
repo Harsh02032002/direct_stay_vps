@@ -8,7 +8,11 @@ import {
   r2,
 } from '../../utils/billCalculator';
 import { allocateInvoiceNumber, buildInvoiceRecord, isActiveInvoice } from '../../utils/stayBilling';
-import { extractDetailedFoodLinesForStay } from '../../utils/pdfDownload';
+import {
+  DetailedFoodItemLine,
+  extractDetailedFoodLinesForStay,
+  isGenericFoodSummaryLine,
+} from '../../utils/pdfDownload';
 
 /**
  * Edit Invoice (Admin Hub → Invoices & Billing)
@@ -22,7 +26,7 @@ import { extractDetailedFoodLinesForStay } from '../../utils/pdfDownload';
 type AnyRec = Record<string, any>;
 type BillTab = 'room' | 'food' | 'combined';
 type PayRow = { id: string; amount: string; method: string; date: string; reference: string };
-type FoodLine = { id: string; description: string; amount: string };
+type FoodLine = { id: string; description: string; amount: string; date?: string };
 
 interface EditInvoiceModalProps {
   invoiceId: string;
@@ -41,7 +45,13 @@ const num = (v: any): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
-const scopeOf = (i: AnyRec | null | undefined): string => String(i?.invoiceScope || '').toLowerCase();
+const scopeOf = (i: AnyRec | null | undefined): string => {
+  const raw = String(i?.invoiceScope || '').toLowerCase().trim();
+  if (raw === 'room_only' || raw === 'food_only') return raw;
+  if (raw === 'only other services' && num(i?.foodCharges) > 0 && num(i?.roomCharges) <= 0) return 'food_only';
+  if (raw === 'only booking' && i?.isFoodRoomSplitSettled === true) return 'room_only';
+  return raw;
+};
 const isIsoDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 const nightsBetween = (a: string, b: string): number => {
   if (!isIsoDate(a) || !isIsoDate(b)) return 1;
@@ -332,38 +342,75 @@ export default function EditInvoiceModal({
 
   const initialFoodLines = (): FoodLine[] => {
     if (!clicked || !group) return [];
-    const mk = (d: string, a: number, i: number): FoodLine => ({
+    const mk = (d: string, a: number, i: number, date?: string): FoodLine => ({
       id: `fl-${i}-${Date.now()}`,
       description: d,
       amount: String(r2(a)),
+      date: date || undefined,
     });
-    if (group.isSplit) {
-      const fi = group.foodInv;
-      if (!fi) return [];
-      const lines: AnyRec[] = Array.isArray(fi.ledgerLines)
-        ? fi.ledgerLines.filter((l: AnyRec) => l && l.type === 'charge' && (l.kind === 'food' || /food|restaurant/i.test(String(l.description || ''))))
-        : [];
-      if (lines.length > 0) return lines.map((l, i) => mk(String(l.description || 'Food'), num(l.charges), i));
-      return num(fi.foodCharges) > 0 ? [mk('Restaurant & Food Charges', num(fi.foodCharges), 0)] : [];
-    }
-    const foodTotal = num(clicked.foodCharges);
-    if (foodTotal <= 0) {
-      return hiddenFoodLines.map((l, i) => mk(String(l.description || 'Food'), num(l.charges), i));
-    }
+    const detailedToFoodLines = (items: DetailedFoodItemLine[], targetTotal: number): FoodLine[] => {
+      const dSum = r2(items.reduce((s, it) => s + num(it.amount), 0));
+      const shouldScale =
+        targetTotal > 0 && dSum > 0 && Math.abs(dSum - targetTotal) > 0.05 && Math.abs(dSum - targetTotal) <= Math.max(2, targetTotal * 0.2);
+      let running = 0;
+      return items.map((it, i) => {
+        let amt = r2(num(it.amount));
+        if (shouldScale) {
+          amt = i === items.length - 1 ? Math.max(0, r2(targetTotal - running)) : r2((amt / dSum) * targetTotal);
+        }
+        running = r2(running + amt);
+        return mk(it.description, amt, i, it.dateIso || undefined);
+      });
+    };
+
     const detailed = extractDetailedFoodLinesForStay({
-      invoice: clicked as any,
+      invoice: (group.foodInv || clicked) as any,
       checkinRecord: group.checkin as any,
       bookingRecord: group.booking as any,
       posOrders,
     });
-    const dSum = r2(detailed.reduce((s, it) => s + num(it.amount), 0));
-    if (detailed.length > 0 && Math.abs(dSum - foodTotal) <= 0.05) {
-      return detailed.map((it, i) => mk(it.description, num(it.amount), i));
+
+    if (group.isSplit) {
+      const fi = group.foodInv;
+      if (!fi) return detailed.length > 0 ? detailedToFoodLines(detailed, 0) : [];
+      const lines: AnyRec[] = Array.isArray(fi.ledgerLines)
+        ? fi.ledgerLines.filter(
+            (l: AnyRec) =>
+              l &&
+              l.type === 'charge' &&
+              (l.kind === 'food' || /food|restaurant|room service|kot|pos/i.test(String(l.description || '')))
+          )
+        : [];
+      const hasNonGenericSaved = lines.length > 0 && lines.some((l) => !isGenericFoodSummaryLine(l.description));
+      if (hasNonGenericSaved) {
+        return lines.map((l, i) => mk(String(l.description || 'Food'), num(l.charges), i, l.date || undefined));
+      }
+      if (detailed.length > 0) {
+        return detailedToFoodLines(detailed, num(fi.foodCharges));
+      }
+      if (lines.length > 0) {
+        return lines.map((l, i) => mk(String(l.description || 'Food'), num(l.charges), i, l.date || undefined));
+      }
+      return num(fi.foodCharges) > 0 ? [mk('Restaurant & Food Charges', num(fi.foodCharges), 0)] : [];
     }
+
+    const foodTotal = num(clicked.foodCharges);
     const ledger: AnyRec[] = Array.isArray(clicked.ledgerLines)
       ? clicked.ledgerLines.filter((l: AnyRec) => l && l.type === 'charge' && l.kind === 'food')
       : [];
-    if (ledger.length > 0) return ledger.map((l, i) => mk(String(l.description || 'Food'), num(l.charges), i));
+    const hasNonGenericLedger = ledger.length > 0 && ledger.some((l) => !isGenericFoodSummaryLine(l.description));
+    if (hasNonGenericLedger) {
+      return ledger.map((l, i) => mk(String(l.description || 'Food'), num(l.charges), i, l.date || undefined));
+    }
+    if (detailed.length > 0) {
+      return detailedToFoodLines(detailed, foodTotal > 0 ? foodTotal : hiddenFoodSum);
+    }
+    if (ledger.length > 0) {
+      return ledger.map((l, i) => mk(String(l.description || 'Food'), num(l.charges), i, l.date || undefined));
+    }
+    if (foodTotal <= 0) {
+      return hiddenFoodLines.map((l, i) => mk(String(l.description || 'Food'), num(l.charges), i, l.date || undefined));
+    }
     return [mk('Restaurant & Food Charges', foodTotal, 0)];
   };
 
@@ -457,6 +504,7 @@ export default function EditInvoiceModal({
         kind: 'food' as const,
         description: l.description.trim() || 'Restaurant & Food Charges',
         amount: r2(num(l.amount)),
+        date: l.date || checkOutDate || today,
         roomNumber: primaryRoom,
       }));
   const toPayments = (rows: PayRow[], tag: string): BillPayment[] =>
@@ -493,11 +541,29 @@ export default function EditInvoiceModal({
     setRoomPay(a.room);
     setFoodPay(a.food);
     setWantSplit(true);
-    // No food detected on this invoice? Give an empty food line so the Food Bill can be filled right away.
+    // If no food lines are loaded yet, pull itemized POS food dishes first; otherwise give an empty row to fill.
     if (foodLines.length === 0) {
-      setFoodLines([{ id: `fl-split-${Date.now()}`, description: '', amount: '' }]);
+      const detailed = extractDetailedFoodLinesForStay({
+        invoice: clicked as any,
+        checkinRecord: group.checkin as any,
+        bookingRecord: group.booking as any,
+        posOrders,
+      });
+      if (detailed.length > 0) {
+        setFoodLines(
+          detailed.map((it, idx) => ({
+            id: `fl-split-${idx}-${Date.now()}`,
+            description: it.description,
+            amount: String(r2(num(it.amount))),
+            date: it.dateIso || undefined,
+          }))
+        );
+      } else {
+        setFoodLines([{ id: `fl-split-${Date.now()}`, description: '', amount: '' }]);
+      }
     }
-    setTab('room');
+    // Show Combined view (Room + Item-Wise Food side by side) so all dishes are visible immediately before saving.
+    setTab('combined');
   };
   const disableSplit = () => {
     setRoomPay([...roomPay, ...foodPay]);
@@ -705,8 +771,10 @@ export default function EditInvoiceModal({
             </div>
           )}
           {splitActive && effTab === 'combined' && (
-            <p className="text-[11px] text-slate-600">
-              Combined Bill = Room Bill + Food Bill together. Edit both sections below; saving re-issues <strong>both</strong> bills.
+            <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 font-medium">
+              Separate <strong>Room Bill</strong> &amp; item-wise <strong>Food Bill</strong> are ready below. Once you click{' '}
+              <strong>Save &amp; Re-Issue</strong>, both bills appear directly in <strong>Invoices &amp; Billing → Actions</strong>{' '}
+              (<strong>Room Bill</strong>, <strong>Food Bill</strong>, <strong>Combined Bill</strong>) — no need to split again.
             </p>
           )}
 

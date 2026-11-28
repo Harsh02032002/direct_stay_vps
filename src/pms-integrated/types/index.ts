@@ -214,6 +214,7 @@ export interface InvoiceRecord {
   bookingId: string;
   bookingNo: string;
   invoiceScope: InvoiceScope;
+  rawInvoiceScope?: string;
   customerName: string;
   mobile: string;
   companyName?: string;
@@ -262,6 +263,8 @@ export interface InvoiceRecord {
   createdAt: string;
   ledgerLines?: any[];
   taxRows?: any[];
+  paymentHistory?: any[];
+  revisedAt?: string;
   amountInWords?: string;
   billEngine?: string;
 }

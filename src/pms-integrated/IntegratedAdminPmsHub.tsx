@@ -97,8 +97,10 @@ import {
   requestAtomicGrcNumber,
   resolveConsistentInvoiceTotals,
   resolveInvoiceScope,
+  ROOM_ONLY_CHARGE_KINDS,
   toGrcPrintData,
 } from '../utils/stayBilling';
+import { extractDetailedFoodLinesForStay } from '../utils/pdfDownload';
 import { renderGrcHtml } from '../utils/printTemplates';
 import { openPrintWindow } from '../utils/printDocument';
 import { showToast } from '../utils/toast';
@@ -1802,7 +1804,8 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         isFoodRoomSplitSettled: Boolean(
           anyInv.isFoodRoomSplitSettled === true ||
             String(anyInv.invoiceScope || '').toLowerCase() === 'room_only' ||
-            String(anyInv.invoiceScope || '').toLowerCase() === 'food_only'
+            String(anyInv.invoiceScope || '').toLowerCase() === 'food_only' ||
+            (resolveInvoiceScope(anyInv) === 'Only Other Services' && foodCharges > 0)
         ),
         parentInvoiceId: anyInv.parentInvoiceId,
         invoiceStatus: anyInv.invoiceStatus,
@@ -1813,6 +1816,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         supersededByInvoiceNumber: anyInv.supersededByInvoiceNumber,
         supersededAt: anyInv.supersededAt,
         invoiceScope: resolveInvoiceScope(anyInv),
+        rawInvoiceScope: typeof anyInv.invoiceScope === 'string' ? anyInv.invoiceScope : undefined,
         customerName: inv.guestName,
         mobile: inv.mobile || inv.guestMobile || '',
         companyName: anyInv.companyName,
@@ -1849,6 +1853,8 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         createdAt: inv.dateCreated || inv.date || inv.checkOutDate,
         ledgerLines: anyInv.ledgerLines,
         taxRows: anyInv.taxRows,
+        paymentHistory: Array.isArray(anyInv.paymentHistory) ? anyInv.paymentHistory : undefined,
+        revisedAt: anyInv.revisedAt,
         amountInWords: anyInv.amountInWords,
         billEngine: anyInv.billEngine,
       };
@@ -2770,6 +2776,53 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
       gstEnabledOverride: withGst,
     });
 
+    // When generating a Separate Food / Services Bill, expand generic POS food summary lines
+    // into item-wise dish lines (matching Checkout's Separate Food Bill).
+    let folioForReconcile = stay.folio;
+    if (scope === 'Only Other Services') {
+      const folioFoodCharges = stay.folio.charges.filter((c) => c.kind === 'food');
+      if (folioFoodCharges.length > 0) {
+        const detailedFood = extractDetailedFoodLinesForStay({
+          checkinRecord: (linkedCheckin || null) as any,
+          bookingRecord: (rawAppBkg || targetBkg) as any,
+          posOrders: appPosOrders as any[],
+        });
+        if (detailedFood.length > 0) {
+          const folioFoodTotal = r2(folioFoodCharges.reduce((s, c) => s + r2(c.amount), 0));
+          const detTotal = r2(detailedFood.reduce((s, d) => s + r2(d.amount), 0));
+          const shouldScale =
+            folioFoodTotal > 0 && detTotal > 0 && Math.abs(detTotal - folioFoodTotal) > 0.05;
+          let running = 0;
+          const fallbackRoom = stay.folio.roomNumbers[0] || targetBkg.roomNumbers?.[0] || '';
+          const expandedFoodCharges: BillCharge[] = detailedFood.map((it, idx) => {
+            let amt = r2(it.amount);
+            if (shouldScale) {
+              amt =
+                idx === detailedFood.length - 1
+                  ? Math.max(0, r2(folioFoodTotal - running))
+                  : r2((amt / detTotal) * folioFoodTotal);
+            }
+            running = r2(running + amt);
+            return {
+              id: `sep-food-${idx}-${it.orderNo}`,
+              kind: 'food' as const,
+              description: it.description,
+              amount: amt,
+              date: it.dateIso || todayStr,
+              roomNumber: fallbackRoom,
+            };
+          });
+          folioForReconcile = {
+            ...stay.folio,
+            charges: [
+              ...stay.folio.charges.filter((c) => c.kind !== 'food'),
+              ...expandedFoodCharges,
+            ],
+          };
+        }
+      }
+    }
+
     const existingForStay = invoices.filter(
       (inv) =>
         !inv.id.startsWith('FOLIO-') &&
@@ -2777,7 +2830,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     );
 
     const reconciled = reconcileScopedStayInvoice({
-      folio: stay.folio,
+      folio: folioForReconcile,
       scope,
       withGst,
       settings: billSettings,
@@ -2797,9 +2850,17 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
 
     const finalBill = reconciled.bill;
     const supersededSet = new Set(reconciled.supersededInvoiceIds);
+    const retainedIdsSet = new Set(reconciled.retainedActiveInvoices.map((i) => String(i.id)));
     const hasRetainedSplitInvoices = reconciled.retainedActiveInvoices.length > 0;
     const existingParent = findPrimaryInvoiceForBooking(targetBkg);
-    const isSeparate = hasRetainedSplitInvoices;
+    const isSeparate = hasRetainedSplitInvoices || scope === 'Only Other Services';
+    const hasFoodInScoped = r2(finalBill.legacy.foodCharges) > 0;
+    const nonFoodScopedCharges = reconciled.scopedCharges.filter(
+      (c) => !ROOM_ONLY_CHARGE_KINDS.includes(c.kind) && c.kind !== 'food'
+    );
+    const isPureFoodSeparate = scope === 'Only Other Services' && hasFoodInScoped && nonFoodScopedCharges.length === 0;
+    const isFoodSplitInvoice = scope === 'Only Other Services' && hasFoodInScoped;
+    const finalInvNumber = isPureFoodSeparate && !newInvNumber.endsWith('-F') ? `${newInvNumber}-F` : newInvNumber;
 
     const safeRoomNums =
       stay.folio.roomNumbers.length > 0
@@ -2813,16 +2874,18 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
 
     const newInvoiceRecord: InvoiceRecord = {
       id: newInvId,
-      invoiceNumber: newInvNumber,
+      invoiceNumber: finalInvNumber,
       bookingId: targetBkg.id,
       bookingNo: targetBkg.bookingNo,
       gstRate: finalBill.headlineGstRate,
       isWithoutGst: !finalBill.isGstInvoice,
       isSeparateInvoice: isSeparate,
+      isFoodRoomSplitSettled: isFoodSplitInvoice || undefined,
       parentInvoiceId: existingParent?.id,
       invoiceStatus: 'Finalized',
       isSuperseded: false,
       invoiceScope: scope,
+      rawInvoiceScope: isPureFoodSeparate ? 'food_only' : scope,
       customerName: targetBkg.customerName,
       mobile: targetBkg.mobile || '',
       companyName: targetBkg.companyName,
@@ -2872,9 +2935,11 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
               invoiceStatus: 'Superseded' as const,
               isSuperseded: true,
               supersededByInvoiceId: newInvId,
-              supersededByInvoiceNumber: newInvNumber,
+              supersededByInvoiceNumber: finalInvNumber,
               supersededAt: nowIso,
             }
+          : isFoodSplitInvoice && retainedIdsSet.has(inv.id)
+          ? { ...inv, isFoodRoomSplitSettled: true }
           : inv
       ),
     ]);
@@ -2929,7 +2994,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
     if (onUpdateInvoices) {
       const newAppInvoice = buildInvoiceRecord({
         id: newInvId,
-        invoiceNumber: newInvNumber,
+        invoiceNumber: finalInvNumber,
         hotelId: selectedHotelId,
         bookingId: targetBkg.id,
         checkInId: linkedCheckin?.id,
@@ -2949,7 +3014,12 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         invoiceScope: scope,
         dateCreated: todayStr,
         invoiceStatus: 'Finalized',
-        extra: { bookingNo: targetBkg.bookingNo, isFinalInvoice: true },
+        extra: {
+          bookingNo: targetBkg.bookingNo,
+          isFinalInvoice: true,
+          ...(isFoodSplitInvoice ? { isFoodRoomSplitSettled: true } : {}),
+          ...(isPureFoodSeparate ? { invoiceScope: 'food_only' } : {}),
+        },
       }) as Invoice;
 
       const updatedAppInvoices = appInvoices.map((inv) =>
@@ -2959,9 +3029,11 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
               invoiceStatus: 'Superseded',
               isSuperseded: true,
               supersededByInvoiceId: newInvId,
-              supersededByInvoiceNumber: newInvNumber,
+              supersededByInvoiceNumber: finalInvNumber,
               supersededAt: nowIso,
             } as Invoice)
+          : isFoodSplitInvoice && retainedIdsSet.has(inv.id)
+          ? ({ ...inv, isFoodRoomSplitSettled: true } as Invoice)
           : inv
       );
       onUpdateInvoices([newAppInvoice, ...updatedAppInvoices]);
@@ -2979,7 +3051,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
         : isSeparate
         ? 'Split-Scope Separate Invoice Generated'
         : 'Official Invoice Generated',
-      `Generated Invoice ${newInvNumber} [${scope}, ${
+      `Generated Invoice ${finalInvNumber} [${isPureFoodSeparate ? 'Separate Food Bill' : scope}, ${
         finalBill.isGstInvoice ? `With GST ${finalBill.headlineGstRate}%` : 'No GST 0%'
       }] for Booking #${targetBkg.bookingNo} (${targetBkg.customerName})${
         supersededNumbers ? ` — Superseded ${supersededNumbers} (audit preserved)` : ''
@@ -5183,6 +5255,7 @@ export const IntegratedAdminPmsHub: React.FC<IntegratedAdminPmsHubProps> = ({
           activeSubTab={invoiceSubTab}
           onSubTabChange={setInvoiceSubTab}
           invoices={invoices}
+          appInvoices={appInvoices as any[]}
           bookings={bookings}
           billSettings={billSettings}
           hotelSettings={hotelSettings}

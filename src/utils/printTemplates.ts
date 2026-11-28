@@ -197,7 +197,14 @@ export function renderInvoiceHtml(d: InvoicePrintData): string {
         const itemDesc = esc(rawDesc).replace(/\n/g, '<br/>');
         const unitLabel = l.roomNumber ? `Room ${esc(l.roomNumber)}` : (d.roomNumber ? `Room ${esc(d.roomNumber)}` : 'Room Unit');
         const datesLabel = esc(l.dateLabel) || shortDates(d.checkIn, d.checkOut);
-        const qtyNights = d.nights && d.nights > 1 ? String(d.nights) : '1';
+        const foodQtyMatch = isSeparateFoodInvoice ? rawDesc.match(/\((\d+)\s*[×x]/i) : null;
+        const qtyNights = isSeparateFoodInvoice
+          ? foodQtyMatch
+            ? foodQtyMatch[1]
+            : '1'
+          : d.nights && d.nights > 1
+          ? String(d.nights)
+          : '1';
         const lineAmt = isCreditNote ? -Math.abs(Number(l.charges || 0)) : Number(l.charges || 0);
         return `<tr style="border-bottom:1px solid #E5E7EB;">
           <td style="padding:8px 10px; font-weight:600; color:#111;">${itemDesc}</td>
