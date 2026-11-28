@@ -2299,10 +2299,10 @@ async function startServer() {
     const smtpHost = String(process.env.SMTP_HOST || "smtp.hostinger.com").trim();
     const smtpPort = Number(process.env.SMTP_PORT || 465);
     const smtpSecure = process.env.SMTP_SECURE !== "false";
-    const smtpUser = String(process.env.SMTP_USER || "contact@directstay.online").trim();
-    const smtpPass = String(process.env.SMTP_PASS || "k/C5cCH3Y").trim();
+    const smtpUser = String(process.env.SMTP_USER || "mail@directstay.online").trim();
+    const smtpPass = String(process.env.SMTP_PASS || "").trim();
     const smtpFrom = String(
-      process.env.SMTP_FROM || '"DirectStay Cloud PMS" <contact@directstay.online>'
+      process.env.SMTP_FROM || `"DirectStay Cloud PMS" <${smtpUser}>`
     ).trim();
     const configured = Boolean(webhookUrl || (smtpHost && smtpUser && smtpPass));
     return {
@@ -6945,8 +6945,8 @@ async function startServer() {
   app.post("/api/email/test", async (req, res) => {
     try {
       const { targetEmail } = req.body || {};
-      const email = String(targetEmail || "contact@directstay.online").trim();
       const cfg = getEmailProviderConfig();
+      const email = String(targetEmail || cfg.smtpUser || "mail@directstay.online").trim();
       const testResult = await dispatchEmailNotification({
         eventType: "smtp_health_check",
         recipientEmail: email,

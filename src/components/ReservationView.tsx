@@ -2031,7 +2031,7 @@ export default function ReservationView({
       eventType,
       forceResend,
     });
-    if (res.success) {
+    if (res.success && res.status !== 'failed' && res.status !== 'skipped_unconfigured') {
       const modeLabel = res.delivered
         ? `Booking email delivered to ${bk.email}`
         : `Booking email logged (${res.dryRun ? 'Safe Dry-Run' : res.status}) for ${bk.email}`;
@@ -2041,7 +2041,7 @@ export default function ReservationView({
         `${modeLabel} for Booking #${bk.id} (${bk.guestName}).`
       );
     } else {
-      showToast(res.error || 'Failed to dispatch booking email.', 'error');
+      showToast(res.reason || res.error || 'Failed to dispatch booking email.', 'error');
     }
   };
 
